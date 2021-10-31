@@ -1,0 +1,18 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <ClCompile Include="src\main.cpp" />
+    <ClCompile Include="src\output\c.cpp" />
+    <ClCompile Include="src\ast.cpp" />
+    <ClCompile Include="src\common.cpp" />
+    <ClCompile Include="src\token.cpp" />
+    <ClCompile Include="src\output\nasm.cpp" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="src\ast.h" />
+    <ClInclude Include="src\common.h" />
+    <ClInclude Include="src\token.h" />
+    <ClInclude Include="src\output\c.h" />
+    <ClInclude Include="src\output\nasm.h" />
+  </ItemGroup>
+</Project>
