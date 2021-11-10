@@ -7,6 +7,7 @@
 #include <tl/array.h>
 #include <tl/hash_map.h>
 #include <tl/process.h>
+#include <tl/profiler.h>
 using namespace tl;
 
 extern Span<utf8> source_path;

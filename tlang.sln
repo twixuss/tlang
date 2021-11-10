@@ -8,6 +8,7 @@ EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Solution Items", "Solution Items", "{D07360A3-1A9D-43F2-B4C2-0DFDF5DB8997}"
 	ProjectSection(SolutionItems) = preProject
 		dep\tl\tl.natvis = dep\tl\tl.natvis
+		tlang.natvis = tlang.natvis
 	EndProjectSection
 EndProject
 Project("{911E67C6-3D85-4FCE-B560-20A9C3E3FF48}") = "a", "bin\a.exe", "{8E82CEE2-54B6-4641-B28E-653E983F355F}"
@@ -23,6 +24,8 @@ Project("{911E67C6-3D85-4FCE-B560-20A9C3E3FF48}") = "a", "bin\a.exe", "{8E82CEE2
 		AttachLaunchAction = No
 		IORedirection = Auto
 	EndProjectSection
+EndProject
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "test_runner", "test_runner\test_runner.vcxproj", "{16969B99-DD9B-41BC-AE2C-7C5C3CBBB289}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
@@ -44,6 +47,14 @@ Global
 		{8E82CEE2-54B6-4641-B28E-653E983F355F}.Debug|x86.ActiveCfg = Release|x64
 		{8E82CEE2-54B6-4641-B28E-653E983F355F}.Release|x64.ActiveCfg = Release|x64
 		{8E82CEE2-54B6-4641-B28E-653E983F355F}.Release|x86.ActiveCfg = Release|x64
+		{16969B99-DD9B-41BC-AE2C-7C5C3CBBB289}.Debug|x64.ActiveCfg = Debug|x64
+		{16969B99-DD9B-41BC-AE2C-7C5C3CBBB289}.Debug|x64.Build.0 = Debug|x64
+		{16969B99-DD9B-41BC-AE2C-7C5C3CBBB289}.Debug|x86.ActiveCfg = Debug|Win32
+		{16969B99-DD9B-41BC-AE2C-7C5C3CBBB289}.Debug|x86.Build.0 = Debug|Win32
+		{16969B99-DD9B-41BC-AE2C-7C5C3CBBB289}.Release|x64.ActiveCfg = Release|x64
+		{16969B99-DD9B-41BC-AE2C-7C5C3CBBB289}.Release|x64.Build.0 = Release|x64
+		{16969B99-DD9B-41BC-AE2C-7C5C3CBBB289}.Release|x86.ActiveCfg = Release|Win32
+		{16969B99-DD9B-41BC-AE2C-7C5C3CBBB289}.Release|x86.Build.0 = Release|Win32
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

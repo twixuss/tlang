@@ -1,10 +1,1 @@
-main :: () {
-	nested :: () {
-		nested2 :: () {
-			a :: 123 + 543 + 111;
-			return a;
-		}
-		return nested2();
-	}
-	return nested();
-}
+_0 :: fn (a: s32, b: s32) s32 { return a + b; } /* this is a /* nested */ comment */

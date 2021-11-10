@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<AutoVisualizer xmlns="http://schemas.microsoft.com/vstudio/debugger/natvis/2010">
+    <Type Name="AstNode" Inheritable="false">
+        <Expand>
+            <Item Name="[value]" Condition="kind==Ast_definition          " Optional="true">*(AstDefinition         *)this</Item>
+            <Item Name="[value]" Condition="kind==Ast_return              " Optional="true">*(AsReturn              *)this</Item>
+            <Item Name="[value]" Condition="kind==Ast_lambda              " Optional="true">*(AstLambda             *)this</Item>
+            <Item Name="[value]" Condition="kind==Ast_identifier          " Optional="true">*(AstIdentifier         *)this</Item>
+            <Item Name="[value]" Condition="kind==Ast_literal             " Optional="true">*(AstLiteral            *)this</Item>
+            <Item Name="[value]" Condition="kind==Ast_call                " Optional="true">*(AstCall               *)this</Item>
+            <Item Name="[value]" Condition="kind==Ast_binary_operator     " Optional="true">*(AstBinaryOperator     *)this</Item>
+            <Item Name="[value]" Condition="kind==Ast_struct              " Optional="true">*(AstStruct             *)this</Item>
+            <Item Name="[value]" Condition="kind==Ast_if                  " Optional="true">*(AstIf                 *)this</Item>
+            <Item Name="[value]" Condition="kind==Ast_unary_operator      " Optional="true">*(AstUnaryOperator      *)this</Item>
+            <Item Name="[value]" Condition="kind==Ast_expression_statement" Optional="true">*(AstExpressionStatement*)this</Item>
+        </Expand>
+    </Type>
+</AutoVisualizer>

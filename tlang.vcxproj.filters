@@ -2,7 +2,6 @@
 <Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <ItemGroup>
     <ClCompile Include="src\main.cpp" />
-    <ClCompile Include="src\output\c.cpp" />
     <ClCompile Include="src\ast.cpp" />
     <ClCompile Include="src\common.cpp" />
     <ClCompile Include="src\token.cpp" />

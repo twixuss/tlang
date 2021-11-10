@@ -1,27 +1,21 @@
 #pragma once
 #include <common.h>
 
-u16 const keyword_built_in_type_flag = 0x400;
-u16 const keyword_built_in_type_mask = keyword_built_in_type_flag - 1;
-u16 const built_in_type_count = 8;
-
 #define ENUMERATE_KEYWORDS(E) \
-E(return, 0x200) \
-E(u8,     0x400) \
-E(u16,    0x401) \
-E(u32,    0x402) \
-E(u64,    0x403) \
-E(s8,     0x404) \
-E(s16,    0x405) \
-E(s32,    0x406) \
-E(s64,    0x407) \
+E(return, 0x20000) \
+E(fn,     0x20001) \
+E(true,   0x20002) \
+E(false,  0x20003) \
+E(if,     0x20004) \
+E(else,   0x20005) \
 
 #define ENUMERATE_TOKEN_KINDS(E) \
-E(identifier, 0x100) \
-E(integer_literal, 0x101) \
+E(identifier, 0x10000) \
+E(integer_literal, 0x10001) \
+E(string_literal, 0x10002) \
 ENUMERATE_KEYWORDS(E) \
 
-using TokenKind = u16;
+using TokenKind = u32;
 enum : TokenKind {
 #define E(name, value) Token_##name = value,
 	ENUMERATE_TOKEN_KINDS(E)
