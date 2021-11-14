@@ -1,6 +1,6 @@
 [submodule "dep/tl"]
 	path = dep/tl
 	url = https://github.com/twixuss/tl
-[submodule "dep/C-Coroutines"]
-	path = dep/C-Coroutines
-	url = https://github.com/spc476/C-Coroutines
+[submodule "dep/cppcoro"]
+	path = dep/cppcoro
+	url = https://github.com/lewissbaker/cppcoro/

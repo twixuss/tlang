@@ -15,4 +15,18 @@
             <Item Name="[value]" Condition="kind==Ast_expression_statement" Optional="true">*(AstExpressionStatement*)this</Item>
         </Expand>
     </Type>
+    <Type Name="Token">
+        <DisplayString>{source.data + start, [count]na}</DisplayString>
+    </Type>
+    <Type Name="Lexer::Iterator">
+        <DisplayString>{block->tokens[local_token_index]}</DisplayString>
+    </Type>
+    <Type Name="AstExpression">
+        <DisplayString Condition="type==&amp;type_type&amp;&amp;kind==Ast_unary_operator">*{*((AstUnaryOperator *)this)->expression, na}</DisplayString>
+        <DisplayString Condition="type==&amp;type_type&amp;&amp;kind==Ast_identifier">{((AstIdentifier *)this)->name, bb}</DisplayString>
+        <DisplayString Condition="type==&amp;type_type&amp;&amp;kind==Ast_struct">{((AstStruct *)this)->name, bb}</DisplayString>
+        <!--
+        <DisplayString Condition="type==&amp;type_type&amp;&amp;kind==Ast_struct">x</DisplayString>
+-->
+    </Type>
 </AutoVisualizer>

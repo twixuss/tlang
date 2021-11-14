@@ -65,7 +65,7 @@ Optional<s64> get_constant_integer(AstExpression *expression) {
 		case Ast_literal: {
 			auto literal = (AstLiteral *)expression;
 			if (literal->literal_kind == LiteralKind::integer) {
-				return literal->u64;
+				return literal->integer;
 			}
 			break;
 		}
@@ -73,6 +73,19 @@ Optional<s64> get_constant_integer(AstExpression *expression) {
 			auto ident = (AstIdentifier *)expression;
 			if (ident->definition && ident->definition->is_constant) {
 				return get_constant_integer(ident->definition->expression);
+			}
+			break;
+		}
+		case Ast_unary_operator: {
+			auto unop = (AstUnaryOperator *)expression;
+			auto got_value = get_constant_integer(unop->expression);
+			if (!got_value)
+				return got_value;
+
+			auto value = got_value.value_unchecked();
+
+			switch (unop->operation) {
+				case UnaryOperation::minus: return -value;
 			}
 			break;
 		}
@@ -134,6 +147,7 @@ void append_type(StringBuilder &builder, AstExpression *type) {
 List<utf8> type_to_string(AstExpression *type) {
 	if (!type)
 		return to_list(u8"***null***"s);
+
 	StringBuilder builder;
 	append_type(builder, type);
 	return (List<utf8>)to_string(builder);
@@ -199,4 +213,49 @@ AstStruct *get_struct(AstExpression *type) {
 		return (AstStruct *)type;
 
 	return 0;
+}
+
+struct AllocationBlock {
+	u8 *base = 0;
+	u8 *cursor = 0;
+	umm size = 0;
+};
+
+List<AllocationBlock> ast_allocation_blocks;
+u32 last_allocation_block_index;
+Mutex allocation_mutex;
+
+umm ast_allocation_block_size;
+
+void new_ast_block() {
+	AllocationBlock block;
+	block.size = ast_allocation_block_size;
+	block.cursor = block.base = os_allocator.allocate<u8>(ast_allocation_block_size);
+	ast_allocation_blocks.add(block);
+	last_allocation_block_index += 1;
+	ast_allocation_block_size *= 2;
+}
+
+void init_ast_allocator() {
+	ast_allocation_blocks.allocator = os_allocator;
+	ast_allocation_block_size = 1024*1024;
+	last_allocation_block_index = -1;
+	new_ast_block();
+}
+
+void *my_allocate(umm size, umm align) {
+	scoped_lock(allocation_mutex);
+
+retry:
+	auto block = &ast_allocation_blocks[last_allocation_block_index];
+
+	u8 *target = (u8 *)(((umm)block->cursor + align - 1) & ~(align - 1));
+	if ((u8 *)block->base + block->size - target < size) {
+		new_ast_block();
+		goto retry;
+	}
+
+	block->cursor = target + size;
+
+	return target;
 }

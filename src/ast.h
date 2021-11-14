@@ -84,14 +84,7 @@ struct AstLiteral: AstExpression {
 	LiteralKind literal_kind = {};
 	union {
 		u8 value_bytes[16];
-		u64 u64;
-		u32 u32;
-		u16 u16;
-		u8 u8;
-		s64 s64;
-		s32 s32;
-		s16 s16;
-		s8 s8;
+		u64 integer;
 		bool Bool;
 		Span<utf8> string;
 	};
@@ -111,7 +104,7 @@ struct AstLambda : AstExpression {
 	List<AstReturn *> return_statements;
 	AstExpression *return_type = 0;
 
-	List<AstDefinition *> parameters;
+	List<AstDefinition *> parameters; // This will be small most of the time, so no need in hashmap
 
 	List<AstStatement *> statements;
 
@@ -122,6 +115,9 @@ struct AstLambda : AstExpression {
 	HashMap<Span<utf8>, AstDefinition *> local_definitions;
 
 	bool has_body = true;
+
+	Span<utf8> extern_language;
+	Span<utf8> extern_library;
 };
 
 struct AstCall : AstExpression {
@@ -234,6 +230,8 @@ bool can_be_global(AstStatement *statement);
 AstStruct &get_built_in_type_from_token(TokenKind t);
 AstStruct *find_built_in_type_from_token(TokenKind t);
 
+void *my_allocate(umm size, umm align);
+
 template <class T>
 T *new_ast() {
 	return default_allocator.allocate<T>();
@@ -250,3 +248,7 @@ bool types_match(AstExpression *type_a, AstExpression *type_b);
 bool is_type(AstExpression *expression);
 
 AstStruct *get_struct(AstExpression *type);
+
+void init_ast_allocator();
+
+extern LinearSet<Span<utf8>> extern_libraries;

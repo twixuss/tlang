@@ -8,6 +8,7 @@ E(true,   0x20002) \
 E(false,  0x20003) \
 E(if,     0x20004) \
 E(else,   0x20005) \
+E(extern, 0x20006) \
 
 #define ENUMERATE_TOKEN_KINDS(E) \
 E(identifier, 0x10000) \
@@ -24,7 +25,15 @@ enum : TokenKind {
 
 Span<utf8> token_kind_to_string(TokenKind kind);
 
+extern Span<utf8> source;
+
 struct Token {
-	Span<utf8> string;
+	u32 file;
+	u32 start;
+	u32 count;
 	TokenKind kind;
+
+	Span<utf8> string() {
+		return {source.data + start, count};
+	}
 };

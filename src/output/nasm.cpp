@@ -1,14 +1,15 @@
 #include "nasm.h"
-#include <ast.h>
+#include "ast.h"
+#include "extern.h"
 
 struct Converter {
 	StringBuilder builder;
+	StringBuilder extern_builder;
 	StringBuilder *body_builder;
 	StringBuilder rodata_builder;
 	StringBuilder bss_builder;
 	u32 tab_count;
 	List<utf8> parent_lambda_name;
-	bool last_instruction_is_push;
 };
 
 
@@ -21,14 +22,15 @@ name##ExtraData *ex(name *node) { \
 
 
 struct AstDefinitionExtraData {
-	u32 rbp_offset;
-	u32 bss_offset;
+	u32 stack_offset = 0;
+	u32 bss_offset = 0;
 };
 DEFINE_EXTRA(AstDefinition)
 
 
 struct AstLambdaExtraData {
-	u32 rbp_offset_accumulator;
+	u32 stack_offset_accumulator = 0;
+	u32 parameters_size = 0;
 };
 DEFINE_EXTRA(AstLambda)
 
@@ -85,11 +87,24 @@ static void append(Converter &conv, AstDefinition *definition) {
 					conv.tab_count = 1;
 					defer { conv.tab_count = old_tab_count; };
 
+					u32 parameter_size_accumulator = 0;
+					for (auto parameter : lambda->parameters) {
+						ex(parameter)->stack_offset = parameter_size_accumulator;
+						parameter_size_accumulator += get_size(parameter->type);
+					}
+					ex(lambda)->parameters_size = parameter_size_accumulator;
+
 					for (auto statement : lambda->statements) {
 						append(conv, statement);
 					}
 
+					if (types_match(lambda->return_type, &type_void)) {
+						append(*conv.body_builder, "mov rsp, rbp\npop rbp\nret\n");
+					}
+
 					append(conv.builder, to_string(*conv.body_builder));
+				} else {
+					append_format(conv.extern_builder, "extern %\n", lambda->name);
 				}
 				break;
 			}
@@ -98,12 +113,11 @@ static void append(Converter &conv, AstDefinition *definition) {
 					break;
 
 				if (definition->parent_lambda) {
-					if (definition->is_parameter) {
-						ex(definition)->rbp_offset = find_index_of(definition->parent_lambda->parameters, definition);
-					} else {
+					append_format(*conv.body_builder, "; - definition %\n", definition->name);
+					if (!definition->is_parameter) {
 						auto size = get_size(definition->type);
-						ex(definition->parent_lambda)->rbp_offset_accumulator += ceil(size, 8u);
-						ex(definition)->rbp_offset = ex(definition->parent_lambda)->rbp_offset_accumulator;
+						ex(definition)->stack_offset = ex(definition->parent_lambda)->stack_offset_accumulator;
+						ex(definition->parent_lambda)->stack_offset_accumulator += ceil(size, 8u); // TODO: hardcoded 8
 
 						append(conv, definition->expression);
 					}
@@ -120,16 +134,19 @@ static void append(Converter &conv, AstDefinition *definition) {
 			}
 		}
 	} else {
+		append_format(*conv.body_builder, "; - definition %\n", definition->name);
 		assert(!definition->is_parameter);
-		auto size = ceil(get_size(definition->type), 8u);
-		ex(definition->parent_lambda)->rbp_offset_accumulator += size;
-		ex(definition)->rbp_offset = ex(definition->parent_lambda)->rbp_offset_accumulator;
+		auto size = ceil(get_size(definition->type), 8u); // TODO: hardcoded 8
+		ex(definition->parent_lambda)->stack_offset_accumulator += size;
+		ex(definition)->stack_offset = ex(definition->parent_lambda)->stack_offset_accumulator;
 		append_format(*conv.body_builder, "sub rsp, %\n", size);
 	}
 }
 static void append(Converter &conv, AstReturn *ret) {
+	append(*conv.body_builder, "; - return\n");
+
 	append(conv, ret->expression);
-	append_format(*conv.body_builder, "pop rax\nmov rsp, rbp\npop rbp\nret\n");
+	append(*conv.body_builder, "pop rax\nmov rsp, rbp\npop rbp\nret\n");
 }
 
 u32 offset_of(AstStruct *Struct, AstDefinition *member) {
@@ -144,25 +161,27 @@ u32 offset_of(AstStruct *Struct, AstDefinition *member) {
 }
 
 static void append(Converter &conv, AstBinaryOperator *bin) {
+	append_format(*conv.body_builder, "; - binary %\n", bin->operation);
+
+	auto left = bin->left;
+	auto right = bin->right;
+
 	if (bin->operation == BinaryOperation::member_access) {
-		switch (bin->right->kind) {
+		switch (right->kind) {
 			case Ast_identifier: {
-				auto Struct = get_struct(bin->left->type);
+				auto Struct = get_struct(left->type);
 				assert(Struct);
 
-				assert(bin->left->kind == Ast_identifier);
-				auto variable = ((AstIdentifier *)bin->left)->definition;
-				assert(variable);
-
-				auto ident = (AstIdentifier *)bin->right;
+				assert(right->kind == Ast_identifier);
+				auto ident = (AstIdentifier *)right;
 				auto member = ident->definition;;
 				assert(member);
 				if (member->is_constant) {
 					append_format(*conv.body_builder, "mov rax, %\npush qword[rax]\n", member->name);
 				} else {
-					append(conv, bin->left);
-					print("rbp_offset is %, member offset is %\n", ex(variable)->rbp_offset, offset_of(Struct, member));
-					append_format(*conv.body_builder, "push qword[rbp - %]\n", ex(variable)->rbp_offset + offset_of(Struct, member));
+					append(conv, left);
+					append_format(*conv.body_builder, "add rsp, %\n", get_size(left->type));
+					append_format(*conv.body_builder, "push qword[rsp - %]\n", offset_of(Struct, member) + 8);
 				}
 				break;
 			}
@@ -172,8 +191,8 @@ static void append(Converter &conv, AstBinaryOperator *bin) {
 			}
 		}
 	} else {
-		append(conv, bin->left);
-		append(conv, bin->right);
+		append(conv, left);
+		append(conv, right);
 		switch (bin->operation) {
 			using enum BinaryOperation;
 			case add:      append_format(*conv.body_builder, "pop rax\nadd qword[rsp], rax\n"); break;
@@ -192,13 +211,32 @@ static void append(Converter &conv, AstBinaryOperator *bin) {
 static void append(Converter &conv, AstIdentifier *identifier) {
 	auto definition = identifier->definition;
 	assert(definition);
+
+	append_format(*conv.body_builder, "; - load identifier %\n", identifier->name);
+
 	if (definition->parent_lambda) {
 		if (definition->is_parameter) {
 			// Function Parameter
-			append_format(*conv.body_builder, "push qword[rbp + %]\n", 16 + ex(definition)->rbp_offset);
+
+			s64 size = get_size(definition->type);
+			s64 offset = 8 + ex(definition->parent_lambda)->parameters_size - ex(definition)->stack_offset;
+
+			while (size > 0) {
+				append_format(*conv.body_builder, "push qword[rbp + %]\n", offset);
+				size -= 8;
+				offset -= 8;
+			}
 		} else {
 			// Local
-			append_format(*conv.body_builder, "push qword[rbp - %]\n", ex(definition)->rbp_offset);
+
+			s64 size = get_size(definition->type);
+			s64 offset = ex(definition)->stack_offset + 8;
+
+			while (size > 0) {
+				append_format(*conv.body_builder, "push qword[rbp - %]\n", offset);
+				size -= 8;
+				offset += 8;
+			}
 		}
 	} else {
 		// Global constants and variables
@@ -220,27 +258,56 @@ List<utf8> get_full_name(AstLambda *lambda) {
 }
 
 static void append(Converter &conv, AstCall *call) {
-	for (auto argument : call->arguments) {
-		append(conv, argument);
+	append_format(*conv.body_builder, "; - call %\n", call->name);
+
+	if (call->lambda->has_body) {
+		u32 arguments_size_on_stack = 0;
+		for (auto argument : call->arguments) {
+			arguments_size_on_stack += get_size(argument->type);
+			append(conv, argument);
+		}
+		append_format(*conv.body_builder, "call %\n", get_full_name(call->lambda));
+		if (arguments_size_on_stack) {
+			append_format(*conv.body_builder, "add rsp, %\n", arguments_size_on_stack);
+		}
+		append_format(*conv.body_builder, "push rax\n");
+	} else {
+		assert(call->lambda->extern_language == u8"C"s);
+
+		u32 arguments_size_on_stack = 0;
+		for (auto argument : reverse(call->arguments)) {
+			arguments_size_on_stack += get_size(argument->type);
+			append(conv, argument);
+		}
+
+		if (call->arguments.count >= 1) { arguments_size_on_stack -= get_size(call->arguments[0]->type); append(*conv.body_builder, "pop rcx\n"); }
+		if (call->arguments.count >= 2) { arguments_size_on_stack -= get_size(call->arguments[1]->type); append(*conv.body_builder, "pop rdx\n"); }
+		if (call->arguments.count >= 3) { arguments_size_on_stack -= get_size(call->arguments[2]->type); append(*conv.body_builder, "pop r8\n");  }
+		if (call->arguments.count >= 4) { arguments_size_on_stack -= get_size(call->arguments[3]->type); append(*conv.body_builder, "pop r9\n");  }
+
+		append_format(*conv.body_builder, "call %\n", call->lambda->name);
+
+		if (arguments_size_on_stack > 0) {
+			// this removes arguments from the stack
+			append_format(*conv.body_builder, "add rsp, %\n", arguments_size_on_stack);
+		}
+
+		append_format(*conv.body_builder, "push rax\n");
 	}
-	append_format(*conv.body_builder, "call %\n", get_full_name(call->lambda));
-	if (call->arguments.count) {
-		append_format(*conv.body_builder, "add rsp, %\n", call->arguments.count * 8);
-	}
-	append_format(*conv.body_builder, "push rax\n");
-	conv.last_instruction_is_push = true;
 }
 static void append(Converter &conv, AstLiteral *literal) {
+	//append_format(*conv.body_builder, "; - literal %\n", literal->literal_kind);
+
 	assert(literal->type != &type_unsized_integer);
 	     if (types_match(literal->type, &type_u8 ) ||
 	         types_match(literal->type, &type_s8 ) ||
-	         types_match(literal->type, &type_bool)) append_format(*conv.body_builder, "push byte %\n", literal->u8 );
+	         types_match(literal->type, &type_bool)) append_format(*conv.body_builder, "push byte %\n", (u8)literal->integer );
 	else if (types_match(literal->type, &type_u16) ||
-	         types_match(literal->type, &type_s16)) append_format(*conv.body_builder, "push word %\n", literal->u16);
+	         types_match(literal->type, &type_s16)) append_format(*conv.body_builder, "push word %\n", (u16)literal->integer);
 	else if (types_match(literal->type, &type_u32) ||
-	         types_match(literal->type, &type_s32)) append_format(*conv.body_builder, "push dword %\n", literal->u32);
+	         types_match(literal->type, &type_s32)) append_format(*conv.body_builder, "push dword %\n", (u32)literal->integer);
 	else if (types_match(literal->type, &type_u64) ||
-	         types_match(literal->type, &type_s64)) append_format(*conv.body_builder, "push qword %\n", literal->u64);
+	         types_match(literal->type, &type_s64)) append_format(*conv.body_builder, "push qword %\n", (u64)literal->integer);
 	else if (types_match(literal->type, &type_string)) {
 		append_format(conv.rodata_builder, "string_literal_%:db\"%\"\n", literal->uid, literal->string);
 		append_format(*conv.body_builder, "mov rax, qword string_literal_%\npush rax\npush qword %\n", literal->uid, literal->string.count);
@@ -249,6 +316,8 @@ static void append(Converter &conv, AstLiteral *literal) {
 
 }
 static void append(Converter &conv, AstIf *If) {
+	append_format(*conv.body_builder, "; - if\n");
+
 	append(conv, If->condition);
 	append_format(*conv.body_builder, "pop rax\ntest rax, rax\njz .false%\n", If->uid);
 	for (auto statement : If->true_statements) {
@@ -298,7 +367,7 @@ void output_nasm() {
 		append(conv, statement);
 	});
 
-	auto output_path = to_pathchars(format(u8"%.nasm", source_path_without_extension));
+	auto output_path = to_pathchars(format(u8"%.asm", source_path_without_extension));
 
 	{
 		auto file = open_file(output_path, {.write = true});
@@ -306,9 +375,10 @@ void output_nasm() {
 
 		write(file, R"(
 bits 64
-
+)"b);
+		write(file, as_bytes(to_string(conv.extern_builder)));
+		write(file, R"(
 section .bss
-print_buffer: resb 64
 )"b);
 		write(file, as_bytes(to_string(conv.bss_builder)));
 		write(file, R"(
@@ -329,11 +399,14 @@ global main
 	append_format(bat_builder, u8R"(
 @echo off
 call "C:\Program Files (x86)\Microsoft Visual Studio\2019\Community\VC\Auxiliary\Build\vcvarsall.bat" x64
-nasm -g -f win64 "%.nasm" -o "%.obj"
+nasm -f win64 -g "%.asm" -o "%.obj"
 )", source_path_without_extension, source_path_without_extension);
 
 	append(bat_builder, "if %errorlevel% neq 0 exit /b %errorlevel%\n");
-	append_format(bat_builder, R"(link kernel32.lib "%.obj" /out:"%.exe" /entry:"main" /subsystem:console)", source_path_without_extension, source_path_without_extension);
+	append_format(bat_builder, R"(link "%.obj" /out:"%.exe" /entry:"main" /subsystem:console)", source_path_without_extension, source_path_without_extension);
+	for (auto library : extern_libraries) {
+		append_format(bat_builder, " %", library);
+	}
 
 	auto bat_path = to_pathchars(concatenate(executable_directory, "\\nasm_build.bat"s));
 	write_entire_file(bat_path, as_bytes(to_string(bat_builder)));
