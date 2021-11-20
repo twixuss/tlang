@@ -15,3 +15,12 @@ extern Span<utf8> source_path_without_extension;
 extern Span<utf8> executable_path;
 extern Span<utf8> executable_name;
 extern Span<utf8> executable_directory;
+
+enum class Comparison : u8 {
+	e,
+	ne,
+	l,
+	le,
+	g,
+	ge,
+};

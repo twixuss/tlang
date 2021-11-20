@@ -14,9 +14,9 @@ EndProject
 Project("{911E67C6-3D85-4FCE-B560-20A9C3E3FF48}") = "a", "bin\a.exe", "{8E82CEE2-54B6-4641-B28E-653E983F355F}"
 	ProjectSection(DebuggerProjectSystem) = preProject
 		PortSupplier = 00000000-0000-0000-0000-000000000000
-		Executable = F:\tlang\bin\a.exe
+		Executable = F:\tlang\tests\a.exe
 		RemoteMachine = DESKTOP-2HA4U8E
-		StartingDirectory = F:\tlang\bin
+		StartingDirectory = F:\tlang\tests
 		Environment = По умолчанию
 		LaunchingEngine = 00000000-0000-0000-0000-000000000000
 		UseLegacyDebugEngines = No
@@ -26,6 +26,20 @@ Project("{911E67C6-3D85-4FCE-B560-20A9C3E3FF48}") = "a", "bin\a.exe", "{8E82CEE2
 	EndProjectSection
 EndProject
 Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "test_runner", "test_runner\test_runner.vcxproj", "{16969B99-DD9B-41BC-AE2C-7C5C3CBBB289}"
+EndProject
+Project("{911E67C6-3D85-4FCE-B560-20A9C3E3FF48}") = "b", "tests\b.exe", "{63FB2C2F-B713-4165-9FF4-462BC8FFFAFF}"
+	ProjectSection(DebuggerProjectSystem) = preProject
+		PortSupplier = 00000000-0000-0000-0000-000000000000
+		Executable = F:\tlang\tests\b.exe
+		RemoteMachine = DESKTOP-2HA4U8E
+		StartingDirectory = F:\tlang\tests
+		Environment = По умолчанию
+		LaunchingEngine = 00000000-0000-0000-0000-000000000000
+		UseLegacyDebugEngines = No
+		LaunchSQLEngine = No
+		AttachLaunchAction = No
+		IORedirection = Auto
+	EndProjectSection
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
@@ -55,6 +69,10 @@ Global
 		{16969B99-DD9B-41BC-AE2C-7C5C3CBBB289}.Release|x64.Build.0 = Release|x64
 		{16969B99-DD9B-41BC-AE2C-7C5C3CBBB289}.Release|x86.ActiveCfg = Release|Win32
 		{16969B99-DD9B-41BC-AE2C-7C5C3CBBB289}.Release|x86.Build.0 = Release|Win32
+		{63FB2C2F-B713-4165-9FF4-462BC8FFFAFF}.Debug|x64.ActiveCfg = Release|x64
+		{63FB2C2F-B713-4165-9FF4-462BC8FFFAFF}.Debug|x86.ActiveCfg = Release|x64
+		{63FB2C2F-B713-4165-9FF4-462BC8FFFAFF}.Release|x64.ActiveCfg = Release|x64
+		{63FB2C2F-B713-4165-9FF4-462BC8FFFAFF}.Release|x86.ActiveCfg = Release|x64
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

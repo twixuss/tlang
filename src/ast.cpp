@@ -9,15 +9,6 @@ umm append(StringBuilder &builder, AstKind kind) {
 	return append(builder, "(unknown AstKind)");
 }
 
-umm append(StringBuilder &builder, BinaryOperation op) {
-	switch (op) {
-		using enum BinaryOperation;
-#define e(name) case name: return append(builder, u8#name##s);
-		ENUMERATE_BINARY_OPERATIONS(e)
-#undef e
-	}
-	return append(builder, "(unknown BinaryOperation)");
-}
 umm append(StringBuilder &builder, UnaryOperation op) {
 	switch (op) {
 		using enum UnaryOperation;
@@ -50,8 +41,8 @@ AstStruct *type_default_integer;
 HashMap<Span<utf8>, AstStatement *> global_statements;
 RecursiveMutex global_statements_mutex;
 
-bool needs_semicolon(AstNode *node) {
-	return node->kind != Ast_lambda;
+bool needs_semicolon(AstExpression *node) {
+	return node->kind != Ast_lambda && node->kind != Ast_struct;
 }
 
 bool can_be_global(AstStatement *statement) {
@@ -60,7 +51,7 @@ bool can_be_global(AstStatement *statement) {
 	return false;
 }
 
-Optional<s64> get_constant_integer(AstExpression *expression) {
+Optional<BigInt> get_constant_integer(AstExpression *expression) {
 	switch (expression->kind) {
 		case Ast_literal: {
 			auto literal = (AstLiteral *)expression;
@@ -107,7 +98,7 @@ void append_type(StringBuilder &builder, AstExpression *type) {
 	assert(is_type(type));
 	switch (type->kind) {
 		case Ast_struct: {
-			append(builder, ((AstStruct *)type)->name);
+			append(builder, ((AstStruct *)type)->definition->name);
 			break;
 		}
 		case Ast_lambda: {
@@ -153,7 +144,7 @@ List<utf8> type_to_string(AstExpression *type) {
 	return (List<utf8>)to_string(builder);
 }
 
-u32 get_size(AstExpression *type) {
+s64 get_size(AstExpression *type) {
 	assert(type);
 	switch (type->kind) {
 		case Ast_struct: {
@@ -259,3 +250,5 @@ retry:
 
 	return target;
 }
+
+AstLambda *main_lambda;

@@ -1,6 +1,7 @@
 #pragma once
 #include <common.h>
 #include <token.h>
+#include <tl/big_int.h>
 
 #define ENUMERATE_AST_KIND(e) \
 e(null) \
@@ -15,6 +16,7 @@ e(struct) \
 e(if) \
 e(expression_statement) \
 e(unary_operator) \
+e(while) \
 
 enum AstKind {
 #define e(name) Ast_ ## name,
@@ -30,6 +32,7 @@ struct AstNode {
 	AstKind kind = Ast_null;
 	s32 uid = atomic_increment(&ast_node_uid_counter);
 	Span<utf8> location;
+	Span<utf8> combined_location;
 
 	void *user_data = 0;
 };
@@ -47,6 +50,8 @@ struct AstExpressionStatement : AstStatement {
 	AstExpression *expression = 0;
 };
 
+#define INVALID_MEMBER_OFFSET (-1)
+
 struct AstDefinition : AstStatement {
 	AstDefinition() { kind = Ast_definition; }
 
@@ -54,7 +59,9 @@ struct AstDefinition : AstStatement {
 	AstExpression *expression = 0;
 	AstExpression *type = 0;
 
-	AstLambda *parent_lambda = 0;
+	AstExpression *parent_block = 0;
+
+	s64 offset_in_struct = INVALID_MEMBER_OFFSET;
 
 	bool is_constant  : 1 = false;
 	bool is_parameter : 1 = false;
@@ -79,14 +86,20 @@ enum class LiteralKind : u8 {
 };
 
 struct AstLiteral: AstExpression {
-	AstLiteral() { kind = Ast_literal; memset(value_bytes, 0, sizeof(value_bytes)); }
+	AstLiteral() {
+		kind = Ast_literal;
+		memset(&integer, 0, max(sizeof(integer), sizeof(Bool), sizeof(string)));
+	}
+	~AstLiteral() {
+
+	}
 
 	LiteralKind literal_kind = {};
 	union {
-		u8 value_bytes[16];
-		u64 integer;
+		BigInt integer;
 		bool Bool;
 		Span<utf8> string;
+		// TODO: If you add new things here, make sure to also change the constructor
 	};
 };
 
@@ -97,6 +110,8 @@ struct AstIdentifier : AstExpression {
 
 	Span<utf8> name;
 };
+
+struct Instruction;
 
 struct AstLambda : AstExpression {
 	AstLambda() { kind = Ast_lambda; }
@@ -118,6 +133,9 @@ struct AstLambda : AstExpression {
 
 	Span<utf8> extern_language;
 	Span<utf8> extern_library;
+
+	Instruction *first_instruction = 0;
+	s64 location_in_bytecode = -1;
 };
 
 struct AstCall : AstExpression {
@@ -135,11 +153,9 @@ struct AstCall : AstExpression {
 struct AstStruct : AstExpression {
 	AstStruct() { kind = Ast_struct; }
 
-	Span<utf8> name = {};
+	AstDefinition *definition = 0;
 	List<AstDefinition *> members;
 	List<AstDefinition *> constants;
-
-	AstLambda *parent_lambda = 0;
 
 	u32 size = 0;
 };
@@ -153,24 +169,15 @@ struct AstIf : AstStatement {
 	List<AstStatement *> false_statements;
 };
 
-#define ENUMERATE_BINARY_OPERATIONS(e) \
-e(none) \
-e(add) \
-e(subtract) \
-e(multiply) \
-e(divide) \
-e(member_access) \
-e(_and) \
-e(_or) \
-e(_xor) \
+struct AstWhile : AstStatement {
+	AstWhile() { kind = Ast_while; }
 
-enum class BinaryOperation {
-#define e(name) name,
-	ENUMERATE_BINARY_OPERATIONS(e)
-#undef e
+	AstExpression *condition = 0;
+
+	List<AstStatement *> statements;
 };
 
-umm append(StringBuilder &builder, BinaryOperation op);
+using BinaryOperation = u32;
 
 struct AstBinaryOperator : AstExpression {
 	AstBinaryOperator() { kind = Ast_binary_operator; }
@@ -224,7 +231,7 @@ extern AstStruct *type_default_integer;
 extern HashMap<Span<utf8>, AstStatement *> global_statements;
 extern RecursiveMutex global_statements_mutex;
 
-bool needs_semicolon(AstNode *node);
+bool needs_semicolon(AstExpression *node);
 bool can_be_global(AstStatement *statement);
 
 AstStruct &get_built_in_type_from_token(TokenKind t);
@@ -237,11 +244,11 @@ T *new_ast() {
 	return default_allocator.allocate<T>();
 }
 
-Optional<s64> get_constant_integer(AstExpression *expression);
+Optional<BigInt> get_constant_integer(AstExpression *expression);
 
 List<utf8> type_to_string(AstExpression *type);
 
-u32 get_size(AstExpression *type);
+s64 get_size(AstExpression *type);
 
 bool types_match(AstExpression *type_a, AstExpression *type_b);
 
@@ -252,3 +259,5 @@ AstStruct *get_struct(AstExpression *type);
 void init_ast_allocator();
 
 extern LinearSet<Span<utf8>> extern_libraries;
+
+extern AstLambda *main_lambda;

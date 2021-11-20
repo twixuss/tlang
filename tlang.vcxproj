@@ -20,6 +20,7 @@
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="src\ast.cpp" />
+    <ClCompile Include="src\bytecode.cpp" />
     <ClCompile Include="src\common.cpp" />
     <ClCompile Include="src\extern.cpp" />
     <ClCompile Include="src\main.cpp" />
@@ -28,6 +29,7 @@
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="src\ast.h" />
+    <ClInclude Include="src\bytecode.h" />
     <ClInclude Include="src\common.h" />
     <ClInclude Include="src\extern.h" />
     <ClInclude Include="src\output\c.h" />
