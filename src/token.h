@@ -12,6 +12,7 @@ E(extern, 0x20006) \
 E(while,  0x20007) \
 E(struct, 0x20008) \
 E(import, 0x20009) \
+E(null,   0x2000a) \
 
 #define ENUMERATE_TOKEN_KINDS(E) \
 E(identifier, 0x10000) \

@@ -1,3 +1,6 @@
 .vs/
 temp/
 *.pdb
+tests/*.exe
+tests/*.obj
+tests/*.asm

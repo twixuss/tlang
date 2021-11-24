@@ -1,14 +1,17 @@
-#define DUMBEST_BYTECODE 0
+#define DUMBEST_BYTECODE 1
 #include "bytecode.h"
 #include "ast.h"
 #include "extern.h"
+
+static constexpr s64 stack_word_size = 8;
+static constexpr s64 register_size = 8;
 
 using InstructionBuilder = BlockList<Instruction, 4096>;
 
 struct Converter {
 	InstructionBuilder builder;
 	InstructionBuilder *body_builder;
-	StringBuilder extern_builder;
+	List<Span<utf8>> extern_functions;
 	StringBuilder constant_data_builder;
 	StringBuilder data_builder;
 	StringBuilder zero_data_builder;
@@ -53,37 +56,44 @@ s64 allocate_zero_data(Converter &conv, s64 byte_count) {
 }
 
 void push_comment(Converter &conv, Span<utf8> string) {
-
+	auto &back = conv.body_builder->back();
+	if (back.comment) {
+		back.comment = concatenate(as_span(back.comment), ';', string, '\0').data;
+	} else {
+		back.comment = null_terminate(string).data;
+	}
 }
 
-#define make_instruction(_kind, ...) \
+#define MI(_kind, ...) \
 	{.kind = InstructionKind::_kind, ._kind={__VA_ARGS__}}
 
-#define push_instruction(conv, kind, ...) \
-	add_instruction(conv, make_instruction(kind, __VA_ARGS__))
+#define I(kind, ...) \
+	add_instruction(conv, MI(kind, __VA_ARGS__))
 
 Instruction &add_instruction(Converter &conv, Instruction i) {
+	timed_function();
+
 	using enum InstructionKind;
-#if !DUMBEST_BYTECODE
 	switch (i.kind) {
+#if !DUMBEST_BYTECODE
 		case pop_reg: {
 			auto &back = conv.body_builder->back();
 			switch (back.kind) {
 				case push_constant:
 					conv.body_builder->pop_back();
-					return push_instruction(conv, move_constant_to_reg, .reg=i.push_reg.reg, .constant=back.push_constant.constant);
-				case push_reg:
+					return I(move_constant_to_reg, .reg=i.push_r.reg, .constant=back.push_constant.constant);
+				case push_r:
 					conv.body_builder->pop_back();
-					return push_instruction(conv, move_reg_to_reg, .dst_reg=i.push_reg.reg, .src_reg=back.push_reg.reg);
+					return I(mov_rr, i.pus.src_reg=back.push_r.reg);
 				case push_mem:
 					conv.body_builder->pop_back();
-					return push_instruction(conv, move_mem_to_reg, .dst_reg=i.push_reg.reg, .src_reg=back.push_mem.reg);
+					return I(mov_rm, i.push_r._reg=back.push_mem.reg);
 				case add_constant_to_mem:
 					if (back.add_constant_to_mem.reg == rsp) {
 						auto add = back.add_constant_to_mem;
 						conv.body_builder->pop_back();
-						push_instruction(conv, move_mem_to_reg, .dst_reg=i.push_reg.reg, .src_reg=rsp);
-						return push_instruction(conv, add_constant_to_reg, .reg=i.push_reg.reg, .constant=add.constant);
+						I(mov_rm, i.push_r._reg=rsp);
+						return I(add_rc, i.p, .constant=add.constant);
 					}
 					break;
 			}
@@ -93,8 +103,8 @@ Instruction &add_instruction(Converter &conv, Instruction i) {
 			if (i.move_mem_to_reg.src_reg == rsp) {
 				auto &back = conv.body_builder->back();
 				switch (back.kind) {
-					case push_reg: {
-						return push_instruction(conv, move_reg_to_reg, .dst_reg=i.move_mem_to_reg.dst_reg, .src_reg=back.push_reg.reg);
+					case push_r: {
+						return I(mov_rr, i.movreg.dst_reg, .src_reg=back.push_r.reg);
 					}
 					default:
 						break;
@@ -102,8 +112,14 @@ Instruction &add_instruction(Converter &conv, Instruction i) {
 			}
 			break;
 		}
-	}
 #endif
+		case mul_rc: {
+			if (is_power_of_2(i.mul_rc.s)) {
+				return I(shl_rc, i.mul_rc.d, log2(i.mul_rc.s));
+			}
+			break;
+		}
+	}
 	return conv.body_builder->add(i);
 }
 
@@ -117,6 +133,7 @@ static void append(Converter &, AstIf*);
 static void append(Converter &, AstExpressionStatement*);
 static void append(Converter &, AstUnaryOperator*);
 static void append(Converter &, AstWhile*);
+static void append(Converter &, AstSubscript*);
 
 static void append(Converter &conv, AstNode *node) {
 	switch (node->kind) {
@@ -130,6 +147,7 @@ static void append(Converter &conv, AstNode *node) {
 		case Ast_expression_statement: return append(conv, (AstExpressionStatement*)node);
 		case Ast_unary_operator: return append(conv, (AstUnaryOperator*)node);
 		case Ast_while: return append(conv, (AstWhile*)node);
+		case Ast_subscript: return append(conv, (AstSubscript*)node);
 		default: invalid_code_path();
 	}
 }
@@ -144,7 +162,7 @@ static void append(Converter &conv, AstDefinition *definition) {
 		return;
 	}
 
-	u32 definition_size = 0;
+	s64 definition_size = 0;
 	if (definition->type->kind != Ast_lambda) {
 		definition_size = get_size(definition->type);
 		if (definition->type != &type_type)
@@ -160,10 +178,9 @@ static void append(Converter &conv, AstDefinition *definition) {
 			conv.body_builder = &body_builder;
 			defer { conv.body_builder = prev_body_builder; };
 
-			// append_format(*conv.body_builder, "push rbp\nmov rbp, rsp\n", lambda->uid, lambda->name);
 			lambda->first_instruction = &
-			conv.body_builder->add(make_instruction(push_reg,        .reg=rbp));
-			conv.body_builder->add(make_instruction(move_reg_to_reg, .dst_reg=rbp, .src_reg=rsp));
+			conv.body_builder->add(MI(push_r, rbp));
+			conv.body_builder->add(MI(mov_rr, rbp, rsp));
 
 
 			auto old_tab_count = conv.tab_count;
@@ -174,7 +191,7 @@ static void append(Converter &conv, AstDefinition *definition) {
 			conv.lambda = lambda;
 			defer { conv.lambda = old_lambda; };
 
-			u32 parameter_size_accumulator = 0;
+			s64 parameter_size_accumulator = 0;
 			for (auto parameter : lambda->parameters) {
 				ex(parameter)->offset = parameter_size_accumulator;
 				parameter_size_accumulator += get_size(parameter->type);
@@ -186,9 +203,9 @@ static void append(Converter &conv, AstDefinition *definition) {
 			}
 
 			if (types_match(lambda->return_type, &type_void)) {
-				push_instruction(conv, move_reg_to_reg, .dst_reg=rsp, .src_reg=rbp);
-				push_instruction(conv, pop_reg, .reg=rbp);
-				push_instruction(conv, ret);
+				I(mov_rr, rsp, rbp);
+				I(pop_r, rbp);
+				I(ret);
 				//append(*conv.body_builder, "mov rsp, rbp\npop rbp\nret\n");
 			}
 
@@ -197,7 +214,7 @@ static void append(Converter &conv, AstDefinition *definition) {
 
 			// append(conv.builder, to_string(*conv.body_builder));
 		} else {
-			append_format(conv.extern_builder, "extern %\n", lambda->name);
+			conv.extern_functions.add(lambda->name);
 		}
 		return;
 	}
@@ -209,11 +226,10 @@ static void append(Converter &conv, AstDefinition *definition) {
 		if (definition->parent_block->kind == Ast_lambda) {
 			auto parent_lambda = (AstLambda *)definition->parent_block;
 			push_comment(conv, format(u8"definition %", definition->name));
-			//append_format(*conv.body_builder, "; - definition %\n", definition->name);
 			assert(!definition->is_parameter);
 
 
-			auto size = ceil(definition_size, 8u); // TODO: hardcoded 8
+			auto size = ceil(definition_size, stack_word_size);
 			ex(definition)->offset = ex(parent_lambda)->offset_accumulator;
 			ex(parent_lambda)->offset_accumulator += size;
 			if (definition->expression) {
@@ -221,9 +237,8 @@ static void append(Converter &conv, AstDefinition *definition) {
 			} else {
 				auto remaining_bytes = size;
 				while (remaining_bytes > 0) {
-					push_instruction(conv, push_constant, .constant = 0);
-					//append_format(*conv.body_builder, "push 0\n");
-					remaining_bytes -= 8;
+					I(push_c, 0);
+					remaining_bytes -= stack_word_size;
 				}
 			}
 		} else {
@@ -232,7 +247,6 @@ static void append(Converter &conv, AstDefinition *definition) {
 	} else {
 		if (definition->is_constant) {
 			ex(definition)->offset = allocate_data(conv.constant_data_builder, value_as_bytes((s64)get_constant_integer(definition->expression).value()));
-			// append_format(conv.rodata_builder, "%: dq %\n", definition->name, get_constant_integer(definition->expression).value());
 		} else {
 			if (definition->expression) {
 				ex(definition)->offset = allocate_data(conv.data_builder, value_as_bytes((s64)get_constant_integer(definition->expression).value()));
@@ -244,15 +258,13 @@ static void append(Converter &conv, AstDefinition *definition) {
 }
 static void append(Converter &conv, AstReturn *ret) {
 	push_comment(conv, u8"return"s);
-	//append(*conv.body_builder, "; - return\n");
 
 	append(conv, ret->expression);
 
-	push_instruction(conv, pop_reg, .reg=rax);
-	push_instruction(conv, move_reg_to_reg, .dst_reg=rsp, .src_reg=rbp);
-	push_instruction(conv, pop_reg, .reg=rbp);
-	push_instruction(conv, ret);
-	//append(*conv.body_builder, "pop rax\nmov rsp, rbp\npop rbp\nret\n");
+	I(pop_r, rax);
+	I(mov_rr, rsp, rbp);
+	I(pop_r, rbp);
+	I(ret);
 }
 
 /*
@@ -292,6 +304,7 @@ global2 ->	data
 */
 
 static void push_address_of(Converter &conv, AstExpression *expression) {
+	push_comment(conv, format(u8"push_address_of %", expression->location));
 	switch (expression->kind) {
 		case Ast_identifier: {
 			auto identifier = (AstIdentifier *)expression;
@@ -313,9 +326,8 @@ static void push_address_of(Converter &conv, AstExpression *expression) {
 					}
 
 
-					//append_format(*conv.body_builder, "lea rax, qword [rbp + %]\npush rax\n", offset);
-					push_instruction(conv, push_reg, .reg=rbp);
-					push_instruction(conv, add_constant_to_mem, .reg=rsp, .constant=offset);
+					I(push_r, rbp);
+					I(add_mc, rsp, offset);
 				} else {
 					invalid_code_path();
 				}
@@ -325,9 +337,8 @@ static void push_address_of(Converter &conv, AstExpression *expression) {
 				s64 remaining_bytes = size;
 				s64 offset = 0;
 
-				//append_format(*conv.body_builder, "mov rax, %\npush rax\n", definition->name);
 				//
-				// TODO_OFFSET: Remove this after AND PIECE ABOVE
+				// TODO_OFFSET: Remove this AND PIECE ABOVE after
 				// It would be better to get rid of append here
 				// by calculating global variables' offsets at typecheck time
 				//
@@ -337,12 +348,12 @@ static void push_address_of(Converter &conv, AstExpression *expression) {
 					assert(e->offset != INVALID_DATA_OFFSET);
 				}
 				if (definition->is_constant) {
-					push_instruction(conv, push_constant_data_address, .address=e->offset);
+					I(pushcda, e->offset);
 				} else {
 					if (definition->expression) {
-						push_instruction(conv, push_data_address, .address=e->offset);
+						I(pushda, e->offset);
 					} else {
-						push_instruction(conv, push_uninitialized_data_address, .address=e->offset);
+						I(pushuda, e->offset);
 					}
 				}
 			}
@@ -356,9 +367,23 @@ static void push_address_of(Converter &conv, AstExpression *expression) {
 			auto offset = ((AstIdentifier *)binop->right)->definition->offset_in_struct;
 			assert(offset != INVALID_MEMBER_OFFSET);
 			if (offset) {
-				//append_format(*conv.body_builder, "add qword[rsp], %\n", offset);
-				push_instruction(conv, add_constant_to_mem, .reg=rsp, .constant=offset);
+				I(add_mc, rsp, offset);
 			}
+			break;
+		}
+		case Ast_subscript: {
+			auto subscript = (AstSubscript *)expression;
+			push_address_of(conv, subscript->expression);
+
+			append(conv, subscript->index_expression);
+			I(pop_r, rax);
+
+			auto element_size = get_size(subscript->type);
+			assert(element_size);
+			I(mul_rc, rax, element_size);
+
+			I(add_mr, rsp, rax);
+
 			break;
 		}
 		default:
@@ -369,34 +394,47 @@ static void push_address_of(Converter &conv, AstExpression *expression) {
 //
 // Expects pointers to destination and source on the stack
 // First you should push destination, then source
-//
-static void append_memory_copy(Converter &conv, s64 bytes_to_copy) {
-	//append_format(*conv.body_builder, "; copy % bytes\npop rsi\npop rdi\n", bytes_to_copy);
-	push_comment(conv, format(u8"copy % bytes"s, bytes_to_copy));
+// Pops the addresses
+static void append_memory_copy(Converter &conv, s64 bytes_to_copy, bool reverse) {
+	push_comment(conv, format(u8"copy % bytes, reverse=%"s, bytes_to_copy, reverse));
 
 	constexpr auto src_reg = rax;
 	constexpr auto dst_reg = rbx;
 	constexpr auto tmp_reg = rcx;
 
-	push_instruction(conv, pop_reg, .reg=src_reg);
-	push_instruction(conv, pop_reg, .reg=dst_reg);
-	//s64 offset = 0;
-	while (bytes_to_copy > 0) {
-		//append_format(*conv.body_builder, "mov rax, qword [rsi + %]\nmov qword[rdi + %], rax\n", offset, offset);
-		push_instruction(conv, move_mem_to_reg, .dst_reg=tmp_reg, .src_reg=src_reg);
-		push_instruction(conv, move_reg_to_mem, .dst_reg=dst_reg, .src_reg=tmp_reg);
-		bytes_to_copy -= 8;
-		if (bytes_to_copy > 0) {
-			push_instruction(conv, add_constant_to_reg, .reg=src_reg, .constant=8);
-			push_instruction(conv, add_constant_to_reg, .reg=dst_reg, .constant=8);
+	I(pop_r, src_reg);
+	I(pop_r, dst_reg);
+
+	if (reverse) {
+		auto offset = bytes_to_copy - stack_word_size;
+		if (offset) {
+			I(add_rc, src_reg, offset);
+			I(add_rc, dst_reg, offset);
 		}
-		//offset += 8;
+		while (bytes_to_copy > 0) {
+			I(mov_rm, tmp_reg, src_reg);
+			I(mov_mr, dst_reg, tmp_reg);
+			bytes_to_copy -= stack_word_size;
+			if (bytes_to_copy > 0) {
+				I(sub_rc, src_reg, stack_word_size);
+				I(sub_rc, dst_reg, stack_word_size);
+			}
+		}
+	} else {
+		while (bytes_to_copy > 0) {
+			I(mov_rm, tmp_reg, src_reg);
+			I(mov_mr, dst_reg, tmp_reg);
+			bytes_to_copy -= stack_word_size;
+			if (bytes_to_copy > 0) {
+				I(add_rc, src_reg, stack_word_size);
+				I(add_rc, dst_reg, stack_word_size);
+			}
+		}
 	}
 }
 
 static void append(Converter &conv, AstBinaryOperator *bin) {
-	//append_format(*conv.body_builder, "; - binary %\n", Span((char *)&bin->operation, 1));
-	push_comment(conv, format(u8"binary %"s, Span((char *)&bin->operation, 1)));
+	push_comment(conv, format(u8"binary %"s, binary_operator_string(bin->operation)));
 
 	auto left = bin->left;
 	auto right = bin->right;
@@ -406,24 +444,33 @@ static void append(Converter &conv, AstBinaryOperator *bin) {
 			case Ast_identifier: {
 				auto Struct = get_struct(left->type);
 				assert(Struct);
+				auto struct_size = get_size(left->type);
 
 				assert(right->kind == Ast_identifier);
 				auto ident = (AstIdentifier *)right;
 				auto member = ident->definition;;
 				assert(member);
+				auto member_size = get_size(member->type);
 				if (member->is_constant) {
 					invalid_code_path("not implemented");
-					//append_format(*conv.body_builder, "mov rax, %\npush qword[rax]\n", member->name);
-					push_instruction(conv, push_constant, .constant=ex(member)->offset);
+					I(push_c, ex(member)->offset);
 				} else {
 					assert(member->offset_in_struct != INVALID_MEMBER_OFFSET);
 					append(conv, left);
-					auto struct_size = get_size(left->type);
-					//append_format(*conv.body_builder, "add rsp, %\n", struct_size);
-					//append_format(*conv.body_builder, "push qword[rsp + %]\n", member->offset_in_struct - struct_size);
-					push_instruction(conv, move_reg_to_reg, .dst_reg=rax, .src_reg=rsp);
-					push_instruction(conv, add_constant_to_reg, .reg=rax, .constant=member->offset_in_struct - struct_size);
-					push_instruction(conv, push_reg, .reg=rax);
+
+					if (member == Struct->members.back()) {
+						I(add_rc, rsp, struct_size - member_size); // just throw away rest of the struct
+					} else {
+						I(push_r, rsp); // destination
+						I(add_mc, rsp, struct_size - member_size);
+
+						I(push_r, rsp); // source
+						I(add_mc, rsp, stack_word_size + member->offset_in_struct);
+
+						append_memory_copy(conv, member_size, true);
+
+						I(add_rc, rsp, struct_size - member_size);
+					}
 				}
 
 				break;
@@ -439,64 +486,30 @@ static void append(Converter &conv, AstBinaryOperator *bin) {
 			append(conv, right);
 		}
 		switch (bin->operation) {
-			//case '+': append(*conv.body_builder, "pop rax\nadd qword[rsp], rax\n"); break;
-			//case '-': append(*conv.body_builder, "pop rax\nsub qword[rsp], rax\n"); break;
-			//case '*': append(*conv.body_builder, "pop rax\npop rbx\nimul rax, rbx\npush rax\n"); break;
-			//case '/': append(*conv.body_builder, "pop rbx\npop rax\nxor rdx, rdx\nidiv rbx\npush rax\n"); break;
-			//case '|': append(*conv.body_builder, "pop rax\nor qword[rsp], rax\n"); break;
-			//case '&': append(*conv.body_builder, "pop rax\nand qword[rsp], rax\n"); break;
-			//case '^': append(*conv.body_builder, "pop rax\nxor qword[rsp], rax\n"); break;
-			case '+':
-				push_instruction(conv, pop_reg, .reg=rax);
-				push_instruction(conv, add_reg_to_mem, .dst_reg=rsp, .src_reg=rax);
-				break;
-			case '-':
-				push_instruction(conv, pop_reg, .reg=rax);
-				push_instruction(conv, sub_reg_to_mem, .dst_reg=rsp, .src_reg=rax);
-				break;
-			case '*':
-				push_instruction(conv, pop_reg, .reg=rax);
-				push_instruction(conv, mul_reg_to_mem, .dst_reg=rsp, .src_reg=rax);
-				break;
-			case '/':
-				push_instruction(conv, pop_reg, .reg=rax);
-				push_instruction(conv, div_reg_to_mem, .dst_reg=rsp, .src_reg=rax);
-				break;
-			case '|':
-				push_instruction(conv, pop_reg, .reg=rax);
-				push_instruction(conv, or_reg_to_mem, .dst_reg=rsp, .src_reg=rax);
-				break;
-			case '&':
-				push_instruction(conv, pop_reg, .reg=rax);
-				push_instruction(conv, and_reg_to_mem, .dst_reg=rsp, .src_reg=rax);
-				break;
-			case '^':
-				push_instruction(conv, pop_reg, .reg=rax);
-				push_instruction(conv, xor_reg_to_mem, .dst_reg=rsp, .src_reg=rax);
-				break;
-			case '=': {
-				// push destination address, then write
+			case '+': I(pop_r, rax); I(add_mr, rsp, rax); break;
+			case '-': I(pop_r, rax); I(sub_mr, rsp, rax); break;
+			case '*': I(pop_r, rax); I(mul_mr, rsp, rax); break;
+			case '/': I(pop_r, rax); I(div_mr, rsp, rax); break;
+			case '|': I(pop_r, rax); I( or_mr, rsp, rax); break;
+			case '&': I(pop_r, rax); I(and_mr, rsp, rax); break;
+			case '^': I(pop_r, rax); I(xor_mr, rsp, rax); break;
+			case '=': { // push destination address, then write
 
 				append(conv, right);
-
-				//append_format(*conv.body_builder, "; - load address of %\n", bin->left->combined_location);
-				push_comment(conv, format(u8"load address of %", bin->left->combined_location));
 
 				auto bytes_to_write = get_size(left->type);
 				auto expr_size = get_size(right->type);
 				assert(bytes_to_write == expr_size);
 
 				push_address_of(conv, left); // destination address
-				// append(*conv.body_builder, "lea rax, [rsp + 8]\npush rax\n"); // source address
-				push_instruction(conv, push_reg, .reg=rsp);
-				push_instruction(conv, add_constant_to_mem, .reg=rsp, .constant=8);
+				I(push_r, rsp); // source address
+				I(add_mc, rsp, stack_word_size);
 
 				assert(bytes_to_write);
 
-				append_memory_copy(conv, bytes_to_write); // will pop src and dst addresses
+				append_memory_copy(conv, bytes_to_write, false); // will pop src and dst addresses
 
-				// append_format(*conv.body_builder, "add rsp, %\n", bytes_to_write); // pop source expression
-				push_instruction(conv, add_constant_to_reg, .reg=rsp, .constant=bytes_to_write);
+				I(add_rc, rsp, bytes_to_write);
 
 				break;
 			}
@@ -506,19 +519,6 @@ static void append(Converter &conv, AstBinaryOperator *bin) {
 			case '>=':
 			case '==':
 			case '!=': {
-				/*
-				append(*conv.body_builder, "pop rax\npop rbx\nmov rcx, 0\nmov rdx, 1\ncmp rbx, rax\ncmov");
-				switch (bin->operation) {
-					case '<':   append(*conv.body_builder, "l"); break;
-					case '>':   append(*conv.body_builder, "g"); break;
-					case '<=':  append(*conv.body_builder, "le"); break;
-					case '>=':  append(*conv.body_builder, "ge"); break;
-					case '==':  append(*conv.body_builder, "e"); break;
-					case '!=':  append(*conv.body_builder, "ne"); break;
-				}
-				append(*conv.body_builder, " rcx, rdx\npush rcx\n");
-				*/
-
 				auto convert_comparison = [&](BinaryOperation op) {
 					switch (bin->operation) {
 						case '<':   return Comparison::l;
@@ -531,10 +531,10 @@ static void append(Converter &conv, AstBinaryOperator *bin) {
 					invalid_code_path();
 				};
 
-				push_instruction(conv, pop_reg, .reg=rbx); // right
-				push_instruction(conv, pop_reg, .reg=rax); // left
-				push_instruction(conv, cmp_rax_rbx, .dst_reg=rcx, .comparison = convert_comparison(bin->operation));
-				push_instruction(conv, push_reg, .reg=rcx); // left
+				I(pop_r, rbx); // right
+				I(pop_r, rax); // left
+				I(cmp_rax_rbx, .dst_reg=rcx, .comparison = convert_comparison(bin->operation));
+				I(push_r, rcx); // left
 				break;
 			}
 			default: {
@@ -542,7 +542,6 @@ static void append(Converter &conv, AstBinaryOperator *bin) {
 				break;
 			}
 		}
-		//append_format(*conv.body_builder, "pop rax\npop rbx\nadd rax, rbx\npush rax\n");
 		return;
 	}
 }
@@ -550,46 +549,40 @@ static void append(Converter &conv, AstIdentifier *identifier) {
 	auto definition = identifier->definition;
 	assert(definition);
 
-	//append_format(*conv.body_builder, "; - load identifier %\n", identifier->name);
 	push_comment(conv, format(u8"load identifer %", identifier->name));
 
 	auto size = get_size(definition->type);
 
 
-	push_instruction(conv, sub_constant_to_reg, .reg=rsp, .constant=size);
-	push_instruction(conv, push_reg, .reg=rsp);
+	I(sub_rc, rsp, ceil(size, (s64)8));
+	I(push_r, rsp);
 	push_address_of(conv, identifier);
-	append_memory_copy(conv, size);
+	append_memory_copy(conv, size, false);
 }
 
 enum class RelocationKind {
 	call,
-	constant_data,
 };
 
 struct Relocation {
 	RelocationKind kind;
 	Instruction *instruction;
-	union {
-		AstLambda *lambda;
-	};
+	AstLambda *lambda;
 };
 
 List<Relocation> relocations;
 
 static void append(Converter &conv, AstCall *call) {
-	//append_format(*conv.body_builder, "; - call %\n", call->name);
 	push_comment(conv, format(u8"call %", call->name));
 
 	if (call->lambda->has_body) {
-		u32 arguments_size_on_stack = 0;
+		s64 arguments_size_on_stack = 0;
 		for (auto argument : call->arguments) {
 			arguments_size_on_stack += get_size(argument->type);
 			append(conv, argument);
 		}
-		// append_format(*conv.body_builder, "call l%\n", call->lambda->uid);
 		auto &call_instr =
-		push_instruction(conv, call_constant);
+		I(call_constant);
 		relocations.add({
 			.kind = RelocationKind::call,
 			.instruction = &call_instr,
@@ -597,11 +590,9 @@ static void append(Converter &conv, AstCall *call) {
 		});
 
 		if (arguments_size_on_stack) {
-			//append_format(*conv.body_builder, "add rsp, %\n", arguments_size_on_stack);
-			push_instruction(conv, add_constant_to_reg, .reg=rsp, .constant=arguments_size_on_stack);
+			I(add_rc, rsp, arguments_size_on_stack);
 		}
-		//append_format(*conv.body_builder, "push rax\n");
-		push_instruction(conv, push_reg, .reg=rax);
+		I(push_r, rax);
 	} else {
 		assert(call->lambda->extern_language == u8"C"s);
 
@@ -609,105 +600,81 @@ static void append(Converter &conv, AstCall *call) {
 		u32 arguments_size_on_stack = shadow_space_size;
 		for (auto argument : call->arguments) {
 			auto size = get_size(argument->type);
-			assert(size <= 8);
-			arguments_size_on_stack += 8;
+			assert(size <= stack_word_size);
+			arguments_size_on_stack += stack_word_size;
 		}
 
 
-		if (call->arguments.count >= 1) { arguments_size_on_stack -= 8; }
-		if (call->arguments.count >= 2) { arguments_size_on_stack -= 8; }
-		if (call->arguments.count >= 3) { arguments_size_on_stack -= 8; }
-		if (call->arguments.count >= 4) { arguments_size_on_stack -= 8; }
+		if (call->arguments.count >= 1) { arguments_size_on_stack -= stack_word_size; }
+		if (call->arguments.count >= 2) { arguments_size_on_stack -= stack_word_size; }
+		if (call->arguments.count >= 3) { arguments_size_on_stack -= stack_word_size; }
+		if (call->arguments.count >= 4) { arguments_size_on_stack -= stack_word_size; }
 
-		//print("%\n", arguments_size_on_stack);
-
-		// append(*conv.body_builder, "mov rax, rsp\nand rsp, ~15\npush rax\n");
-		push_instruction(conv, move_reg_to_reg, .dst_reg=rax, .src_reg=rsp);
-		push_instruction(conv, and_constant_to_reg, .reg=rsp, .constant= ~(s64)15);
-		push_instruction(conv, push_reg, .reg=rax);
+		I(mov_rr, rax, rsp);
+		I(and_rc, rsp, ~(s64)15);
+		I(push_r, rax);
 
 		if ((arguments_size_on_stack % 16) == 0) {
-			// append(*conv.body_builder, "sub rsp, 8\n");
-			push_instruction(conv, sub_constant_to_reg, .reg=rsp, .constant=8);
+			I(sub_rc, rsp, stack_word_size);
 		}
 
 		for (auto argument : reverse(call->arguments)) {
 			append(conv, argument);
 		}
 
-		/*
-		if (call->arguments.count >= 1) { append(*conv.body_builder, "pop rcx\n"); }
-		if (call->arguments.count >= 2) { append(*conv.body_builder, "pop rdx\n"); }
-		if (call->arguments.count >= 3) { append(*conv.body_builder, "pop r8\n");  }
-		if (call->arguments.count >= 4) { append(*conv.body_builder, "pop r9\n");  }
-		*/
-		if (call->arguments.count >= 1) { push_instruction(conv, pop_reg, .reg=rcx); }
-		if (call->arguments.count >= 2) { push_instruction(conv, pop_reg, .reg=rdx); }
-		if (call->arguments.count >= 3) { push_instruction(conv, pop_reg, .reg=r8);  }
-		if (call->arguments.count >= 4) { push_instruction(conv, pop_reg, .reg=r9);  }
+		if (call->arguments.count >= 1) { I(pop_r, rcx); }
+		if (call->arguments.count >= 2) { I(pop_r, rdx); }
+		if (call->arguments.count >= 3) { I(pop_r, r8);  }
+		if (call->arguments.count >= 4) { I(pop_r, r9);  }
 
 		// Shadow space
 		// Only for microsoft 64bit
-		// append_format(*conv.body_builder, "sub rsp, %\n", shadow_space_size);
-		push_instruction(conv, sub_constant_to_reg, .reg=rsp, .constant=shadow_space_size);
+		I(sub_rc, rsp, shadow_space_size);
 
 
-		// append_format(*conv.body_builder, "call %\n", call->lambda->name);
-		push_instruction(conv, call_string, .string=format(u8"fn%", call->lambda->uid));
+		I(call_string, .string=format(u8"%", call->name));
 
 
 		if (arguments_size_on_stack > 0) {
 			// this removes arguments from the stack
-			// append_format(*conv.body_builder, "add rsp, %\n", arguments_size_on_stack);
-			push_instruction(conv, add_constant_to_reg, .reg=rsp, .constant=arguments_size_on_stack);
+			I(add_rc, rsp, arguments_size_on_stack);
 		}
 
 		// restore stack before alignment
 		if ((arguments_size_on_stack % 16) == 0) {
-			// append(*conv.body_builder, "add rsp, 8\n");
-			push_instruction(conv, add_constant_to_reg, .reg=rsp, .constant=8);
+			I(add_rc, rsp, stack_word_size);
 		}
-		//append_format(*conv.body_builder, "pop rsp\n\n");
-		push_instruction(conv, pop_reg, .reg=rsp);
+		I(pop_r, rsp);
 
-		//append_format(*conv.body_builder, "push rax\n");
-		push_instruction(conv, push_reg, .reg=rax);
+		I(push_r, rax);
 	}
 }
 static void append(Converter &conv, AstLiteral *literal) {
-	//append_format(*conv.body_builder, "; - literal %\n", literal->literal_kind);
+	push_comment(conv, format(u8"literal %", literal->location));
 
 	assert(literal->type != &type_unsized_integer);
-	     if (types_match(literal->type, &type_u8 ) ||
-	         types_match(literal->type, &type_s8 ) ||
-	         types_match(literal->type, &type_bool)) // append_format(*conv.body_builder, "push byte %\n", (u8)literal->integer );
-														push_instruction(conv, push_constant, .constant=(u8)literal->integer);
+	     if (types_match(literal->type, &type_bool))
+														I(push_c, (u8)literal->Bool);
+	else if (types_match(literal->type, &type_u8 ) ||
+	         types_match(literal->type, &type_s8 ))
+														I(push_c, (u8)literal->integer);
 	else if (types_match(literal->type, &type_u16) ||
-	         types_match(literal->type, &type_s16)) //append_format(*conv.body_builder, "push word %\n", (u16)literal->integer);
-														push_instruction(conv, push_constant, .constant=(u16)literal->integer);
+	         types_match(literal->type, &type_s16))
+														I(push_c, (u16)literal->integer);
 	else if (types_match(literal->type, &type_u32) ||
-	         types_match(literal->type, &type_s32)) //append_format(*conv.body_builder, "push dword %\n", (u32)literal->integer);
-														push_instruction(conv, push_constant, .constant=(u32)literal->integer);
+	         types_match(literal->type, &type_s32))
+														I(push_c, (u32)literal->integer);
 	else if (types_match(literal->type, &type_u64) ||
-	         types_match(literal->type, &type_s64)) {
-		push_instruction(conv, push_constant, .constant=(s64)literal->integer);
+	         types_match(literal->type, &type_s64) ||
+	         literal->type == &type_pointer_to_void) {
+		I(push_c, (s64)literal->integer);
 	}
 	else if (types_match(literal->type, &type_string)) {
-		//append_format(conv.rodata_builder, "string_literal_%:db ", literal->uid);
-		//for (auto c : literal->string) {
-		//	append_format(conv.rodata_builder, "%, ", (u8)c);
-		//}
-		//append(conv.rodata_builder, '\n');
-		// append_format(*conv.body_builder, "push qword %\nmov rax, qword string_literal_%\npush rax\n", literal->string.count, literal->uid);
 
 		// TODO: deduplicate strings
 
-		push_instruction(conv, push_constant, .constant=(s64)literal->string.count);
-		auto &inst = push_instruction(conv, push_constant, .constant=allocate_data(conv.constant_data_builder, as_bytes(literal->string)));
-		relocations.add({
-			.kind = RelocationKind::constant_data,
-			.instruction = &inst,
-		});
+		I(push_c, (s64)literal->string.count);
+		I(pushcda, allocate_data(conv.constant_data_builder, as_bytes(literal->string)));
 	}
 	else invalid_code_path();
 
@@ -717,9 +684,8 @@ static void append(Converter &conv, AstIf *If) {
 
 	append(conv, If->condition);
 
-	//append_format(*conv.body_builder, "pop rax\ntest rax, rax\njz .f%\n", If->uid);
-	push_instruction(conv, pop_reg, .reg=rax);
-	auto &jz = push_instruction(conv, jz, .reg=rax, .offset=0);
+	I(pop_r, rax);
+	auto &jz = I(jz, .reg=rax, .offset=0);
 
 	auto count_before_true = count_of(*conv.body_builder);
 
@@ -731,9 +697,8 @@ static void append(Converter &conv, AstIf *If) {
 	ex(conv.lambda)->offset_accumulator = start_offset;
 	auto allocated_size_on_stack_true = end_offset_true - start_offset;
 
-	//append_format(*conv.body_builder, "add rsp, %\njmp .e%\n.f%:\n", allocated_size_on_stack_true, If->uid, If->uid);
-	push_instruction(conv, add_constant_to_reg, .reg=rsp, .constant=allocated_size_on_stack_true);
-	auto &jmp = push_instruction(conv, jmp, .offset=0);
+	I(add_rc, rsp, allocated_size_on_stack_true);
+	auto &jmp = I(jmp, .offset=0);
 
 	auto count_before_false = count_of(*conv.body_builder);
 
@@ -745,24 +710,22 @@ static void append(Converter &conv, AstIf *If) {
 	ex(conv.lambda)->offset_accumulator = start_offset;
 	auto allocated_size_on_stack_false = end_offset_false - start_offset;
 
-	//append_format(*conv.body_builder, "add rsp, %\n.e%:\n", allocated_size_on_stack_false, If->uid);
-	push_instruction(conv, add_constant_to_reg, .reg=rsp, .constant=allocated_size_on_stack_false);
+	I(add_rc, rsp, allocated_size_on_stack_false);
 	auto count_after = count_of(*conv.body_builder);
 
-	jz.jz.offset = count_before_false - count_before_true;
+	jz.jz.offset = count_before_false - count_before_true + 1;
 	jmp.jmp.offset = count_after - count_before_false;
 }
 static void append(Converter &conv, AstWhile *While) {
 	auto start_offset = ex(conv.lambda)->offset_accumulator;
 
-	// append_format(*conv.body_builder, "; - while\n.n%:\n", While->uid);
 
+	auto count_before_condition = count_of(*conv.body_builder);
 	append(conv, While->condition);
 
-	//append_format(*conv.body_builder, "pop rax\ntest rax, rax\njz .e%\n", While->uid);
-	push_instruction(conv, pop_reg, .reg=rax);
-	auto &jz = push_instruction(conv, jz, .reg=rax, .offset=0);
-	auto count_before = count_of(*conv.body_builder);
+	I(pop_r, rax);
+	auto &jz = I(jz, .reg=rax, .offset=0);
+	auto count_after_condition = count_of(*conv.body_builder);
 
 
 	for (auto statement : While->statements) {
@@ -773,27 +736,24 @@ static void append(Converter &conv, AstWhile *While) {
 	ex(conv.lambda)->offset_accumulator = start_offset;
 	auto allocated_size_on_stack = end_offset - start_offset;
 
-	//append_format(*conv.body_builder, "add rsp, %\njmp .n%\n.e%:\n", allocated_size_on_stack, While->uid, While->uid);
-	push_instruction(conv, add_constant_to_reg, .reg=rsp, .constant=allocated_size_on_stack);
-	auto count_after = count_of(*conv.body_builder);
-	auto &jmp = push_instruction(conv, jmp, .offset=0);
+	I(add_rc, rsp, allocated_size_on_stack);
+	auto count_after_body = count_of(*conv.body_builder);
+	auto &jmp = I(jmp, .offset=0);
 
-	jmp.jmp.offset = (s64)count_before - (s64)count_after;
-	jz.jz.offset = (s64)count_after - (s64)count_before + 1;
+	jmp.jmp.offset = (s64)count_before_condition - (s64)count_after_body;
+	jz.jz.offset = (s64)count_after_body - (s64)count_after_condition + 2;
 }
 static void append(Converter &conv, AstExpressionStatement *es) {
 	append(conv, es->expression);
 	if (es->expression->kind == Ast_binary_operator && ((AstBinaryOperator *)es->expression)->operation == '=') {
 		// assignment does not push anything
 	} else {
-		//append(*conv.body_builder, "add rsp,8\n");
-		push_instruction(conv, add_constant_to_reg, .reg=rsp, .constant=8);
+		I(add_rc, rsp, stack_word_size);
 	}
 }
 static void append(Converter &conv, AstUnaryOperator *unop) {
 	switch (unop->operation) {
-		using enum UnaryOperation;
-		case minus: {
+		case '-': {
 			assert(types_match(unop->expression->type, &type_u8) ||
 			       types_match(unop->expression->type, &type_u16) ||
 			       types_match(unop->expression->type, &type_u32) ||
@@ -804,11 +764,10 @@ static void append(Converter &conv, AstUnaryOperator *unop) {
 			       types_match(unop->expression->type, &type_s64));
 
 			append(conv, unop->expression);
-			//append(*conv.body_builder, "pop rbx\nxor rax, rax\nsub rax, rbx\npush rax\n");
-			push_instruction(conv, pop_reg, .reg=rbx);
-			push_instruction(conv, xor_reg_to_reg, .dst_reg=rax, .src_reg=rax);
-			push_instruction(conv, sub_reg_to_reg, .dst_reg=rax, .src_reg=rbx);
-			push_instruction(conv, push_reg, .reg=rax);
+			I(pop_r, rbx);
+			I(xor_rr, rax, rax);
+			I(sub_rr, rax, rbx);
+			I(push_r, rax);
 			break;
 		}
 		default: {
@@ -817,21 +776,46 @@ static void append(Converter &conv, AstUnaryOperator *unop) {
 		}
 	}
 }
+static void append(Converter &conv, AstSubscript *subscript) {
+	push_comment(conv, format(u8"subscript"));
+	append(conv, subscript->index_expression);
+	push_address_of(conv, subscript->expression);
+	I(pop_r, rax); // array address
+	I(pop_r, rbx); // index
+
+	auto element_size = get_size(subscript->type);
+	assert(element_size);
+
+	I(mul_rc, rbx, element_size);
+
+	I(add_rr, rax, rbx);
+	// now rax contains element's address
+
+	// reserve space on stack
+	I(sub_rc, rsp, element_size);
+
+	I(push_r, rsp);// destination
+	I(push_r, rax);// source
+	append_memory_copy(conv, element_size, false);
+
+}
 
 void print_bytecode(List<Instruction> instructions) {
+	timed_function();
 	using enum InstructionKind;
 	for (auto i : instructions) {
 		switch (i.kind) {
-			case move_reg_to_reg:		          print("mov         %, %    \n", i.move_reg_to_reg     .dst_reg , i.move_reg_to_reg     .src_reg  ); break;
+			/*
+			case mov_rr:		          print("mov         %, %    \n", i.mov_rr     .dst_reg , i.mov_rr     .src_reg  ); break;
 			case move_constant_to_reg:	          print("mov         %, %    \n", i.move_constant_to_reg.reg     , i.move_constant_to_reg.constant ); break;
 			case move_mem_to_reg:		          print("mov         %, [%]  \n", i.move_mem_to_reg     .dst_reg , i.move_mem_to_reg     .src_reg  ); break;
-			case move_reg_to_mem:		          print("mov         [%], %  \n", i.move_reg_to_mem     .dst_reg , i.move_reg_to_mem     .src_reg  ); break;
-			case push_reg:				          print("push        %       \n", i.push_reg            .reg                                       ); break;
+			case mov_mr:		          print("mov         [%], %  \n", i.mov_mr     .dst_reg , i.mov_mr     .src_reg  ); break;
+			case push_r:				          print("push        %       \n", i.push_r            .reg                                       ); break;
 			case push_constant:			          print("push        %       \n", i.push_constant       .constant                                  ); break;
 			case push_mem:				          print("push        [%]     \n", i.push_mem            .reg                                       ); break;
-			case push_constant_data_address:      print("push        c addr %\n", i.push_constant_data_address.address                             ); break;
-			case push_data_address:               print("push        d addr %\n", i.push_data_address.address                                      ); break;
-			case push_uninitialized_data_address: print("push        z addr %\n", i.push_uninitialized_data_address.address                        ); break;
+			case pushcda:      print("push        c addr %\n", i.pushcda.address                             ); break;
+			case pushda:               print("push        d addr %\n", i.pushda.address                                      ); break;
+			case pushuda: print("push        z addr %\n", i.pushuda.address                        ); break;
 			case pop_reg:				          print("pop         %       \n", i.pop_reg             .reg                                       ); break;
 			case ret:					          print("ret                 \n"                                                                   ); break;
 			case add_constant_to_reg:	          print("add         %, %    \n", i.add_constant_to_reg.reg      , i.add_constant_to_reg.constant  ); break;
@@ -855,11 +839,29 @@ void print_bytecode(List<Instruction> instructions) {
 			case jmp:					          print("jmp         %       \n", i.jmp                .offset                                     ); break;
 			case jz:					          print("jz          %, %    \n", i.jz                 .reg      , i.jz                 .offset    ); break;
 			default:invalid_code_path();
+			*/
 		}
 	}
 }
 
+void fix_relocations() {
+	timed_function();
+	for (auto &r : relocations) {
+		switch (r.kind) {
+			case RelocationKind::call: {
+				r.instruction->call_constant.constant = r.lambda->location_in_bytecode;
+				break;
+			}
+			default:
+				invalid_code_path();
+		}
+	}
+
+}
+
 Bytecode build_bytecode() {
+	timed_function();
+
 	Bytecode result;
 
 	relocations.allocator = default_allocator;
@@ -874,21 +876,11 @@ Bytecode build_bytecode() {
 	result.constant_data = (List<u8>)to_string(conv.constant_data_builder);
 	result.data = (List<u8>)to_string(conv.data_builder);
 	result.zero_data = (List<u8>)to_string(conv.zero_data_builder);
+	result.extern_functions = conv.extern_functions;
 
-	for (auto &r : relocations) {
-		switch (r.kind) {
-			case RelocationKind::call: {
-				r.instruction->call_constant.constant = r.lambda->location_in_bytecode;
-				break;
-			}
-			case RelocationKind::constant_data:
-				break;
-			default:
-				break;
-		}
-	}
+	fix_relocations();
 
-	print_bytecode(result.instructions);
+	// print_bytecode(result.instructions);
 
 	return result;
 }

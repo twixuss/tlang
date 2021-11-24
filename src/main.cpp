@@ -26,6 +26,18 @@ u32 get_line_number(utf8 *from) {
 	return result;
 }
 
+u32 get_column_number(utf8 *from) {
+	u32 result = 0;
+	while (1) {
+		if (*from == '\n' || *from == '\0')
+			break;
+
+		result += 1;
+		from -= 1;
+	}
+	return result;
+}
+
 void print_replacing_tabs_with_4_spaces(PrintKind kind, Span<utf8> string) {
 	for (auto c : string) {
 		if (c == '\t') {
@@ -119,10 +131,75 @@ void print_source_line(Span<utf8> location) {
 	print("\n\n");
 }
 
+struct SourceFileInfo {
+	Span<utf8> path;
+	Span<utf8> source;
+};
+
+List<SourceFileInfo> sources;
+
+Span<utf8> get_source_path(Span<utf8> location) {
+	for (auto source : sources) {
+		if (source.source.begin() <= location.begin() && location.end() <= source.source.end()) {
+			return source.path;
+		}
+	}
+	return u8"unknown source"s;
+}
+
 struct Report {
 	Span<utf8> location;
 	Span<ascii> message;
 };
+
+template <class ...Args>
+Report make_report(Span<utf8> location, Span<utf8> severity, char const *format_string, Args const &...args) {
+	Report r;
+	r.location = location;
+	if (location.data) {
+		r.message = format("%:%:%: %: %", get_source_path(location), get_line_number(location.begin()), get_column_number(location.begin()), severity, format(format_string, args...));
+	} else {
+		r.message = format("%: %", severity, format(format_string, args...));
+	}
+	return r;
+}
+
+template <class ...Args>
+Report make_info_report(Span<utf8> location, char const *format_string, Args const &...args) {
+	return make_report(location, u8"Info"s, format_string, args...);
+}
+template <class ...Args>
+Report make_info_report(char const *format_string, Args const &...args) {
+	return make_info_report(Span<utf8>{}, format_string, args...);
+}
+template <class ...Args>
+Report make_error_report(Span<utf8> location, char const *format_string, Args const &...args) {
+	return make_report(location, u8"Error"s, format_string, args...);
+}
+
+template <class ...Args>
+Report make_error_report(char const *format_string, Args const &...args) {
+	return make_error_report(Span<utf8>{}, format_string, args...);
+}
+
+void print_report(Report r) {
+	print(r.message);
+	print('\n');
+	print_source_line(r.location);
+}
+
+template <class ...Args>
+void immediate_info(char const *format_string, Args const &...args) {
+	print_report(make_info_report(format_string, args...));
+}
+template <class ...Args>
+void immediate_error(Span<utf8> location, char const *format_string, Args const &...args) {
+	print_report(make_error_report(location, format_string, args...));
+}
+template <class ...Args>
+void immediate_error(char const *format_string, Args const &...args) {
+	immediate_error(Span<utf8>{}, format_string, args...);
+}
 
 struct Reporter {
 	List<Report> reports;
@@ -142,11 +219,12 @@ struct Reporter {
 		}
 	}
 	template <class ...Args>
+	void info(Span<utf8> location, char const *format_string, Args const &...args) {
+		reports.add(make_info_report(location, format_string, args...));
+	}
+	template <class ...Args>
 	void info(char const *format_string, Args const &...args) {
-		Report r;
-		r.location = {};
-		r.message = format(format_string, args...);
-		reports.add(r);
+		reports.add(make_info_report(format_string, args...));
 	}
 	template <class ...Args>
 	void error(char const *format_string, Args const &...args) {
@@ -154,10 +232,7 @@ struct Reporter {
 	}
 	template <class ...Args>
 	void error(Span<utf8> location, char const *format_string, Args const &...args) {
-		Report r;
-		r.location = location;
-		r.message = format("Error: %\n", format(format_string, args...));
-		reports.add(r);
+		reports.add(make_error_report(location, format_string, args...));
 	}
 };
 
@@ -279,9 +354,6 @@ bool lexer_function(Lexer *lexer) {
 
 	auto next_char = [&]() {
 		current_p = next_p;
-		if (current_p >= lexer->source.end()) {
-			return false;
-		}
 		auto got_char = get_char_and_advance_utf8(&next_p);
 		if (got_char) {
 			c = got_char.value();
@@ -301,7 +373,6 @@ bool lexer_function(Lexer *lexer) {
 	};
 
 	while (1) {
-		assert(current_p < lexer->source.end());
 		token.string.data = current_p;
 		token.string.count = 0;
 
@@ -348,7 +419,10 @@ bool lexer_function(Lexer *lexer) {
 			case ';': {
 				token.kind = (TokenKind)c;
 				token.string.count = 1;
-				next_char();
+				if (!next_char()) {
+					lexer->success = true;
+					return true;
+				}
 				push_token();
 				break;
 			}
@@ -675,18 +749,6 @@ AstLiteral *make_boolean(bool value) {
 	return i;
 }
 
-UnaryOperation token_to_unary_operation(TokenKind kind) {
-	switch (kind) {
-		using enum UnaryOperation;
-		case '+': return plus;
-		case '-': return minus;
-		case '*': return star;
-		case '&': return _and;
-		case '!': return _not;
-	}
-	invalid_code_path("attempt to convert bad token to unary operation");
-}
-
 bool is_unary_operator(TokenKind kind) {
 	switch (kind) {
 		case '+':
@@ -751,6 +813,9 @@ Span<utf8> unescape_string(Span<utf8> string) {
 	string.data  += 1;
 	string.count -= 2;
 
+	if (!string.count)
+		return string;
+
 	List<utf8> new_string;
 	new_string.reserve(string.count);
 
@@ -801,6 +866,12 @@ AstExpression *parse_sub_expression(Parser *parser) {
 		}
 		parser->next();
 		return string;
+	} else if (parser->token->kind == Token_null) {
+		auto result = make_integer(0);
+		result->location = parser->token->string;
+		parser->next();
+		result->type = &type_pointer_to_void;
+		return result;
 	} else if (parser->token->kind == Token_integer_literal) {
 		BigInt value = 0ib;
 		if (parser->token->string.count >= 2 && parser->token->string.data[1] == 'x') {
@@ -926,14 +997,17 @@ AstExpression *parse_sub_expression(Parser *parser) {
 		AstExpression *return_type = 0;
 		if (parser->token->kind != '{' && parser->token->kind != '=>' && parser->token->kind != ';') {
 			return_type = parse_expression(parser);
+			if (!return_type) {
+				parser->reporter->info(lambda->location, "When parsing this lambda's return type");
+				return 0;
+			}
+		} else {
+			return_type = &type_void;
 		}
 
-		bool parse_return_type = true;
 		bool is_short = false;
 		if (parser->token->kind == '{') {
-			parse_return_type = false;
 		} else if (parser->token->kind == '=>') {
-			parse_return_type = false;
 			is_short = true;
 		} else if (parser->token->kind == ';') {
 			lambda->has_body = false;
@@ -1021,7 +1095,7 @@ AstExpression *parse_sub_expression(Parser *parser) {
 	} else if (is_unary_operator(parser->token->kind)) {
 		auto unop = new_ast<AstUnaryOperator>();
 		unop->location = parser->token->string;
-		unop->operation = token_to_unary_operation(parser->token->kind);
+		unop->operation = parser->token->kind;
 		if (!parser->next_not_end())
 			return 0;
 
@@ -1060,6 +1134,24 @@ AstExpression *parse_sub_expression(Parser *parser) {
 		}
 		parser->next();
 		return Struct;
+	} else if (parser->token->kind == '[') {
+		auto subscript = new_ast<AstSubscript>();
+		subscript->location = parser->token->string;
+
+		if (!parser->next_not_end())
+			return 0;
+
+		subscript->index_expression = parse_expression(parser);
+
+		if (!parser->expect(']'))
+			return 0;
+
+		parser->next();
+		subscript->expression = parse_sub_expression(parser);
+		if (!subscript->expression)
+			return 0;
+
+		return subscript;
 	} else {
 		parser->reporter->error(parser->token->string, "Unexpected token '%'", parser->token->string);
 		return 0;
@@ -1067,6 +1159,7 @@ AstExpression *parse_sub_expression(Parser *parser) {
 	invalid_code_path();
 }
 
+#if 0
 AstExpression *simplify(AstExpression *expression);
 
 void simplify(AstStatement *statement) {
@@ -1184,18 +1277,22 @@ AstExpression *simplify(AstExpression *expression) {
 
 	return expression;
 }
+#endif
 
 void combine_location(AstExpression *expression) {
 	switch (expression->kind) {
+		case Ast_unary_operator: {
+			auto unop = (AstUnaryOperator *)expression;
+			combine_location(unop->expression);
+			unop->location = Span(unop->location.begin(), unop->expression->location.end());
+			break;
+		}
 		case Ast_binary_operator: {
 			auto binop = (AstBinaryOperator *)expression;
 			combine_location(binop->left);
 			combine_location(binop->right);
-			binop->combined_location = Span(binop->left->combined_location.begin(), binop->right->combined_location.end());
+			binop->location = Span(binop->left->location.begin(), binop->right->location.end());
 			break;
-		}
-		default: {
-			expression->combined_location = expression->location;
 		}
 	}
 }
@@ -1204,8 +1301,10 @@ AstExpression *parse_expression(Parser *parser) {
 	timed_function();
 	auto sub = parse_sub_expression(parser);
 
-	if (parser->reached_end)
+	if (parser->reached_end) {
+		combine_location(sub);
 		return sub;
+	}
 
 	AstBinaryOperator *top_binop = 0;
 	AstBinaryOperator *previous_binop = 0;
@@ -1231,6 +1330,7 @@ AstExpression *parse_expression(Parser *parser) {
 
 		binop->right = parse_sub_expression(parser);
 		if (!binop->right) {
+			parser->reporter->info("While parsing binary operator '%'", binary_operator_string(binop->operation));
 			return 0;
 		}
 
@@ -1258,13 +1358,15 @@ AstExpression *parse_expression(Parser *parser) {
 	}
 
 	if (top_binop) {
-		combine_location(top_binop);
-		return simplify(top_binop);
+		sub = top_binop;
 	}
 
-	if (sub)
+	if (sub) {
 		combine_location(sub);
-	return sub;
+		return sub;
+	}
+
+	return 0;
 }
 
 AstDefinition *parse_definition(Parser *parser) {
@@ -1542,8 +1644,16 @@ struct SourceFileContext {
 Lexer *failed_lexer;
 Parser *failed_parser;
 
+LinearSet<Span<utf8>> parsed_files;
+
 void parse_file(Span<utf8> path) {
 	timed_function();
+
+	// TODO: normalize path
+	if (find(parsed_files, path)) {
+		return;
+	}
+	parsed_files.insert(path);
 
 	auto context = default_allocator.allocate<SourceFileContext>();
 
@@ -1571,6 +1681,8 @@ void parse_file(Span<utf8> path) {
 	context->parser.lexer = &context->lexer;
 
 	context->parser.reporter = context->lexer.reporter = &context->reporter;
+
+	sources.add({path, source});
 
 	context->work_queue = make_work_queue(*thread_pool);
 
@@ -1747,46 +1859,131 @@ struct IntegerInfo {
 
 IntegerInfo integer_infos[8];
 
+void report_not_convertible(Reporter *reporter, AstExpression *expression, AstExpression *type) {
+	reporter->error(expression->location, "Expression of type '%' is not implicitly convertible to '%'", type_to_string(expression->type), type_to_string(type));
+}
+
+bool convertible(AstExpression *expression, AstExpression *type) {
+	if (type->kind == Ast_unary_operator) {
+		auto unop = (AstUnaryOperator *)type;
+		if (unop->operation == '*') {
+			if (expression->kind == Ast_literal) {
+				auto literal = (AstLiteral *)expression;
+				if (literal->literal_kind == LiteralKind::integer) {
+					if (literal->integer == 0ib) {
+						return true;
+					}
+				}
+			}
+		}
+	} else {
+		auto Struct = get_struct(type);
+		if (Struct) {
+			if (Struct == &type_string) {
+				return types_match(expression->type, &type_string);
+			} else if (
+				Struct == &type_u8 ||
+				Struct == &type_u16 ||
+				Struct == &type_u32 ||
+				Struct == &type_u64 ||
+				Struct == &type_s8 ||
+				Struct == &type_s16 ||
+				Struct == &type_s32 ||
+				Struct == &type_s64
+			) {
+				return expression->type == &type_unsized_integer;
+			}
+		}
+	}
+	return false;
+}
+
+bool is_integer(AstExpression *type) {
+	return
+		types_match(type, &type_unsized_integer) ||
+		types_match(type, &type_u8) ||
+		types_match(type, &type_u16) ||
+		types_match(type, &type_u32) ||
+		types_match(type, &type_u64) ||
+		types_match(type, &type_s8) ||
+		types_match(type, &type_s16) ||
+		types_match(type, &type_s32) ||
+		types_match(type, &type_s64);
+}
+
+//
+// Resolves undecided types like 'unsized_integer' into sized ones
+// If `target_type` is not null, it tries to implicitly convert `expression` to `target_type`
 bool harden_type(TypecheckState *state, AstExpression **expression_pointer, AstExpression *target_type = 0) {
 	auto expression = *expression_pointer;
 	defer { *expression_pointer = expression; };
 	switch (expression->kind) {
 		case Ast_literal: {
 			auto literal = (AstLiteral *)expression;
+			if (literal->type == &type_pointer_to_void) {
+				// This is `null` literal.
+
+				if (target_type) {
+					if (!convertible(literal, target_type)) {
+						report_not_convertible(&state->reporter, literal, target_type);
+						return false;
+					}
+				}
+
+				return true;
+			}
 			switch (literal->literal_kind) {
 				using enum LiteralKind;
 				case integer: {
-					if (!target_type) {
+					AstExpression *pointer_type = 0;
+					if (target_type) {
+						if (target_type->kind == Ast_unary_operator && ((AstUnaryOperator*)target_type)->operation == '*') {
+							pointer_type = target_type;
+							target_type = &type_u64;
+						}
+					} else {
 						target_type = type_default_integer;
 					}
 
-					auto got_value = get_constant_integer(expression);
-					if (got_value) {
-						auto value = got_value.value();
+					auto found_info = find_if(integer_infos, [&](IntegerInfo const &i) { return types_match(target_type, i.type); });
 
-						auto found_info = find_if(integer_infos, [&](IntegerInfo const &i) { return types_match(target_type, i.type); });
+					if (found_info) {
+						auto info = *found_info;
 
-						if (found_info) {
-							auto info = *found_info;
-
-							if (value < info.min_value || value > info.max_value) {
-								state->reporter.error(expression->location, "Computed value (%) does not fit into destination type % [%; %]. You can explicitly bitwise-and this expression with 0x% to discard higher bits", value, type_to_string(target_type), info.min_value, info.max_value, FormatInt{.value=info.mask,.radix=16});
-								return false;
-							}
-
-							expression = make_integer(value);
-							expression->type = target_type;
+						if (literal->integer < info.min_value || literal->integer > info.max_value) {
+							state->reporter.error(expression->location, "Computed value (%) does not fit into destination type % [%; %]. You can explicitly bitwise-and this expression with 0x% to discard higher bits", literal->integer, type_to_string(target_type), info.min_value, info.max_value, FormatInt{.value=info.mask,.radix=16});
+							return false;
 						}
 
+						if (pointer_type) {
+							literal->type = pointer_type;
+						} else {
+							literal->type = target_type;
+						}
 					} else {
-						invalid_code_path();
+						report_not_convertible(&state->reporter, expression, target_type);
+						return false;
 					}
 					break;
 				}
 				case boolean: {
+					if (!target_type) {
+						target_type = &type_bool;
+					}
+					if (!types_match(expression->type, target_type)) {
+						report_not_convertible(&state->reporter, expression, target_type);
+						return false;
+					}
 					return true;
 				}
 				case string: {
+					if (!target_type) {
+						target_type = &type_string;
+					}
+					if (!types_match(expression->type, target_type)) {
+						report_not_convertible(&state->reporter, expression, target_type);
+						return false;
+					}
 					return true;
 				}
 				default: {
@@ -1800,9 +1997,6 @@ bool harden_type(TypecheckState *state, AstExpression **expression_pointer, AstE
 		}
 		case Ast_unary_operator: {
 			auto unop = (AstUnaryOperator *)expression;
-
-			// TODO: this is probably wrong.
-			// we should evaluate first, then harden
 			if (!harden_type(state, &unop->expression, target_type)) {
 				return false;
 			}
@@ -1820,26 +2014,66 @@ bool harden_type(TypecheckState *state, AstExpression **expression_pointer, AstE
 			auto &left  = binop->left;
 			auto &right = binop->right;
 
-			defer { binop->type = binop->left->type; };
+			switch (binop->operation) {
+				case '+':
+				case '-':
+				case '*':
+				case '/':
+				case '%':
+				case '|':
+				case '&':
+				case '^': {
+					defer { binop->type = binop->left->type; };
+					auto val = get_constant_integer(binop);
+					if (val.has_value()) {
+						expression = make_integer(val.value_unchecked());
+						return harden_type(state, &expression, target_type);
+					}
 
-			if (right->type == &type_unsized_integer) {
-				if (left->type == &type_unsized_integer) {
-					if (!harden_type(state, &left, &type_s64))
+					if (left->type == &type_unsized_integer) {
+						return harden_type(state, &left, right->type);
+					}
+					if (right->type == &type_unsized_integer) {
+						return harden_type(state, &right, left->type);
+					}
+
+					/*
+						i : int;
+						a := (i+1) * (i+1);
+					*/
+
+					if (!harden_type(state, &left))  return false;
+					if (!harden_type(state, &right)) return false;
+
+					if (!types_match(left->type, right->type)) {
+						state->reporter.error(binop->location, "Can not apply binary '%' to expressions of types '%' and '%'", binop->operation, type_to_string(left->type), type_to_string(right->type));
 						return false;
-					if (!harden_type(state, &right, &type_s64))
+					}
+					return true;
+				}
+				case '<' :
+				case '>' :
+				case '<=':
+				case '>=':
+				case '==':
+				case '!=': {
+					// TODO: implement
+					if (!harden_type(state, &left))
 						return false;
+					if (!harden_type(state, &right))
+						return false;
+
+					if (!::is_integer(left->type) || !::is_integer(right->type)) {
+						state->reporter.error(binop->location, "Types '%' and '%' are not comparable", type_to_string(left->type), type_to_string(right->type));
+						return false;
+					}
 
 					return true;
-				} else {
-					if (!harden_type(state, &right, left->type))
-						return false;
-					break;
 				}
+				case '.':
+					return true;
 			}
-			if (!harden_type(state, &left, right->type))
-				return false;
-
-			break;
+			invalid_code_path();
 		}
 		case Ast_struct: {
 			auto Struct = (AstStruct *)expression;
@@ -1849,6 +2083,16 @@ bool harden_type(TypecheckState *state, AstExpression **expression_pointer, AstE
 						return false;
 					}
 				}
+			}
+			break;
+		}
+		case Ast_subscript: {
+			auto subscript = (AstSubscript *)expression;
+			if (!harden_type(state, &subscript->index_expression)) {
+				return false;
+			}
+			if (!harden_type(state, &subscript->expression)) {
+				return false;
 			}
 			break;
 		}
@@ -1919,48 +2163,23 @@ AstExpression *make_pointer_type(AstExpression *type) {
 	auto unop = new_ast<AstUnaryOperator>();
 	unop->expression = type;
 	unop->type = &type_type;
-	unop->operation = UnaryOperation::star;
+	unop->operation = '*';
 	return unop;
 }
 
 cppcoro::generator<TypecheckResult> typecheck(TypecheckState *state, AstExpression *expression);
 
-bool convertible(AstExpression *expression, AstExpression *type) {
-	if (type->kind == Ast_unary_operator) {
-		auto unop = (AstUnaryOperator *)type;
-		if (unop->operation == UnaryOperation::star) {
-			if (expression->kind == Ast_literal) {
-				auto literal = (AstLiteral *)expression;
-				if (literal->literal_kind == LiteralKind::integer) {
-					if (literal->integer == 0ib) {
-						return true;
-					}
-				}
-			}
-		}
-	} else {
-		auto Struct = get_struct(type);
-		if (Struct) {
-			if (Struct == &type_string) {
-				return types_match(expression->type, &type_string);
-			} else if (
-				Struct == &type_u8 ||
-				Struct == &type_u16 ||
-				Struct == &type_u32 ||
-				Struct == &type_u64 ||
-				Struct == &type_s8 ||
-				Struct == &type_s16 ||
-				Struct == &type_s32 ||
-				Struct == &type_s64
-			) {
-				return expression->type == &type_unsized_integer;
-			}
-		}
+AstExpression *get_type_from_type_expression(AstExpression *type) {
+	if (type->kind == Ast_subscript) {
+		return type;
 	}
-	return false;
+
+	return get_struct(type);
 }
 
 cppcoro::generator<TypecheckResult> typecheck(TypecheckState *state, AstStatement *statement) {
+	timed_function();
+
 	switch (statement->kind) {
 		case Ast_return: {
 			auto ret = (AstReturn *)statement;
@@ -2016,6 +2235,9 @@ cppcoro::generator<TypecheckResult> typecheck(TypecheckState *state, AstStatemen
 							co_yield TypecheckResult::fail;
 						}
 					}
+
+					definition->type = get_type_from_type_expression(definition->type);
+					assert(definition->type);
 				} else {
 					harden_type(state, &definition->expression, 0);
 					definition->type = definition->expression->type;
@@ -2077,7 +2299,7 @@ cppcoro::generator<TypecheckResult> typecheck(TypecheckState *state, AstStatemen
 						}
 					}
 
-					definition->expression = simplify(definition->expression);
+					// definition->expression = simplify(definition->expression);
 				}
 
 				assert(definition->type);
@@ -2193,16 +2415,32 @@ bool ensure_assignable(Reporter *reporter, AstExpression *expression) {
 			if (binop->operation != '.')
 				break;
 
+			return ensure_assignable(reporter, binop->left) && ensure_assignable(reporter, binop->right);
+		}
+		case Ast_subscript: {
+			auto subscript = (AstSubscript *)expression;
+			assert(subscript->expression->kind == Ast_identifier);
+			auto identifier = (AstIdentifier *)subscript->expression;
 
-			return ensure_assignable(reporter, binop->right);
+			return ensure_assignable(reporter, identifier);
 		}
 	}
 
-	reporter->error(expression->combined_location, "Expression is not assignable");
+	reporter->error(expression->location, "Expression is not assignable");
 	return false;
 }
 
+bool ensure_subscriptable(TypecheckState *state, AstExpression *expression) {
+	if (expression->type->kind != Ast_subscript) {
+		state->reporter.error(expression->location, "Expression is not subscriptable");
+		return false;
+	}
+	return true;
+}
+
 cppcoro::generator<TypecheckResult> typecheck(TypecheckState *state, AstExpression *expression) {
+	timed_function();
+
 	assert(expression);
 
 	if (expression->type)
@@ -2290,9 +2528,8 @@ cppcoro::generator<TypecheckResult> typecheck(TypecheckState *state, AstExpressi
 			assert(state->current_lambda);
 			defer { state->current_lambda = old_current_lamdda; };
 
-			if (lambda->return_type) {
-				TYPECHECK(lambda->return_type);
-			}
+			assert(lambda->return_type);
+			TYPECHECK(lambda->return_type);
 
 			for (auto parameter : lambda->parameters) {
 				TYPECHECK(parameter);
@@ -2310,22 +2547,14 @@ cppcoro::generator<TypecheckResult> typecheck(TypecheckState *state, AstExpressi
 					TYPECHECK(statement);
 				}
 
-				if (lambda->return_type) {
-					for (auto ret : lambda->return_statements) {
-						if (!harden_type(state, &ret->expression, lambda->return_type)) {
-							co_yield TypecheckResult::fail;
-						}
+				for (auto ret : lambda->return_statements) {
+					if (!harden_type(state, &ret->expression, lambda->return_type)) {
+						state->reporter.info(lambda->location, "When hardening return statement expression's type (lambda's return type is '%')", type_to_string(lambda->return_type));
+						co_yield TypecheckResult::fail;
 					}
-				} else {
-					if (lambda->return_statements.count == 0) {
-						lambda->return_type = &type_void;
-					} else if (lambda->return_statements.count == 1) {
-						lambda->return_type = lambda->return_statements[0]->expression->type;
-					} else {
-						if (!lambda->return_type) {
-							state->reporter.error(lambda->location, "Deducing return type from multiple statements is not implemented yet. You have to explicitly specify return type");
-							co_yield TypecheckResult::fail;
-						}
+					if (!types_match(ret->expression->type, lambda->return_type)) {
+						report_not_convertible(&state->reporter, ret->expression, lambda->return_type);
+						co_yield TypecheckResult::fail;
 					}
 				}
 
@@ -2334,10 +2563,6 @@ cppcoro::generator<TypecheckResult> typecheck(TypecheckState *state, AstExpressi
 				if (!do_all_paths_return(lambda)) {
 					state->reporter.error(lambda->location, "Not all paths return a value");
 					co_yield TypecheckResult::fail;
-				}
-			} else {
-				if (!lambda->return_type) {
-					lambda->return_type = &type_void;
 				}
 			}
 
@@ -2408,6 +2633,25 @@ cppcoro::generator<TypecheckResult> typecheck(TypecheckState *state, AstExpressi
 
 			} else {
 				TYPECHECK(bin->right);
+
+				if (!types_match(bin->left->type, bin->right->type)) {
+					if (bin->left->type == &type_unsized_integer && bin->right->type == &type_unsized_integer) {
+						if (!harden_type(state, &bin->left) || !harden_type(state, &bin->right)) {
+							co_yield TypecheckResult::fail;
+						}
+					} else if (bin->left->type == &type_unsized_integer) {
+						if (!harden_type(state, &bin->left, bin->right->type)) {
+							co_yield TypecheckResult::fail;
+						}
+					} else if (bin->right->type == &type_unsized_integer) {
+						if (!harden_type(state, &bin->right, bin->left->type)) {
+							co_yield TypecheckResult::fail;
+						}
+					} else {
+						state->reporter.error(bin->location, "Invalid binary operator");
+						co_yield TypecheckResult::fail;
+					}
+				}
 				bin->type = bin->right->type;
 			}
 
@@ -2419,24 +2663,15 @@ cppcoro::generator<TypecheckResult> typecheck(TypecheckState *state, AstExpressi
 			TYPECHECK(unop->expression);
 
 			if (is_type(unop->expression)) {
-				if (unop->operation != UnaryOperation::star) {
+				if (unop->operation != '*') {
 					state->reporter.error(unop->location, "Unary operator '%' can not be applied to a type expression", unop->location);
 					co_yield TypecheckResult::fail;
 				}
 				unop->type = &type_type;
 			} else {
 				switch (unop->operation) {
-					case UnaryOperation::minus: {
-						if (types_match(unop->expression->type, &type_u8) ||
-							types_match(unop->expression->type, &type_u16) ||
-							types_match(unop->expression->type, &type_u32) ||
-							types_match(unop->expression->type, &type_u64) ||
-							types_match(unop->expression->type, &type_s8) ||
-							types_match(unop->expression->type, &type_s16) ||
-							types_match(unop->expression->type, &type_s32) ||
-							types_match(unop->expression->type, &type_s64) ||
-							types_match(unop->expression->type, &type_unsized_integer))
-						{
+					case '-': {
+						if (::is_integer(unop->expression->type)) {
 							unop->type = unop->expression->type;
 						} else {
 							state->reporter.error(unop->location, "Unary minus can not be applied to expression of type '%'", type_to_string(unop->expression->type));
@@ -2444,7 +2679,7 @@ cppcoro::generator<TypecheckResult> typecheck(TypecheckState *state, AstExpressi
 						}
 						break;
 					}
-					case UnaryOperation::_and: {
+					case '&': {
 						// TODO: make sure we can take address of expression
 						unop->type = make_pointer_type(unop->expression->type);
 						break;
@@ -2476,7 +2711,35 @@ cppcoro::generator<TypecheckResult> typecheck(TypecheckState *state, AstExpressi
 
 			break;
 		}
+		case Ast_subscript: {
+			auto subscript = (AstSubscript *)expression;
+
+			TYPECHECK(subscript->index_expression);
+			if (!harden_type(state, &subscript->index_expression, 0)) {
+				co_yield TypecheckResult::fail;
+			}
+			if (!::is_integer(subscript->index_expression->type)) {
+				state->reporter.error(subscript->index_expression->location, "Expression must be of type 'integer' but is '%'", type_to_string(subscript->index_expression->type));
+				co_yield TypecheckResult::fail;
+			}
+
+			TYPECHECK(subscript->expression);
+			if (is_type(subscript->expression)) {
+				subscript->type = &type_type;
+			} else {
+				if (!ensure_subscriptable(state, subscript->expression)) {
+					co_yield TypecheckResult::fail;
+				}
+
+				auto type = subscript->expression->type;
+				assert(type->kind == Ast_subscript);
+
+				subscript->type = ((AstSubscript *)type)->expression;
+			}
+			break;
+		}
 		default: {
+			invalid_code_path();
 			state->reporter.error(expression->location, "Internal error: typecheck(AstExpression *): unhandled case '%'", expression->kind);
 			co_yield TypecheckResult::fail;
 		}
@@ -2486,13 +2749,12 @@ cppcoro::generator<TypecheckResult> typecheck(TypecheckState *state, AstExpressi
 }
 
 cppcoro::generator<TypecheckResult> typecheck_global(TypecheckState *state) {
-	{
-		timed_block("typecheck");
-		TYPECHECK(state->statement);
-	}
+	timed_function();
+	TYPECHECK(state->statement);
 	co_yield TypecheckResult::success;
 }
 
+bool typecheck_finished;
 
 u32 tab_count = 0;
 
@@ -2511,8 +2773,10 @@ void print_ast(AstReturn *node);
 void print_ast(AstCall *node);
 void print_ast(AstStruct *node);
 void print_ast(AstIf *node);
+void print_ast(AstWhile *node);
 void print_ast(AstExpressionStatement *node);
 void print_ast(AstUnaryOperator *node);
+void print_ast(AstSubscript *node);
 void print_ast(AstNode *node) {
 	switch (node->kind) {
 		case Ast_definition: return print_ast((AstDefinition *)node);
@@ -2522,10 +2786,12 @@ void print_ast(AstNode *node) {
 		case Ast_return:     return print_ast((AstReturn     *)node);
 		case Ast_call:       return print_ast((AstCall       *)node);
 		case Ast_if:         return print_ast((AstIf         *)node);
+		case Ast_while:      return print_ast((AstWhile      *)node);
 		case Ast_expression_statement: return print_ast((AstExpressionStatement *)node);
 		case Ast_binary_operator: return print_ast((AstBinaryOperator *)node);
 		case Ast_struct: return print_ast((AstStruct *)node);
 		case Ast_unary_operator: return print_ast((AstUnaryOperator *)node);
+		case Ast_subscript: return print_ast((AstSubscript *)node);
 		default:
 			print_tabs();
 			print("unknown - uid: %\n", node->uid);
@@ -2537,7 +2803,7 @@ void print_ast(AstDefinition *node) {
 		return;
 
 	print_tabs();
-	print("definition - name: %, type: %, uid: %\n", node->name, type_to_string(node->type), node->uid);
+	print("definition - name: %, type: %, uid: %\n", node->name, type_to_string(node->type, true), node->uid);
 	if (node->expression) {
 		tab_count += 1;
 		print_ast(node->expression);
@@ -2546,7 +2812,7 @@ void print_ast(AstDefinition *node) {
 }
 void print_ast(AstLambda *node) {
 	print_tabs();
-	print("lambda - return_type: %, uid: %\n", node->return_type ? type_to_string(node->return_type) : u8"***null***"s, node->uid);
+	print("lambda - return_type: %, uid: %\n", node->return_type ? type_to_string(node->return_type, true) : u8"***null***"s, node->uid);
 	tab_count += 1;
 	for (auto statement : node->statements) {
 		print_ast(statement);
@@ -2555,11 +2821,11 @@ void print_ast(AstLambda *node) {
 }
 void print_ast(AstIdentifier *node) {
 	print_tabs();
-	print("identifier - name: %, type: %, uid: %, definition.uid: %\n", node->name, type_to_string(node->type), node->uid, node->definition ? node->definition->uid : -1);
+	print("identifier - name: %, type: %, uid: %, definition.uid: %\n", node->name, type_to_string(node->type, true), node->uid, node->definition ? node->definition->uid : -1);
 }
 void print_ast(AstCall *node) {
 	print_tabs();
-	print("call - name: %, type: %, uid: %, definition.uid: %\n", node->name, type_to_string(node->type), node->uid, node->definition ? node->definition->uid : -1);
+	print("call - name: %, type: %, uid: %, definition.uid: %\n", node->name, type_to_string(node->type, true), node->uid, node->definition ? node->definition->uid : -1);
 	tab_count += 1;
 	print_tabs();
 	print("arguments:\n");
@@ -2572,7 +2838,7 @@ void print_ast(AstCall *node) {
 }
 void print_ast(AstBinaryOperator *node) {
 	print_tabs();
-	print("binary - operation: %, type: %, uid: %\n", node->operation, type_to_string(node->type), node->uid);
+	print("binary - operation: %, type: %, uid: %\n", binary_operator_string(node->operation), type_to_string(node->type, true), node->uid);
 	tab_count += 1;
 
 	print_tabs();
@@ -2591,25 +2857,35 @@ void print_ast(AstBinaryOperator *node) {
 }
 void print_ast(AstUnaryOperator *node) {
 	print_tabs();
-	print("unary - operation: %, type: %, uid: %\n", node->operation, type_to_string(node->type), node->uid);
+	print("unary - operation: %, type: %, uid: %\n", node->operation, type_to_string(node->type, true), node->uid);
 	tab_count += 1;
 	print_ast(node->expression);
 	tab_count -= 1;
 }
 void print_ast(AstLiteral *node) {
 	print_tabs();
-	     if (types_match(node->type, &type_u8  )) print("u8  literal - value: %, uid: %\n", (u8 )node->integer, node->uid);
-	else if (types_match(node->type, &type_u16 )) print("u16 literal - value: %, uid: %\n", (u16)node->integer, node->uid);
-	else if (types_match(node->type, &type_u32 )) print("u32 literal - value: %, uid: %\n", (u32)node->integer, node->uid);
-	else if (types_match(node->type, &type_u64 )) print("u64 literal - value: %, uid: %\n", (u64)node->integer, node->uid);
-	else if (types_match(node->type, &type_s8  )) print("s8  literal - value: %, uid: %\n", (s8 )node->integer, node->uid);
-	else if (types_match(node->type, &type_s16 )) print("s16 literal - value: %, uid: %\n", (s16)node->integer, node->uid);
-	else if (types_match(node->type, &type_s32 )) print("s32 literal - value: %, uid: %\n", (s32)node->integer, node->uid);
-	else if (types_match(node->type, &type_s64 )) print("s64 literal - value: %, uid: %\n", (s64)node->integer, node->uid);
-	else if (types_match(node->type, &type_unsized_integer)) print("unsized integer literal - value: %, uid: %\n", (u64)node->integer, node->uid);
-	else if (types_match(node->type, &type_bool)) print("bool literal - value: %, uid: %\n", node->Bool, node->uid);
-	else if (types_match(node->type, &type_string)) print("string literal - value: %, uid: %\n", node->location, node->uid);
-	else invalid_code_path();
+	if (typecheck_finished) {
+			 if (types_match(node->type, &type_u8  )) print("u8  literal - value: %, uid: %\n", (u8 )node->integer, node->uid);
+		else if (types_match(node->type, &type_u16 )) print("u16 literal - value: %, uid: %\n", (u16)node->integer, node->uid);
+		else if (types_match(node->type, &type_u32 )) print("u32 literal - value: %, uid: %\n", (u32)node->integer, node->uid);
+		else if (types_match(node->type, &type_u64 )) print("u64 literal - value: %, uid: %\n", (u64)node->integer, node->uid);
+		else if (types_match(node->type, &type_s8  )) print("s8  literal - value: %, uid: %\n", (s8 )node->integer, node->uid);
+		else if (types_match(node->type, &type_s16 )) print("s16 literal - value: %, uid: %\n", (s16)node->integer, node->uid);
+		else if (types_match(node->type, &type_s32 )) print("s32 literal - value: %, uid: %\n", (s32)node->integer, node->uid);
+		else if (types_match(node->type, &type_s64 )) print("s64 literal - value: %, uid: %\n", (s64)node->integer, node->uid);
+		else if (types_match(node->type, &type_unsized_integer)) print("unsized integer literal - value: %, uid: %\n", (u64)node->integer, node->uid);
+		else if (types_match(node->type, &type_bool)) print("bool literal - value: %, uid: %\n", node->Bool, node->uid);
+		else if (types_match(node->type, &type_string)) print("string literal - value: %, uid: %\n", node->location, node->uid);
+		else if (node->type == &type_pointer_to_void) print("null literal - uid: %\n", node->uid);
+		else invalid_code_path();
+	} else {
+		switch (node->literal_kind) {
+			case LiteralKind::integer: print("integer literal - value: %, uid: %\n", (s64)node->integer, node->uid); break;
+			case LiteralKind::boolean: print("boolean literal - value: %, uid: %\n", node->Bool, node->uid); break;
+			case LiteralKind::string : print( "string literal - value: %, uid: %\n", node->location, node->uid); break;
+			default: invalid_code_path();
+		}
+	}
 }
 void print_ast(AstReturn *node) {
 	print_tabs();
@@ -2654,6 +2930,44 @@ void print_ast(AstIf *node) {
 void print_ast(AstExpressionStatement *node) {
 	print_ast(node->expression);
 }
+void print_ast(AstSubscript *node) {
+	print_tabs();
+	print("subscript - type: %, uid: %\n", type_to_string(node->type, true), node->uid);
+	tab_count += 1;
+	print_tabs();
+	print("index expression:\n");
+	tab_count += 1;
+	print_ast(node->index_expression);
+	tab_count -= 1;
+	print_tabs();
+	print("expression:\n");
+	tab_count += 1;
+	print_ast(node->expression);
+	tab_count -= 1;
+	tab_count -= 1;
+}
+void print_ast(AstWhile *node) {
+	print_tabs(); print("while - uid: %\n", node->uid);
+	tab_count += 1;
+	print_tabs(); print("condition:\n");
+	tab_count += 1;
+	print_ast(node->condition);
+	tab_count -= 1;
+	print_tabs(); print("statements:\n");
+	tab_count += 1;
+	for (auto statement : node->statements) {
+		print_ast(statement);
+	}
+	tab_count -= 1;
+	tab_count -= 1;
+}
+
+void print_ast() {
+	timed_function();
+	for_each(global_statements, [&](auto key, auto statement) {
+		print_ast(statement);
+	});
+}
 
 void add_member(AstStruct &destination, AstExpression *type, Span<utf8> name, AstLiteral *value, bool constant, s32 offset) {
 	auto d = new_ast<AstDefinition>();
@@ -2678,6 +2992,63 @@ static void write_test_source() {
 		append_format(test, u8"♥% :: fn (☺: s32, ☻: s32) s32 { return ♥%(☺, ☻); } /* ♦♣♠•◘○ this is a /* nested */ comment ♦♣♠•◘○ */\n", i, i - 1);
 	}
 	write_entire_file("test.tl"s, as_bytes(to_string(test)));
+}
+enum class Output {
+	none,
+	c,
+	nasm,
+};
+struct ParsedArguments {
+	Output output = {};
+
+	List<Span<utf8>> source_files;
+
+	bool print_ast = false;
+	bool no_typecheck = false;
+
+	bool success = false;
+};
+
+ParsedArguments parse_arguments(Span<Span<utf8>> arguments) {
+	timed_function();
+
+	ParsedArguments result = {};
+
+	executable_path = arguments[0];
+	auto parsed = parse_path(executable_path);
+	executable_name = parsed.name;
+	executable_directory = parsed.directory;
+
+	if (arguments.count == 1) {
+		print_help();
+		return result;
+	}
+
+	for (int i = 1; i < arguments.count; ++i) {
+		if (arguments[i] == u8"--print-ast"s) {
+			result.print_ast = true;
+		} else if (arguments[i] == u8"--no-type-check"s) {
+			result.no_typecheck = true;
+		} else if (arguments[i] == u8"--output"s) {
+			++i;
+			if (i >= arguments.count) {
+				print("Expected an argument after --output.\n");
+				return result;
+			}
+			using enum Output;
+				 if (arguments[i] == u8"none"s) result.output = none;
+			else if (arguments[i] == u8"c"s   ) result.output = c;
+			else if (arguments[i] == u8"nasm"s) result.output = nasm;
+			else {
+				print(Print_error, "Unknown output type '%'\n", arguments[i]);
+			}
+		} else {
+			result.source_files.add(arguments[i]);
+		}
+	}
+
+	result.success = true;
+	return result;
 }
 
 s32 tl_main(Span<Span<utf8>> arguments) {
@@ -2745,59 +3116,22 @@ s32 tl_main(Span<Span<utf8>> arguments) {
 
 restart_main:
 
-	auto test = GetStdHandle(STD_OUTPUT_HANDLE);
-	WriteConsoleA((HANDLE)1, (void *)2, 3, (DWORD *)4, (void *)5);
+	timed_begin("setup"s);
 
-	executable_path = arguments[0];
-	auto parsed = parse_path(executable_path);
-	executable_name = parsed.name;
-	executable_directory = parsed.directory;
+	auto args = parse_arguments(arguments);
 
-	if (arguments.count == 1) {
-		print_help();
-		return 1;
-	}
-
-	enum class Output {
-		none,
-		c,
-		nasm,
-	} output = {};
-
-	bool do_print_ast = false;
-	bool no_typecheck = false;
-	for (int i = 1; i < arguments.count; ++i) {
-		if (arguments[i] == u8"--print-ast"s) {
-			do_print_ast = true;
-		} else if (arguments[i] == u8"--no-type-check"s) {
-			no_typecheck = true;
-		} else if (arguments[i] == u8"--output"s) {
-			++i;
-			if (i >= arguments.count) {
-				print("Expected an argument after --output.\n");
-				return 1;
-			}
-			using enum Output;
-				 if (arguments[i] == u8"none"s) output = none;
-			else if (arguments[i] == u8"c"s   ) output = c;
-			else if (arguments[i] == u8"nasm"s) output = nasm;
-			else {
-				print(Print_error, "Unknown output type '%'\n", arguments[i]);
-			}
-		} else {
-			source_path = arguments[i];
-		}
-	}
-
-	if (!source_path.data) {
+	if (args.source_files.count == 0) {
 		print("No source path received. Exiting.\n");
 		return 1;
 	}
+	source_path = args.source_files[0];
 	if (!is_absolute_path(source_path)) {
 		source_path = make_absolute_path(source_path);
 	}
 	source_path_without_extension = parse_path(source_path).path_without_extension();
 
+	construct(parsed_files);
+	construct(sources);
 	construct(global_statements);
 	construct(typechecked_globals);
 
@@ -2844,6 +3178,10 @@ restart_main:
 	init_type(type_string, u8"string"s, 16);
 	init_type(type_unsized_integer,  u8"integer"s,  0);
 
+	type_pointer_to_void.expression = &type_void;
+	type_pointer_to_void.operation = '*';
+	type_pointer_to_void.type = &type_type;
+
 	type_default_integer = &type_s64;
 
 	add_member(type_u8,  &type_u8,  u8"min"s, make_integer(0), true, INVALID_MEMBER_OFFSET);
@@ -2872,7 +3210,19 @@ restart_main:
 
 	init_thread_pool(thread_pool, get_cpu_info().logical_processor_count);
 
-	parse_file(source_path);
+	defer {
+		if (args.print_ast) {
+			print_ast();
+		}
+	};
+
+	timed_end("setup"s);
+
+	parse_file(concatenate(executable_directory, u8"\\libs\\preload.tl"s));
+
+	for (auto path : args.source_files) {
+		parse_file(path);
+	}
 
 	wait_for_completion(thread_pool);
 
@@ -2888,7 +3238,7 @@ restart_main:
 	}
 
 	f32 typecheck_time;
-	if (!no_typecheck) {
+	if (!args.no_typecheck) {
 		auto timer = create_precise_timer();
 		defer { typecheck_time = reset(timer); };
 
@@ -2898,20 +3248,50 @@ restart_main:
 		if (typecheck_states.count) {
 			typecheck_states.data = default_allocator.allocate<TypecheckState>(typecheck_states.count);
 
-
-			u32 state_index = 0;
-			for_each(global_statements, [&](Span<utf8> key, AstStatement *statement)  {
-				if (statement->kind == Ast_definition && ((AstDefinition *)statement)->built_in)
-					return;
-				auto &state = typecheck_states[state_index];
-				state.statement = statement;
-				state.generator = typecheck_global(&state);
-				state.generator_iterator = state.generator.begin();
-				++state_index;
-			});
-
 			u32 typechecks_finished = 0;
 			bool fail = false;
+			u32 state_index = 0;
+
+			auto process_coroutine_result = [&](auto &state) {
+				auto result = *state.generator_iterator;
+				switch (result) {
+					case TypecheckResult::success:
+						state.finished = true;
+						typechecks_finished++;
+						destruct(state); // This must be done to run all defers/destructors in the coroutine
+						break;
+					case TypecheckResult::fail:
+						state.finished = true;
+						typechecks_finished++;
+						state.reporter.print_all();
+						fail = true;
+						destruct(state); // This must be done to run all defers/destructors in the coroutine
+						break;
+					case TypecheckResult::wait:
+						break;
+				}
+				return result;
+			};
+
+			for_each(global_statements, [&](Span<utf8> key, AstStatement *statement)  {
+				if (statement->kind == Ast_definition && ((AstDefinition *)statement)->built_in)
+					for_each_continue;
+
+				auto &state = typecheck_states[state_index];
+				state.statement = statement;
+				construct(state.generator, typecheck_global(&state));
+				construct(state.generator_iterator, state.generator.begin());
+				++state_index;
+
+				switch (process_coroutine_result(state)) {
+					case TypecheckResult::fail:
+						for_each_break;
+				}
+				for_each_continue;
+			});
+			if (fail)
+				return 1;
+
 			while (1) {
 				for (u32 i = 0; i < typecheck_states.count; ++i) {
 					if (typechecks_finished == typecheck_states.count) {
@@ -2922,20 +3302,10 @@ restart_main:
 					if (state.finished)
 						continue;
 
-					switch (*state.generator_iterator) {
-						case TypecheckResult::success:
-							state.finished = true;
-							typechecks_finished++;
-							continue;
+					++state.generator_iterator;
+					switch (process_coroutine_result(state)) {
 						case TypecheckResult::fail:
-							state.finished = true;
-							typechecks_finished++;
-							state.reporter.print_all();
-							fail = true;
-							break;
-						case TypecheckResult::wait:
-							++state.generator_iterator;
-							break;
+							goto typecheck_break;
 					}
 				}
 			}
@@ -2945,14 +3315,9 @@ restart_main:
 		}
 	}
 
-	if (do_print_ast) {
-		timed_block("ast print"s);
-		for_each(global_statements, [&](auto key, auto statement) {
-			print_ast(statement);
-		});
-	}
+	typecheck_finished = true;
 
-	if (no_typecheck) {
+	if (args.no_typecheck) {
 		return 1;
 	}
 
@@ -2963,16 +3328,21 @@ restart_main:
 		((AstDefinition *)*found_main)->expression->kind == Ast_lambda)
 	{
 		main_lambda = (AstLambda *)((AstDefinition *)*found_main)->expression;
+
+		if (!::is_integer(main_lambda->return_type) && !types_match(main_lambda->return_type, &type_void)) {
+			immediate_error(main_lambda->return_type->location.data ? main_lambda->return_type->location : main_lambda->location, "Main function can return any type of integer or void, but not '%'.", type_to_string(main_lambda->return_type));
+			return 1;
+		}
 	} else {
 		print("Main function was not defined. Exiting.\n");
 		return 1;
 	}
 
-	if (output != Output::none) {
+	if (args.output != Output::none) {
 
 		auto bytecode = build_bytecode();
 
-		switch (output) {
+		switch (args.output) {
 			using enum Output;
 			//case c:    output_c();    break;
 			case nasm: output_nasm(bytecode); break;

@@ -9,16 +9,6 @@ umm append(StringBuilder &builder, AstKind kind) {
 	return append(builder, "(unknown AstKind)");
 }
 
-umm append(StringBuilder &builder, UnaryOperation op) {
-	switch (op) {
-		using enum UnaryOperation;
-#define e(name) case name: return append(builder, u8#name##s);
-		ENUMERATE_UNARY_OPERATIONS(e)
-#undef e
-	}
-	return append(builder, "(unknown UnaryOperation)");
-}
-
 s32 ast_node_uid_counter;
 
 AstStruct type_bool;
@@ -33,6 +23,7 @@ AstStruct type_s32;
 AstStruct type_s64;
 AstStruct type_type;
 AstStruct type_string;
+AstUnaryOperator type_pointer_to_void;
 
 AstStruct type_unsized_integer;
 AstStruct type_void;
@@ -76,7 +67,7 @@ Optional<BigInt> get_constant_integer(AstExpression *expression) {
 			auto value = got_value.value_unchecked();
 
 			switch (unop->operation) {
-				case UnaryOperation::minus: return -value;
+				case '-': return -value;
 			}
 			break;
 		}
@@ -94,8 +85,18 @@ bool is_type(AstExpression *expression) {
 	return false;
 }
 
-void append_type(StringBuilder &builder, AstExpression *type) {
-	assert(is_type(type));
+void append_type(StringBuilder &builder, AstExpression *type, bool silent_error) {
+#define ensure(x) \
+	if (silent_error) { \
+		if (!(x)) { \
+			append(builder, u8"***error***"s); \
+			return; \
+		} \
+	} else { \
+		assert(x); \
+	}
+
+	ensure(is_type(type));
 	switch (type->kind) {
 		case Ast_struct: {
 			append(builder, ((AstStruct *)type)->definition->name);
@@ -109,38 +110,47 @@ void append_type(StringBuilder &builder, AstExpression *type) {
 				if (&parameter != lambda->parameters.data) {
 					append(builder, ", ");
 				}
-				append_type(builder, parameter->type);
+				append_type(builder, parameter->type, silent_error);
 			}
 			append(builder, ") ");
-			append_type(builder, lambda->return_type);
+			append_type(builder, lambda->return_type, silent_error);
 			break;
 		}
 		case Ast_identifier: {
 			auto identifier = (AstIdentifier *)type;
-			assert(identifier->definition);
-			assert(identifier->definition->expression->type == &type_type);
+			ensure(identifier->definition);
+			ensure(identifier->definition->expression->type == &type_type);
 			append(builder, identifier->name);
 			break;
 		}
 		case Ast_unary_operator: {
 			auto unop = (AstUnaryOperator *)type;
-			assert(unop->operation == UnaryOperation::star);
+			ensure(unop->operation == '*');
 			append(builder, '*');
-			append_type(builder, unop->expression);
+			append_type(builder, unop->expression, silent_error);
+			break;
+		}
+		case Ast_subscript: {
+			auto subscript = (AstSubscript *)type;
+			append(builder, '[');
+			append(builder, (s64)get_constant_integer(subscript->index_expression).value());
+			append(builder, ']');
+			append_type(builder, subscript->expression, silent_error);
 			break;
 		}
 		default: {
-			invalid_code_path();
+			ensure(false);
 		}
 	}
+#undef ensure
 }
 
-List<utf8> type_to_string(AstExpression *type) {
+List<utf8> type_to_string(AstExpression *type, bool silent_error) {
 	if (!type)
 		return to_list(u8"***null***"s);
 
 	StringBuilder builder;
-	append_type(builder, type);
+	append_type(builder, type, silent_error);
 	return (List<utf8>)to_string(builder);
 }
 
@@ -158,10 +168,17 @@ s64 get_size(AstExpression *type) {
 		case Ast_unary_operator: {
 			auto unop = (AstUnaryOperator *)type;
 			switch (unop->operation) {
-				using enum UnaryOperation;
-				case star: return 8;
+				case '*': return 8;
 				default: invalid_code_path();
 			}
+		}
+		case Ast_subscript: {
+			auto subscript = (AstSubscript *)type;
+
+			auto count = get_constant_integer(subscript->index_expression);
+			assert(count.has_value());
+
+			return get_size(subscript->expression) * (s64)count.value();
 		}
 		default: {
 			invalid_code_path();

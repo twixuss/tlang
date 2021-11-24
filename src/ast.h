@@ -17,6 +17,7 @@ e(if) \
 e(expression_statement) \
 e(unary_operator) \
 e(while) \
+e(subscript) \
 
 enum AstKind {
 #define e(name) Ast_ ## name,
@@ -32,7 +33,6 @@ struct AstNode {
 	AstKind kind = Ast_null;
 	s32 uid = atomic_increment(&ast_node_uid_counter);
 	Span<utf8> location;
-	Span<utf8> combined_location;
 
 	void *user_data = 0;
 };
@@ -188,21 +188,7 @@ struct AstBinaryOperator : AstExpression {
 	AstExpression *right = 0;
 };
 
-#define ENUMERATE_UNARY_OPERATIONS(e) \
-e(none) \
-e(plus) \
-e(minus) \
-e(star) \
-e(_and) \
-e(_not) \
-
-enum class UnaryOperation {
-#define e(name) name,
-	ENUMERATE_UNARY_OPERATIONS(e)
-#undef e
-};
-
-umm append(StringBuilder &builder, UnaryOperation op);
+using UnaryOperation = u32;
 
 struct AstUnaryOperator : AstExpression {
 	AstUnaryOperator() { kind = Ast_unary_operator; }
@@ -210,6 +196,12 @@ struct AstUnaryOperator : AstExpression {
 	UnaryOperation operation = {};
 
 	AstExpression *expression = 0;
+};
+
+struct AstSubscript : AstExpression {
+	AstSubscript() { kind = Ast_subscript; }
+	AstExpression *expression = 0;
+	AstExpression *index_expression = 0;
 };
 
 extern AstStruct type_type;
@@ -224,6 +216,7 @@ extern AstStruct type_s16;
 extern AstStruct type_s32;
 extern AstStruct type_s64;
 extern AstStruct type_string;
+extern AstUnaryOperator type_pointer_to_void;
 
 extern AstStruct type_unsized_integer;
 extern AstStruct *type_default_integer;
@@ -246,7 +239,7 @@ T *new_ast() {
 
 Optional<BigInt> get_constant_integer(AstExpression *expression);
 
-List<utf8> type_to_string(AstExpression *type);
+List<utf8> type_to_string(AstExpression *type, bool silent_error = false);
 
 s64 get_size(AstExpression *type);
 
@@ -261,3 +254,25 @@ void init_ast_allocator();
 extern LinearSet<Span<utf8>> extern_libraries;
 
 extern AstLambda *main_lambda;
+
+inline Span<utf8> binary_operator_string(BinaryOperation op) {
+	switch (op) {
+		case '+': return u8"+"s;
+		case '-': return u8"-"s;
+		case '*': return u8"*"s;
+		case '/': return u8"/"s;
+		case '%': return u8"%"s;
+		case '|': return u8"|"s;
+		case '&': return u8"&"s;
+		case '^': return u8"^"s;
+		case '.': return u8"."s;
+		case '>': return u8">"s;
+		case '<': return u8"<"s;
+		case '>=': return u8">="s;
+		case '<=': return u8"<="s;
+		case '==': return u8"=="s;
+		case '!=': return u8"!="s;
+		case '=': return u8"="s;
+	}
+	invalid_code_path();
+}
