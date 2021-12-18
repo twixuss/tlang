@@ -18,9 +18,22 @@ Destination of an instruction is first
 enum class InstructionKind : u64 {
 	mov_rc,
 	mov_rr,
-	mov_rm,
-	mov_mc,
-	mov_mr,
+
+	mov1_rm,
+	mov1_mc,
+	mov1_mr,
+
+	mov2_rm,
+	mov2_mc,
+	mov2_mr,
+
+	mov4_rm,
+	mov4_mc,
+	mov4_mr,
+
+	mov8_rm,
+	mov8_mc,
+	mov8_mr,
 
 	push_r,
 	push_c,
@@ -29,11 +42,19 @@ enum class InstructionKind : u64 {
 	pushcda, // constant data address
 	pushda,  // data address
 	pushuda, // uninitialized data address
+	pushta,  // text address
+	pushextern, // extern symbol address
 
 	pop_r,
 	pop_m,
 
 	ret,
+
+	shr_rc,
+	shr_rr,
+	shr_rm,
+	shr_mc,
+	shr_mr,
 
 	shl_rc,
 	shl_rr,
@@ -123,9 +144,22 @@ struct Instruction {
 	union {
 		struct { Register d; s64      s; } mov_rc;
 		struct { Register d; Register s; } mov_rr;
-		struct { Register d; Register s; } mov_rm;
-		struct { Register d; s64      s; } mov_mc;
-		struct { Register d; Register s; } mov_mr;
+
+		struct { Register d; Register s; } mov1_rm;
+		struct { Register d; s64      s; } mov1_mc;
+		struct { Register d; Register s; } mov1_mr;
+
+		struct { Register d; Register s; } mov2_rm;
+		struct { Register d; s64      s; } mov2_mc;
+		struct { Register d; Register s; } mov2_mr;
+
+		struct { Register d; Register s; } mov4_rm;
+		struct { Register d; s64      s; } mov4_mc;
+		struct { Register d; Register s; } mov4_mr;
+
+		struct { Register d; Register s; } mov8_rm;
+		struct { Register d; s64      s; } mov8_mc;
+		struct { Register d; Register s; } mov8_mr;
 
 		struct { s64      s; } push_c;
 		struct { Register s; } push_r;
@@ -134,6 +168,8 @@ struct Instruction {
 		struct { s64 s; } pushcda;
 		struct { s64 s; } pushda;
 		struct { s64 s; } pushuda;
+		struct { s64 s; } pushta;
+		struct { Span<utf8> s; } pushextern;
 
 
 		struct { Register d; } pop_r;
@@ -141,6 +177,12 @@ struct Instruction {
 
 
 		struct {} ret;
+
+		struct { Register d; s64      s; } shr_rc;
+		struct { Register d; Register s; } shr_rr;
+		struct { Register d; Register s; } shr_rm;
+		struct { Register d; s64      s; } shr_mc;
+		struct { Register d; Register s; } shr_mr;
 
 		struct { Register d; s64      s; } shl_rc;
 		struct { Register d; Register s; } shl_rr;
@@ -227,7 +269,7 @@ struct Bytecode {
 	List<Instruction> instructions;
 	List<u8> constant_data;
 	List<u8> data;
-	List<u8> zero_data;
+	umm zero_data_size;
 	List<Span<utf8>> extern_functions;
 };
 

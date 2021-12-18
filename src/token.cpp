@@ -13,6 +13,34 @@ Span<utf8> token_kind_to_string(TokenKind kind) {
 		return Span((utf8 *)&single_char_tokens.data[kind], 1);
 	}
 
+	static thread_local auto double_char_tokens = []() {
+		HashMap<TokenKind, Span<utf8>> result;
+
+#define X(x) result.get_or_insert(#x[1] | (#x[0] << 8)) = u8#x##s;
+
+		X(==);
+		X(!=);
+		X(>=);
+		X(<=);
+		X(+=);
+		X(-=);
+		X(*=);
+		X(/=);
+		X(%=);
+		X(|=);
+		X(&=);
+		X(^=);
+		X(->);
+		X(>>);
+		X(<<);
+
+		return result;
+	}();
+
+	if (kind < 0x10000) {
+		return *double_char_tokens.find(kind);
+	}
+
 	switch (kind) {
 #define E(name, value) case value: return u8#name##s;
 	ENUMERATE_TOKEN_KINDS(E)

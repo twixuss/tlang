@@ -29,8 +29,21 @@ AstStruct type_unsized_integer;
 AstStruct type_void;
 AstStruct *type_default_integer;
 
-HashMap<Span<utf8>, AstStatement *> global_statements;
-RecursiveMutex global_statements_mutex;
+Scope global_scope;
+
+Mutex global_scope_mutex;
+void lock(Scope *scope) {
+	if (scope == &global_scope) {
+		lock(global_scope_mutex);
+	}
+}
+void unlock(Scope *scope) {
+	if (scope == &global_scope) {
+		unlock(global_scope_mutex);
+	}
+}
+
+HashMap<Span<utf8>, AstDefinition *> names_not_available_for_globals;
 
 bool needs_semicolon(AstExpression *node) {
 	return node->kind != Ast_lambda && node->kind != Ast_struct;
@@ -71,6 +84,27 @@ Optional<BigInt> get_constant_integer(AstExpression *expression) {
 			}
 			break;
 		}
+		case Ast_binary_operator: {
+			auto binop = (AstBinaryOperator *)expression;
+			switch (binop->operation) {
+				case '+': return get_constant_integer(binop->left) + get_constant_integer(binop->right);
+				case '-': return get_constant_integer(binop->left) - get_constant_integer(binop->right);
+				case '*': return get_constant_integer(binop->left) * get_constant_integer(binop->right);
+				case '/': print("constexpr / not implemented\n"); return {};// return get_constant_integer(binop->left) / get_constant_integer(binop->right);
+				case '%': print("constexpr % not implemented\n"); return {};// return get_constant_integer(binop->left) % get_constant_integer(binop->right);
+				case '^': return get_constant_integer(binop->left) ^ get_constant_integer(binop->right);
+				case '&': return get_constant_integer(binop->left) & get_constant_integer(binop->right);
+				case '|': return get_constant_integer(binop->left) | get_constant_integer(binop->right);
+				case '<<': print("constexpr << not implemented\n"); return {};// return get_constant_integer(binop->left) << get_constant_integer(binop->right);
+				case '>>': print("constexpr >> not implemented\n"); return {};// return get_constant_integer(binop->left) >> get_constant_integer(binop->right);
+				case '==':
+				case '!=':
+				case '.':
+					return {};
+				default: invalid_code_path();
+			}
+			break;
+		}
 	}
 	return {};
 }
@@ -89,7 +123,7 @@ void append_type(StringBuilder &builder, AstExpression *type, bool silent_error)
 #define ensure(x) \
 	if (silent_error) { \
 		if (!(x)) { \
-			append(builder, u8"***error***"s); \
+			append(builder, u8"!error!"s); \
 			return; \
 		} \
 	} else { \
@@ -99,7 +133,8 @@ void append_type(StringBuilder &builder, AstExpression *type, bool silent_error)
 	ensure(is_type(type));
 	switch (type->kind) {
 		case Ast_struct: {
-			append(builder, ((AstStruct *)type)->definition->name);
+			auto Struct = (AstStruct *)type;
+			append(builder, Struct->definition->name);
 			break;
 		}
 		case Ast_lambda: {
@@ -112,8 +147,9 @@ void append_type(StringBuilder &builder, AstExpression *type, bool silent_error)
 				}
 				append_type(builder, parameter->type, silent_error);
 			}
-			append(builder, ") ");
-			append_type(builder, lambda->return_type, silent_error);
+			append(builder, ") -> ");
+			append_format(builder, "%: ", lambda->return_parameter->name);
+			append_type(builder, lambda->return_parameter->type, silent_error);
 			break;
 		}
 		case Ast_identifier: {
@@ -147,7 +183,7 @@ void append_type(StringBuilder &builder, AstExpression *type, bool silent_error)
 
 List<utf8> type_to_string(AstExpression *type, bool silent_error) {
 	if (!type)
-		return to_list(u8"***null***"s);
+		return to_list(u8"null"s);
 
 	StringBuilder builder;
 	append_type(builder, type, silent_error);
@@ -180,6 +216,41 @@ s64 get_size(AstExpression *type) {
 
 			return get_size(subscript->expression) * (s64)count.value();
 		}
+		case Ast_lambda: {
+			return 8;
+		}
+		default: {
+			invalid_code_path();
+			return 0;
+		}
+	}
+}
+
+s64 get_align(AstExpression *type) {
+	assert(type);
+	switch (type->kind) {
+		case Ast_struct: {
+			auto Struct = (AstStruct *)type;
+			return Struct->alignment;
+		}
+		case Ast_identifier: {
+			auto identifier = (AstIdentifier *)type;
+			return get_size(identifier->definition->expression);
+		}
+		case Ast_unary_operator: {
+			auto unop = (AstUnaryOperator *)type;
+			switch (unop->operation) {
+				case '*': return 8;
+				default: invalid_code_path();
+			}
+		}
+		case Ast_subscript: {
+			auto subscript = (AstSubscript *)type;
+			return get_align(subscript->expression);
+		}
+		case Ast_lambda: {
+			return -1;
+		}
 		default: {
 			invalid_code_path();
 			return 0;
@@ -195,8 +266,16 @@ bool types_match_ns(AstExpression *a, AstExpression *b) {
 		b = ((AstIdentifier *)b)->definition->expression;
 	}
 
-	if (a->kind == Ast_struct && b->kind == Ast_struct) {
+	if (a->kind != b->kind) {
+		return false;
+	}
+
+	if (a->kind == Ast_struct) {
 		return a == b;
+	}
+
+	if (a->kind == Ast_unary_operator) {
+		return types_match(((AstUnaryOperator *)a)->expression, ((AstUnaryOperator *)b)->expression);
 	}
 
 	return false;
@@ -214,7 +293,9 @@ bool types_match(AstExpression *type_a, AstExpression *type_b) {
 
 AstStruct *get_struct(AstExpression *type) {
 	while (type->kind == Ast_identifier) {
-		type = ((AstIdentifier *)type)->definition->expression;
+		auto identifier = (AstIdentifier *)type;
+		assert(identifier->definition);
+		type = identifier->definition->expression;
 	}
 
 	if (type->kind == Ast_struct)
@@ -269,3 +350,35 @@ retry:
 }
 
 AstLambda *main_lambda;
+
+Span<utf8> binary_operator_string(BinaryOperation op) {
+	switch (op) {
+		case '+': return u8"+"s;
+		case '-': return u8"-"s;
+		case '*': return u8"*"s;
+		case '/': return u8"/"s;
+		case '%': return u8"%"s;
+		case '|': return u8"|"s;
+		case '&': return u8"&"s;
+		case '^': return u8"^"s;
+		case '.': return u8"."s;
+		case '>': return u8">"s;
+		case '<': return u8"<"s;
+		case '>=': return u8">="s;
+		case '<=': return u8"<="s;
+		case '==': return u8"=="s;
+		case '!=': return u8"!="s;
+		case '=': return u8"="s;
+		case '+=': return u8"+="s;
+		case '-=': return u8"-="s;
+		case '*=': return u8"*="s;
+		case '/=': return u8"/="s;
+		case '%=': return u8"%="s;
+		case '|=': return u8"|="s;
+		case '&=': return u8"&="s;
+		case '^=': return u8"^="s;
+		case '>>': return u8">>"s;
+		case '<<': return u8"<<"s;
+	}
+	invalid_code_path();
+}

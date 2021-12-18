@@ -1,11 +1,7 @@
 ﻿import "windows.tl"
 
-null : *void : 0;
 standard_output_handle : HANDLE;
 global_string : string;
-
-int  :: s64;
-uint :: u64;
 
 AStruct :: struct {
 	data : *void;
@@ -22,7 +18,7 @@ main :: fn () s32 {
     print(str);
 
 	if true {
-		x : u64; // block-local variable
+		dd : u64; // block-local variable
 		print("true\n");
 	}
 	

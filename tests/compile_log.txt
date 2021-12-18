@@ -1,5 +1,0 @@
-F:\tlang\tests\b.asm:10: warning: no operand for data declaration [-w+db-empty]
-F:\tlang\tests\b.asm:12: warning: no operand for data declaration [-w+db-empty]
-Microsoft (R) Incremental Linker Version 14.29.30038.1
-Copyright (C) Microsoft Corporation.  All rights reserved.
-

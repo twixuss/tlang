@@ -1,0 +1,30 @@
+
+Should we check that all control paths return a value or just default initialize a return value by default?
+
+
+
+
+Bytecode:
+
+Functions:
+
+Each parameter (including returned) is aligned to 8 byte boundary.
+First, space for return parameters is reserved.
+Then, arguments are pushed, the function is called, and parameters are erased from the stack
+
+Return from a function means just write in preallocated by the caller space
+
+Example state of the stack:
+
+ffff
+...
+previously allocated data
+return parameter 0
+return parameter 1
+parameter 0
+parameter 1
+return address
+saved rbp <- rbp
+
+...
+0
