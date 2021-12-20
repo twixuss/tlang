@@ -33,6 +33,8 @@ Span<utf8> token_kind_to_string(TokenKind kind) {
 		X(->);
 		X(>>);
 		X(<<);
+		X(=>);
+		X(->);
 
 		return result;
 	}();

@@ -1,6 +1,5 @@
 bits 64
 extern ExitProcess
-extern WNDPROC
 extern GetStdHandle
 extern WriteConsoleA
 extern CreateFileA
@@ -16,7 +15,7 @@ extern TranslateMessage
 extern DispatchMessageA
 extern PostQuitMessage
 section .rodata
-constants: db 2,0,0,0,0,0,0,0,119,105,110,100,111,119,95,99,108,97,115,115,0,104,101,108,108,111,32,119,105,110,100,111,119,0,67,108,97,115,115,32,99,114,101,97,116,101,100,33,10,67,108,97,115,115,32,70,97,105,108,101,100,33,10,0,0,0,128,0,0,0,0,0,0,207,0,0,0,0,0,0,0,0,16,0,0,0,0,87,105,110,100,111,119,32,83,117,99,99,101,115,115,33,10,87,105,110,100,111,119,32,70,97,105,108,33,10,1,0,0,0,0,0,0,0,18,0,0,0,0,0,0,0,245,255,255,255,255,255,255,255,246,255,255,255,255,255,255,255,244,255,255,255,255,255,255,255,0,0,0,128,0,0,0,0,0,0,0,64,0,0,0,0,0,0,0,32,0,0,0,0,0,0,0,16,0,0,0,0,4,0,0,0,0,0,0,0,1,0,0,0,0,0,0,0,2,0,0,0,0,0,0,0,2,0,0,0,0,0,0,0,1,0,0,0,0,0,0,0,4,0,0,0,0,0,0,0,3,0,0,0,0,0,0,0,5,0,0,0,0,0,0,0,1,0,0,0,0,0,0,0,2,0,0,0,0,0,0,0,4,0,0,0,0,0,0,0,32,0,0,0,0,0,0,0,128,0,0,0,0,0,0,0,0,1,0,0,0,0,0,0,0,16,0,0,0,0,0,0,0,64,0,0,0,0,0,0,0,0,0,2,0,0,0,0,0,0,0,4,0,0,0,0,0,0,0,32,0,0,0,0,0,0,16,0,0,0,0,0,0,0,32,0,0,0,0,0,0,0,0,64,0,0,0,0,0,0,0,1,0,0,0,0,0,0,0,16,0,0,0,0,0,0,128,0,0,0,0,0,0,0,0,8,0,0,0,0,0,0,0,128,0,0,0,0,0,16,0,0,0,0,0,0,0,32,0,0,0,0,0,0,0,0,8,0,0,0,0,0,0,0,0,1,0,0,0,0,0,0,0,32,0,0,0,0,0,0,64,0,0,0,0,0,0,0,16,0,0,0,0,0,0,0,32,0,0,0,0,0,0,0,128,0,0,0,0,0,0,0,192,0,0,0,0,0,0,0,0,64,0,0,0,0,0,0,0,64,0,0,0,0,0,0,0,2,0,0,0,0,0,0,0,4,0,0,0,0,0,0,0,8,0,0,0,0,0,0,64,0,0,0,0,0,0,0,2,0,0,0,0,0,0,0,16,0,0,0,0,0,0,0,0,32,0,0,0,0,0,0,0,1,0,0,0,0,0,0,1,0,0,0,0,0,0,0,0,32,0,0,0,0,0,0,2,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,128,0,0,0,0,0,0,136,128,0,0,0,0,0,0,4,0,0,0,0,0,0,0,8,0,0,0,0,0,0,0,1,0,0,0,0,0,0,0,4,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,207,0,0,0,0,0,0,0,32,0,0,0,0,0,0,0,0,0,0,0,0,0,2,0,0,0,0,0,0,0,16,0,0,0,0,0,0,0,
+constants: db 2,0,0,0,0,0,0,0,119,105,110,100,111,119,95,99,108,97,115,115,0,104,101,108,108,111,32,119,105,110,100,111,119,0,67,108,97,115,115,32,99,114,101,97,116,101,100,33,10,67,108,97,115,115,32,70,97,105,108,101,100,33,10,87,105,110,100,111,119,32,83,117,99,99,101,115,115,33,10,87,105,110,100,111,119,32,70,97,105,108,33,10,18,0,0,0,0,0,0,0,246,255,255,255,255,255,255,255,245,255,255,255,255,255,255,255,244,255,255,255,255,255,255,255,0,0,0,128,0,0,0,0,0,0,0,64,0,0,0,0,0,0,0,32,0,0,0,0,0,0,0,16,0,0,0,0,4,0,0,0,0,0,0,0,1,0,0,0,0,0,0,0,2,0,0,0,0,0,0,0,2,0,0,0,0,0,0,0,1,0,0,0,0,0,0,0,4,0,0,0,0,0,0,0,3,0,0,0,0,0,0,0,5,0,0,0,0,0,0,0,1,0,0,0,0,0,0,0,2,0,0,0,0,0,0,0,4,0,0,0,0,0,0,0,32,0,0,0,0,0,0,0,128,0,0,0,0,0,0,0,0,1,0,0,0,0,0,0,0,16,0,0,0,0,0,0,0,64,0,0,0,0,0,0,0,0,0,2,0,0,0,0,0,0,0,4,0,0,0,0,0,0,0,32,0,0,0,0,0,0,16,0,0,0,0,0,0,0,32,0,0,0,0,0,0,0,0,64,0,0,0,0,0,0,0,1,0,0,0,0,0,0,0,16,0,0,0,0,0,0,128,0,0,0,0,0,0,0,0,8,0,0,0,0,0,0,0,128,0,0,0,0,0,16,0,0,0,0,0,0,0,32,0,0,0,0,0,0,0,0,8,0,0,0,0,0,0,0,0,1,0,0,0,0,0,0,0,32,0,0,0,0,0,0,64,0,0,0,0,0,0,0,16,0,0,0,0,0,0,0,32,0,0,0,0,0,0,0,128,0,0,0,0,0,0,0,192,0,0,0,0,0,0,0,0,64,0,0,0,0,0,0,0,64,0,0,0,0,0,0,0,2,0,0,0,0,0,0,0,4,0,0,0,0,0,0,0,8,0,0,0,0,0,0,64,0,0,0,0,0,0,0,2,0,0,0,0,0,0,0,16,0,0,0,0,0,0,0,0,32,0,0,0,0,0,0,0,1,0,0,0,0,0,0,1,0,0,0,0,0,0,0,0,32,0,0,0,0,0,0,2,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,207,0,0,0,0,0,0,0,0,128,0,0,0,0,0,0,136,128,0,0,0,0,0,0,4,0,0,0,0,0,0,0,8,0,0,0,0,0,0,0,1,0,0,0,0,0,0,0,4,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,207,0,0,0,0,0,0,0,0,16,0,0,0,0,0,0,32,0,0,0,0,0,0,0,0,128,0,0,0,0,0,0,0,0,0,0,0,0,1,0,0,0,0,0,0,0,2,0,0,0,0,0,0,0,16,0,0,0,0,0,0,0,
 section .data
 data: db 
 section .bss
@@ -25,7 +24,7 @@ section .text
 global main
 main:
 push 0
-call .2q
+call .3f
 pop rcx
 sub rsp, 16
 call ExitProcess
@@ -34,1271 +33,2403 @@ ret
 .1: mov         rbp, rsp
 ; lambda wnd_proc;reserve space for return parameter
 .2: sub         rsp, 8
+; 544
 .3: push        r9
+; 547
 .4: push        r8
+; 548
 .5: push        rdx
+; 549
 .6: push        rcx
+; 550
 .7: push 180288206
 .8: push        rbp
 .9: mov         rbp, rsp
 ; binary ==;load identifer uMsg
 .a: sub         rsp, 8
+; 894
 .b: push        rsp
-; push_address_of uMsg
+; 895;push_address_of uMsg
 .c: push        rbp
+; 266
 .d: add         qword [rsp], 24
-; copy 4 bytes from uMsg into stack, reverse=false
+; 267;copy 4 bytes from uMsg into stack, reverse=false
 .e: pop         rax
+; 344
 .f: pop         rbx
-.g: mov         cl, byte [rax]
-.h: mov         byte [rbx], cl
-.i: add         rax, 1
-.j: add         rbx, 1
-.k: mov         cl, byte [rax]
-.l: mov         byte [rbx], cl
-.m: add         rax, 1
-.n: add         rbx, 1
-.o: mov         cl, byte [rax]
-.p: mov         byte [rbx], cl
-.q: add         rax, 1
-.r: add         rbx, 1
-.s: mov         cl, byte [rax]
-.t: mov         byte [rbx], cl
-; load identifer WM_DESTROY
-.u: sub         rsp, 8
-.v: push        rsp
-; push_address_of WM_DESTROY
-.w: mov rax, constants + 0
+; 345
+.g: mov         ecx, dword [rax]
+; 393
+.h: mov         dword [rbx], ecx
+; 394;load identifer WM_DESTROY
+.i: sub         rsp, 8
+; 894
+.j: push        rsp
+; 895;push_address_of WM_DESTROY
+.k: mov rax, constants + 0
 push rax
-; copy 8 bytes from WM_DESTROY into stack, reverse=false
-.x: pop         rax
-.y: pop         rbx
-.z: mov         rcx, qword [rax]
-.A: mov         qword [rbx], rcx
-.B: pop         rbx
-.C: pop         rax
-.D: push 1
+; 289;copy 4 bytes from WM_DESTROY into stack, reverse=false
+.l: pop         rax
+; 344
+.m: pop         rbx
+; 345
+.n: mov         ecx, dword [rax]
+; 393
+.o: mov         dword [rbx], ecx
+; 394
+.p: pop         rbx
+; 832
+.q: pop         rax
+; 833
+.r: push 1
 mov rcx, 0
-cmp rax, rbx
+cmp eax, ebx
 cmove rcx, qword [rsp]
 add rsp, 8
-.E: push        rcx
-.F: pop         rax
-.G: test rax, rax
-jz .1a
-; call PostQuitMessage
-.H: mov         rax, rsp
-.I: and         rsp, -16
-.J: push        rax
-.K: sub         rsp, 8
-; literal 0
-.L: push 0
-.M: pop         rcx
-.N: sub         rsp, 32
-.O: call        PostQuitMessage
-.P: add         rsp, 40
-.Q: pop         rsp
-.R: push        rax
-; return;literal 0
-.S: push 0
-.T: push        rbp
-.U: add         qword [rsp], 48
-.V: push        rsp
-.W: add         qword [rsp], 8
-; copy 8 bytes from expression into parameter, reverse=false
-.X: pop         rax
-.Y: pop         rbx
-.Z: mov         rcx, qword [rax]
-.10: mov         qword [rbx], rcx
-.11: mov         rsp, rbp
-.12: pop         rbp
-.13: add         rsp, 40
-.14: pop         rax
-.15: mov         rsp, rbp
-.16: pop         rbp
-.17: ret
-.18: add         rsp, 0
-.19: jmp         .1a
-.1a: add         rsp, 0
-; return;call DefWindowProcA
-.1b: mov         rax, rsp
-.1c: and         rsp, -16
-.1d: push        rax
-.1e: sub         rsp, 8
-; load identifer lParam
-.1f: sub         rsp, 8
-.1g: push        rsp
-; push_address_of lParam
-.1h: push        rbp
-.1i: add         qword [rsp], 40
-; copy 8 bytes from lParam into stack, reverse=false
-.1j: pop         rax
-.1k: pop         rbx
-.1l: mov         rcx, qword [rax]
-.1m: mov         qword [rbx], rcx
-; load identifer wParam
-.1n: sub         rsp, 8
-.1o: push        rsp
-; push_address_of wParam
-.1p: push        rbp
-.1q: add         qword [rsp], 32
-; copy 8 bytes from wParam into stack, reverse=false
-.1r: pop         rax
-.1s: pop         rbx
-.1t: mov         rcx, qword [rax]
-.1u: mov         qword [rbx], rcx
-; load identifer uMsg
-.1v: sub         rsp, 8
-.1w: push        rsp
-; push_address_of uMsg
-.1x: push        rbp
-.1y: add         qword [rsp], 24
-; copy 4 bytes from uMsg into stack, reverse=false
-.1z: pop         rax
-.1A: pop         rbx
-.1B: mov         cl, byte [rax]
-.1C: mov         byte [rbx], cl
-.1D: add         rax, 1
-.1E: add         rbx, 1
-.1F: mov         cl, byte [rax]
-.1G: mov         byte [rbx], cl
-.1H: add         rax, 1
-.1I: add         rbx, 1
-.1J: mov         cl, byte [rax]
-.1K: mov         byte [rbx], cl
-.1L: add         rax, 1
-.1M: add         rbx, 1
-.1N: mov         cl, byte [rax]
-.1O: mov         byte [rbx], cl
-; load identifer hwnd
-.1P: sub         rsp, 8
-.1Q: push        rsp
-; push_address_of hwnd
-.1R: push        rbp
-.1S: add         qword [rsp], 16
-; copy 8 bytes from hwnd into stack, reverse=false
+; 837
+.s: push        rcx
+; 841
+.t: pop         rax
+; 1031
+.u: test rax, rax
+jz .Y
+; 1032;call PostQuitMessage
+.v: mov         rax, rsp
+; 943
+.w: and         rsp, -16
+; 944
+.x: push        rax
+; 945
+.y: sub         rsp, 8
+; 948;literal 0
+.z: push 0
+; 1016
+.A: pop         rcx
+; 956
+.B: sub         rsp, 32
+; 963
+.C: call        PostQuitMessage
+; 972
+.D: add         rsp, 40
+; 977
+.E: pop         rsp
+; 979
+.F: push        rax
+; 981;return;literal 0
+.G: push 0
+; 1020
+.H: push        rbp
+; 673
+.I: add         qword [rsp], 48
+; 674
+.J: push        rsp
+; 677
+.K: add         qword [rsp], 8
+; 678;copy 8 bytes from expression into parameter, reverse=false
+.L: pop         rax
+; 344
+.M: pop         rbx
+; 345
+.N: mov         rcx, qword [rax]
+; 366
+.O: mov         qword [rbx], rcx
+; 367
+.P: mov         rsp, rbp
+; 684
+.Q: pop         rbp
+; 685
+.R: add         rsp, 40
+; 686
+.S: pop         rax
+; 687
+.T: mov         rsp, rbp
+; 689
+.U: pop         rbp
+; 690
+.V: ret
+; 691
+.W: add         rsp, 0
+; 1044
+.X: jmp         .Y
+; 1045
+.Y: add         rsp, 0
+; 1059;return;call DefWindowProcA
+.Z: mov         rax, rsp
+; 943
+.10: and         rsp, -16
+; 944
+.11: push        rax
+; 945
+.12: sub         rsp, 8
+; 948;load identifer lParam
+.13: sub         rsp, 8
+; 894
+.14: push        rsp
+; 895;push_address_of lParam
+.15: push        rbp
+; 266
+.16: add         qword [rsp], 40
+; 267;copy 8 bytes from lParam into stack, reverse=false
+.17: pop         rax
+; 344
+.18: pop         rbx
+; 345
+.19: mov         rcx, qword [rax]
+; 366
+.1a: mov         qword [rbx], rcx
+; 367;load identifer wParam
+.1b: sub         rsp, 8
+; 894
+.1c: push        rsp
+; 895;push_address_of wParam
+.1d: push        rbp
+; 266
+.1e: add         qword [rsp], 32
+; 267;copy 8 bytes from wParam into stack, reverse=false
+.1f: pop         rax
+; 344
+.1g: pop         rbx
+; 345
+.1h: mov         rcx, qword [rax]
+; 366
+.1i: mov         qword [rbx], rcx
+; 367;load identifer uMsg
+.1j: sub         rsp, 8
+; 894
+.1k: push        rsp
+; 895;push_address_of uMsg
+.1l: push        rbp
+; 266
+.1m: add         qword [rsp], 24
+; 267;copy 4 bytes from uMsg into stack, reverse=false
+.1n: pop         rax
+; 344
+.1o: pop         rbx
+; 345
+.1p: mov         ecx, dword [rax]
+; 393
+.1q: mov         dword [rbx], ecx
+; 394;load identifer hwnd
+.1r: sub         rsp, 8
+; 894
+.1s: push        rsp
+; 895;push_address_of hwnd
+.1t: push        rbp
+; 266
+.1u: add         qword [rsp], 16
+; 267;copy 8 bytes from hwnd into stack, reverse=false
+.1v: pop         rax
+; 344
+.1w: pop         rbx
+; 345
+.1x: mov         rcx, qword [rax]
+; 366
+.1y: mov         qword [rbx], rcx
+; 367
+.1z: pop         rcx
+; 956
+.1A: pop         rdx
+; 957
+.1B: pop         r8
+; 958
+.1C: pop         r9
+; 959
+.1D: sub         rsp, 32
+; 963
+.1E: call        DefWindowProcA
+; 972
+.1F: add         rsp, 40
+; 977
+.1G: pop         rsp
+; 979
+.1H: push        rax
+; 981
+.1I: push        rbp
+; 673
+.1J: add         qword [rsp], 48
+; 674
+.1K: push        rsp
+; 677
+.1L: add         qword [rsp], 8
+; 678;copy 8 bytes from expression into parameter, reverse=false
+.1M: pop         rax
+; 344
+.1N: pop         rbx
+; 345
+.1O: mov         rcx, qword [rax]
+; 366
+.1P: mov         qword [rbx], rcx
+; 367
+.1Q: mov         rsp, rbp
+; 684
+.1R: pop         rbp
+; 685
+.1S: add         rsp, 40
+; 686
 .1T: pop         rax
-.1U: pop         rbx
-.1V: mov         rcx, qword [rax]
-.1W: mov         qword [rbx], rcx
-.1X: pop         rcx
-.1Y: pop         rdx
-.1Z: pop         r8
-.20: pop         r9
-.21: sub         rsp, 32
-.22: call        DefWindowProcA
-.23: add         rsp, 40
-.24: pop         rsp
-.25: push        rax
-.26: push        rbp
-.27: add         qword [rsp], 48
-.28: push        rsp
-.29: add         qword [rsp], 8
-; copy 8 bytes from expression into parameter, reverse=false
-.2a: pop         rax
-.2b: pop         rbx
-.2c: mov         rcx, qword [rax]
-.2d: mov         qword [rbx], rcx
-.2e: mov         rsp, rbp
-.2f: pop         rbp
-.2g: add         rsp, 40
-.2h: pop         rax
-.2i: mov         rsp, rbp
-.2j: pop         rbp
-.2k: ret
-.2l: mov         rsp, rbp
-.2m: pop         rbp
-.2n: mov         rsp, rbp
-.2o: pop         rbp
-.2p: ret
-.2q: push        rbp
-.2r: mov         rbp, rsp
-; lambda main;definition class_name;binary .
-.2s: sub         rsp, 8
-; literal "window_class\0"
-.2t: push 13
-.2u: mov rax, constants + 8
-push rax
-.2v: push        rsp
-.2w: add         qword [rsp], 16
+; 687
+.1U: mov         rsp, rbp
+; 689
+.1V: pop         rbp
+; 690
+.1W: ret
+; 691
+.1X: mov         rsp, rbp
+; 572
+.1Y: pop         rbp
+; 573
+.1Z: mov         rsp, rbp
+; 578
+.20: pop         rbp
+; 579
+.21: ret
+; 580
+.22: push        rbp
+.23: mov         rbp, rsp
+; lambda print_string;call WriteConsoleA
+.24: mov         rax, rsp
+; 943
+.25: and         rsp, -16
+; 944
+.26: push        rax
+; 945;literal null
+.27: push 0
+; 1020;literal null
+.28: push 0
+; 1020;cast from 'u64' to 'u32';binary .
+.29: sub         rsp, 8
+; 723;load identifer str
+.2a: sub         rsp, 16
+; 894
+.2b: push        rsp
+; 895;push_address_of str
+.2c: push        rbp
+; 266
+.2d: add         qword [rsp], 16
+; 267;copy 16 bytes from str into stack, reverse=false
+.2e: pop         rax
+; 344
+.2f: pop         rbx
+; 345
+.2g: mov         rcx, qword [rax]
+; 366
+.2h: mov         qword [rbx], rcx
+; 367
+.2i: add         rax, 8
+; 370
+.2j: add         rbx, 8
+; 371
+.2k: mov         rcx, qword [rax]
+; 366
+.2l: mov         qword [rbx], rcx
+; 367
+.2m: push        rsp
+; 744
+.2n: add         qword [rsp], 16
+; 745
+.2o: push        rsp
+; 747
+.2p: add         qword [rsp], 16
+; 748;copy 8 bytes from . into stack, reverse=true
+.2q: pop         rax
+; 344
+.2r: pop         rbx
+; 345
+.2s: mov         rcx, qword [rax]
+; 356
+.2t: mov         qword [rbx], rcx
+; 357
+.2u: add         rsp, 16
+; 752;binary .
+.2v: sub         rsp, 8
+; 723;load identifer str
+.2w: sub         rsp, 16
+; 894
 .2x: push        rsp
-.2y: add         qword [rsp], 8
-; copy 8 bytes from "window_class\0".data into stack, reverse=true
-.2z: pop         rax
-.2A: pop         rbx
-.2B: mov         rcx, qword [rax]
-.2C: mov         qword [rbx], rcx
-.2D: add         rsp, 16
-; definition window_name;binary .
-.2E: sub         rsp, 8
-; literal "hello window\0"
-.2F: push 13
-.2G: mov rax, constants + 21
+; 895;push_address_of str
+.2y: push        rbp
+; 266
+.2z: add         qword [rsp], 16
+; 267;copy 16 bytes from str into stack, reverse=false
+.2A: pop         rax
+; 344
+.2B: pop         rbx
+; 345
+.2C: mov         rcx, qword [rax]
+; 366
+.2D: mov         qword [rbx], rcx
+; 367
+.2E: add         rax, 8
+; 370
+.2F: add         rbx, 8
+; 371
+.2G: mov         rcx, qword [rax]
+; 366
+.2H: mov         qword [rbx], rcx
+; 367
+.2I: push        rsp
+; 744
+.2J: add         qword [rsp], 16
+; 745
+.2K: push        rsp
+; 747
+.2L: add         qword [rsp], 8
+; 748;copy 8 bytes from str.data into stack, reverse=true
+.2M: pop         rax
+; 344
+.2N: pop         rbx
+; 345
+.2O: mov         rcx, qword [rax]
+; 356
+.2P: mov         qword [rbx], rcx
+; 357
+.2Q: add         rsp, 16
+; 752;call GetStdHandle
+.2R: mov         rax, rsp
+; 943
+.2S: and         rsp, -16
+; 944
+.2T: push        rax
+; 945
+.2U: sub         rsp, 8
+; 948;literal 
+.2V: push -11
+; 1016
+.2W: pop         rcx
+; 956
+.2X: sub         rsp, 32
+; 963
+.2Y: call        GetStdHandle
+; 972
+.2Z: add         rsp, 40
+; 977
+.30: pop         rsp
+; 979
+.31: push        rax
+; 981
+.32: pop         rcx
+; 956
+.33: pop         rdx
+; 957
+.34: pop         r8
+; 958
+.35: pop         r9
+; 959
+.36: sub         rsp, 32
+; 963
+.37: call        WriteConsoleA
+; 972
+.38: add         rsp, 40
+; 977
+.39: pop         rsp
+; 979
+.3a: push        rax
+; 981
+.3b: add         rsp, 8
+; 1136
+.3c: mov         rsp, rbp
+; 487
+.3d: pop         rbp
+; 488
+.3e: ret
+; 489
+.3f: push        rbp
+.3g: mov         rbp, rsp
+; lambda main;definition class_name;binary .
+.3h: sub         rsp, 8
+; 723;literal "window_class\0"
+.3i: push 13
+; 997
+.3j: mov rax, constants + 8
 push rax
-.2H: push        rsp
-.2I: add         qword [rsp], 16
-.2J: push        rsp
-.2K: add         qword [rsp], 8
-; copy 8 bytes from "hello window\0".data into stack, reverse=true
-.2L: pop         rax
-.2M: pop         rbx
-.2N: mov         rcx, qword [rax]
-.2O: mov         qword [rbx], rcx
-.2P: add         rsp, 16
-; definition hInstance;call GetModuleHandleA
-.2Q: mov         rax, rsp
-.2R: and         rsp, -16
-.2S: push        rax
-.2T: sub         rsp, 8
-; literal null
-.2U: push 0
-.2V: pop         rcx
-.2W: sub         rsp, 32
-.2X: call        GetModuleHandleA
-.2Y: add         rsp, 40
-.2Z: pop         rsp
-.30: push        rax
-; definition wc
-.31: push 0
-.32: push 0
-.33: push 0
-.34: push 0
-.35: push 0
-.36: push 0
-.37: push 0
-.38: push 0
-.39: push 0
-.3a: push 0
-; binary =;load identifer hInstance
-.3b: sub         rsp, 8
-.3c: push        rsp
-; push_address_of hInstance
-.3d: push        rbp
-.3e: add         qword [rsp], -24
-; copy 8 bytes from hInstance into stack, reverse=false
-.3f: pop         rax
-.3g: pop         rbx
-.3h: mov         rcx, qword [rax]
-.3i: mov         qword [rbx], rcx
-; push_address_of wc.hInstance;push_address_of wc
-.3j: push        rbp
-.3k: add         qword [rsp], -104
-.3l: add         qword [rsp], 24
+; 1000
+.3k: push        rsp
+; 744
+.3l: add         qword [rsp], 16
+; 745
 .3m: push        rsp
+; 747
 .3n: add         qword [rsp], 8
-; copy 8 bytes from hInstance into wc.hInstance, reverse=false
+; 748;copy 8 bytes from "window_class\0".data into stack, reverse=true
 .3o: pop         rax
+; 344
 .3p: pop         rbx
+; 345
 .3q: mov         rcx, qword [rax]
+; 356
 .3r: mov         qword [rbx], rcx
-.3s: add         rsp, 8
-; binary =;literal 
-.3t: push 80
-; push_address_of wc.cbSize;push_address_of wc
-.3u: push        rbp
-.3v: add         qword [rsp], -104
-.3w: push        rsp
-.3x: add         qword [rsp], 8
-; copy 4 bytes from  into wc.cbSize, reverse=false
-.3y: pop         rax
-.3z: pop         rbx
-.3A: mov         cl, byte [rax]
-.3B: mov         byte [rbx], cl
-.3C: add         rax, 1
-.3D: add         rbx, 1
-.3E: mov         cl, byte [rax]
-.3F: mov         byte [rbx], cl
-.3G: add         rax, 1
-.3H: add         rbx, 1
-.3I: mov         cl, byte [rax]
-.3J: mov         byte [rbx], cl
-.3K: add         rax, 1
-.3L: add         rbx, 1
-.3M: mov         cl, byte [rax]
-.3N: mov         byte [rbx], cl
-.3O: add         rsp, 8
-; binary =;push_address_of wnd_proc
-.3P: mov rax, .0
+; 357
+.3s: add         rsp, 16
+; 752;definition window_name;binary .
+.3t: sub         rsp, 8
+; 723;literal "hello window\0"
+.3u: push 13
+; 997
+.3v: mov rax, constants + 21
 push rax
-; push_address_of wc.lpfnWndProc;push_address_of wc
-.3Q: push        rbp
-.3R: add         qword [rsp], -104
-.3S: add         qword [rsp], 8
-.3T: push        rsp
-.3U: add         qword [rsp], 8
-; copy 8 bytes from &wnd_proc into wc.lpfnWndProc, reverse=false
-.3V: pop         rax
-.3W: pop         rbx
-.3X: mov         rcx, qword [rax]
-.3Y: mov         qword [rbx], rcx
-.3Z: add         rsp, 8
-; binary =;load identifer class_name
+; 1000
+.3w: push        rsp
+; 744
+.3x: add         qword [rsp], 16
+; 745
+.3y: push        rsp
+; 747
+.3z: add         qword [rsp], 8
+; 748;copy 8 bytes from "hello window\0".data into stack, reverse=true
+.3A: pop         rax
+; 344
+.3B: pop         rbx
+; 345
+.3C: mov         rcx, qword [rax]
+; 356
+.3D: mov         qword [rbx], rcx
+; 357
+.3E: add         rsp, 16
+; 752;definition hInstance;call GetModuleHandleA
+.3F: mov         rax, rsp
+; 943
+.3G: and         rsp, -16
+; 944
+.3H: push        rax
+; 945
+.3I: sub         rsp, 8
+; 948;literal null
+.3J: push 0
+; 1020
+.3K: pop         rcx
+; 956
+.3L: sub         rsp, 32
+; 963
+.3M: call        GetModuleHandleA
+; 972
+.3N: add         rsp, 40
+; 977
+.3O: pop         rsp
+; 979
+.3P: push        rax
+; 981;definition wc
+.3Q: push 0
+; 621
+.3R: push 0
+; 621
+.3S: push 0
+; 621
+.3T: push 0
+; 621
+.3U: push 0
+; 621
+.3V: push 0
+; 621
+.3W: push 0
+; 621
+.3X: push 0
+; 621
+.3Y: push 0
+; 621
+.3Z: push 0
+; 621;binary =;load identifer hInstance
 .40: sub         rsp, 8
+; 894
 .41: push        rsp
-; push_address_of class_name
+; 895;push_address_of hInstance
 .42: push        rbp
-.43: add         qword [rsp], -8
-; copy 8 bytes from class_name into stack, reverse=false
+; 266
+.43: add         qword [rsp], -24
+; 267;copy 8 bytes from hInstance into stack, reverse=false
 .44: pop         rax
+; 344
 .45: pop         rbx
+; 345
 .46: mov         rcx, qword [rax]
+; 366
 .47: mov         qword [rbx], rcx
-; push_address_of wc.lpszClassName;push_address_of wc
+; 367;push_address_of wc.hInstance;push_address_of wc
 .48: push        rbp
+; 266
 .49: add         qword [rsp], -104
-.4a: add         qword [rsp], 64
+; 267
+.4a: add         qword [rsp], 24
+; 309
 .4b: push        rsp
+; 801
 .4c: add         qword [rsp], 8
-; copy 8 bytes from class_name into wc.lpszClassName, reverse=false
+; 802;copy 8 bytes from hInstance into wc.hInstance, reverse=false
 .4d: pop         rax
+; 344
 .4e: pop         rbx
+; 345
 .4f: mov         rcx, qword [rax]
+; 366
 .4g: mov         qword [rbx], rcx
+; 367
 .4h: add         rsp, 8
-; binary !=;call RegisterClassExA
-.4i: mov         rax, rsp
-.4j: and         rsp, -16
-.4k: push        rax
-.4l: sub         rsp, 8
-; push_address_of wc
-.4m: push        rbp
-.4n: add         qword [rsp], -104
-.4o: pop         rcx
-.4p: sub         rsp, 32
-.4q: call        RegisterClassExA
-.4r: add         rsp, 40
-.4s: pop         rsp
-.4t: push        rax
-; literal 0
-.4u: push 0
-.4v: pop         rbx
-.4w: pop         rax
-.4x: push 1
+; 808;binary =;literal 
+.4i: push 80
+; 1016;push_address_of wc.cbSize;push_address_of wc
+.4j: push        rbp
+; 266
+.4k: add         qword [rsp], -104
+; 267
+.4l: push        rsp
+; 801
+.4m: add         qword [rsp], 8
+; 802;copy 4 bytes from  into wc.cbSize, reverse=false
+.4n: pop         rax
+; 344
+.4o: pop         rbx
+; 345
+.4p: mov         ecx, dword [rax]
+; 393
+.4q: mov         dword [rbx], ecx
+; 394
+.4r: add         rsp, 8
+; 808;binary =;push_address_of wnd_proc
+.4s: mov rax, .0
+push rax
+; 240;push_address_of wc.lpfnWndProc;push_address_of wc
+.4t: push        rbp
+; 266
+.4u: add         qword [rsp], -104
+; 267
+.4v: add         qword [rsp], 8
+; 309
+.4w: push        rsp
+; 801
+.4x: add         qword [rsp], 8
+; 802;copy 8 bytes from &wnd_proc into wc.lpfnWndProc, reverse=false
+.4y: pop         rax
+; 344
+.4z: pop         rbx
+; 345
+.4A: mov         rcx, qword [rax]
+; 366
+.4B: mov         qword [rbx], rcx
+; 367
+.4C: add         rsp, 8
+; 808;binary =;load identifer class_name
+.4D: sub         rsp, 8
+; 894
+.4E: push        rsp
+; 895;push_address_of class_name
+.4F: push        rbp
+; 266
+.4G: add         qword [rsp], -8
+; 267;copy 8 bytes from class_name into stack, reverse=false
+.4H: pop         rax
+; 344
+.4I: pop         rbx
+; 345
+.4J: mov         rcx, qword [rax]
+; 366
+.4K: mov         qword [rbx], rcx
+; 367;push_address_of wc.lpszClassName;push_address_of wc
+.4L: push        rbp
+; 266
+.4M: add         qword [rsp], -104
+; 267
+.4N: add         qword [rsp], 64
+; 309
+.4O: push        rsp
+; 801
+.4P: add         qword [rsp], 8
+; 802;copy 8 bytes from class_name into wc.lpszClassName, reverse=false
+.4Q: pop         rax
+; 344
+.4R: pop         rbx
+; 345
+.4S: mov         rcx, qword [rax]
+; 366
+.4T: mov         qword [rbx], rcx
+; 367
+.4U: add         rsp, 8
+; 808;binary !=;call RegisterClassExA
+.4V: mov         rax, rsp
+; 943
+.4W: and         rsp, -16
+; 944
+.4X: push        rax
+; 945
+.4Y: sub         rsp, 8
+; 948;push_address_of wc
+.4Z: push        rbp
+; 266
+.50: add         qword [rsp], -104
+; 267
+.51: pop         rcx
+; 956
+.52: sub         rsp, 32
+; 963
+.53: call        RegisterClassExA
+; 972
+.54: add         rsp, 40
+; 977
+.55: pop         rsp
+; 979
+.56: push        rax
+; 981;literal 0
+.57: push 0
+; 1013
+.58: pop         rbx
+; 832
+.59: pop         rax
+; 833
+.5a: push 1
 mov rcx, 0
-cmp rax, rbx
+cmp  al,  bl
 cmovne rcx, qword [rsp]
 add rsp, 8
-.4y: push        rcx
-.4z: pop         rax
-.4A: test rax, rax
-jz .4I
-; call print_string
-.4B: sub         rsp, 0
-; literal "Class created!\n"
-.4C: push 15
-.4D: mov rax, constants + 34
+; 836
+.5b: push        rcx
+; 841
+.5c: pop         rax
+; 1031
+.5d: test rax, rax
+jz .5l
+; 1032;call print_string
+.5e: sub         rsp, 0
+; 909;literal "Class created!\n"
+.5f: push 15
+; 997
+.5g: mov rax, constants + 34
 push rax
-.4E: call        .8V
-.4F: add         rsp, 16
-.4G: add         rsp, 0
-.4H: jmp         .4N
-; call print_string
-.4I: sub         rsp, 0
-; literal "Class Failed!\n"
-.4J: push 14
-.4K: mov rax, constants + 49
+; 1000
+.5h: call        .22
+; 920
+.5i: add         rsp, 16
+; 924
+.5j: add         rsp, 0
+; 1044
+.5k: jmp         .5q
+; 1045;call print_string
+.5l: sub         rsp, 0
+; 909;literal "Class Failed!\n"
+.5m: push 14
+; 997
+.5n: mov rax, constants + 49
 push rax
-.4L: call        .8V
-.4M: add         rsp, 16
-.4N: add         rsp, 0
-; definition window;call CreateWindowExA
-.4O: mov         rax, rsp
-.4P: and         rsp, -16
-.4Q: push        rax
-.4R: sub         rsp, 8
-; literal null
-.4S: push 0
-; load identifer hInstance
-.4T: sub         rsp, 8
-.4U: push        rsp
-; push_address_of hInstance
-.4V: push        rbp
-.4W: add         qword [rsp], -24
-; copy 8 bytes from hInstance into stack, reverse=false
-.4X: pop         rax
-.4Y: pop         rbx
-.4Z: mov         rcx, qword [rax]
-.50: mov         qword [rbx], rcx
-; literal null
-.51: push 0
-; literal null
-.52: push 0
-; load identifer CW_USEDEFAULT
-.53: sub         rsp, 8
-.54: push        rsp
-; push_address_of CW_USEDEFAULT
-.55: mov rax, constants + 63
-push rax
-; copy 8 bytes from CW_USEDEFAULT into stack, reverse=false
-.56: pop         rax
-.57: pop         rbx
-.58: mov         rcx, qword [rax]
-.59: mov         qword [rbx], rcx
-; load identifer CW_USEDEFAULT
-.5a: sub         rsp, 8
-.5b: push        rsp
-; push_address_of CW_USEDEFAULT
-.5c: mov rax, constants + 63
-push rax
-; copy 8 bytes from CW_USEDEFAULT into stack, reverse=false
-.5d: pop         rax
-.5e: pop         rbx
-.5f: mov         rcx, qword [rax]
-.5g: mov         qword [rbx], rcx
-; load identifer CW_USEDEFAULT
-.5h: sub         rsp, 8
-.5i: push        rsp
-; push_address_of CW_USEDEFAULT
-.5j: mov rax, constants + 63
-push rax
-; copy 8 bytes from CW_USEDEFAULT into stack, reverse=false
-.5k: pop         rax
-.5l: pop         rbx
-.5m: mov         rcx, qword [rax]
-.5n: mov         qword [rbx], rcx
-; load identifer CW_USEDEFAULT
-.5o: sub         rsp, 8
-.5p: push        rsp
-; push_address_of CW_USEDEFAULT
-.5q: mov rax, constants + 63
-push rax
-; copy 8 bytes from CW_USEDEFAULT into stack, reverse=false
-.5r: pop         rax
-.5s: pop         rbx
-.5t: mov         rcx, qword [rax]
-.5u: mov         qword [rbx], rcx
-; binary |;load identifer WS_OVERLAPPEDWINDOW
-.5v: sub         rsp, 8
-.5w: push        rsp
-; push_address_of WS_OVERLAPPEDWINDOW
-.5x: mov rax, constants + 71
-push rax
-; copy 8 bytes from WS_OVERLAPPEDWINDOW into stack, reverse=false
-.5y: pop         rax
-.5z: pop         rbx
-.5A: mov         rcx, qword [rax]
-.5B: mov         qword [rbx], rcx
-; load identifer WS_VISIBLE
-.5C: sub         rsp, 8
-.5D: push        rsp
-; push_address_of WS_VISIBLE
-.5E: mov rax, constants + 79
-push rax
-; copy 8 bytes from WS_VISIBLE into stack, reverse=false
-.5F: pop         rax
-.5G: pop         rbx
-.5H: mov         rcx, qword [rax]
-.5I: mov         qword [rbx], rcx
-.5J: pop         rax
-.5K:  or         qword [rsp], rax
-; load identifer window_name
+; 1000
+.5o: call        .22
+; 920
+.5p: add         rsp, 16
+; 924
+.5q: add         rsp, 0
+; 1059;definition window;call CreateWindowExA
+.5r: mov         rax, rsp
+; 943
+.5s: and         rsp, -16
+; 944
+.5t: push        rax
+; 945
+.5u: sub         rsp, 8
+; 948;literal null
+.5v: push 0
+; 1020;load identifer hInstance
+.5w: sub         rsp, 8
+; 894
+.5x: push        rsp
+; 895;push_address_of hInstance
+.5y: push        rbp
+; 266
+.5z: add         qword [rsp], -24
+; 267;copy 8 bytes from hInstance into stack, reverse=false
+.5A: pop         rax
+; 344
+.5B: pop         rbx
+; 345
+.5C: mov         rcx, qword [rax]
+; 366
+.5D: mov         qword [rbx], rcx
+; 367;literal null
+.5E: push 0
+; 1020;literal null
+.5F: push 0
+; 1020;literal 0x80000000
+.5G: push -2147483648
+; 1016;literal 0x80000000
+.5H: push -2147483648
+; 1016;literal 0x80000000
+.5I: push -2147483648
+; 1016;literal 0x80000000
+.5J: push -2147483648
+; 1016;literal 
+.5K: push 282001408
+; 1016;load identifer window_name
 .5L: sub         rsp, 8
+; 894
 .5M: push        rsp
-; push_address_of window_name
+; 895;push_address_of window_name
 .5N: push        rbp
+; 266
 .5O: add         qword [rsp], -16
-; copy 8 bytes from window_name into stack, reverse=false
+; 267;copy 8 bytes from window_name into stack, reverse=false
 .5P: pop         rax
+; 344
 .5Q: pop         rbx
+; 345
 .5R: mov         rcx, qword [rax]
+; 366
 .5S: mov         qword [rbx], rcx
-; load identifer class_name
+; 367;load identifer class_name
 .5T: sub         rsp, 8
+; 894
 .5U: push        rsp
-; push_address_of class_name
+; 895;push_address_of class_name
 .5V: push        rbp
+; 266
 .5W: add         qword [rsp], -8
-; copy 8 bytes from class_name into stack, reverse=false
+; 267;copy 8 bytes from class_name into stack, reverse=false
 .5X: pop         rax
+; 344
 .5Y: pop         rbx
+; 345
 .5Z: mov         rcx, qword [rax]
+; 366
 .60: mov         qword [rbx], rcx
-; literal 0
+; 367;literal 0
 .61: push 0
+; 1016
 .62: pop         rcx
+; 956
 .63: pop         rdx
+; 957
 .64: pop         r8
+; 958
 .65: pop         r9
+; 959
 .66: sub         rsp, 32
+; 963
 .67: call        CreateWindowExA
+; 972
 .68: add         rsp, 104
+; 977
 .69: pop         rsp
+; 979
 .6a: push        rax
-; binary !=;load identifer window
+; 981;binary !=;load identifer window
 .6b: sub         rsp, 8
+; 894
 .6c: push        rsp
-; push_address_of window
+; 895;push_address_of window
 .6d: push        rbp
+; 266
 .6e: add         qword [rsp], -112
-; copy 8 bytes from window into stack, reverse=false
+; 267;copy 8 bytes from window into stack, reverse=false
 .6f: pop         rax
+; 344
 .6g: pop         rbx
+; 345
 .6h: mov         rcx, qword [rax]
+; 366
 .6i: mov         qword [rbx], rcx
-; literal null
+; 367;literal null
 .6j: push 0
+; 1020
 .6k: pop         rbx
+; 832
 .6l: pop         rax
+; 833
 .6m: push 1
 mov rcx, 0
 cmp rax, rbx
 cmovne rcx, qword [rsp]
 add rsp, 8
+; 838
 .6n: push        rcx
+; 841
 .6o: pop         rax
+; 1031
 .6p: test rax, rax
 jz .6x
-; call print_string
+; 1032;call print_string
 .6q: sub         rsp, 0
-; literal "Window Success!\n"
+; 909;literal "Window Success!\n"
 .6r: push 16
-.6s: mov rax, constants + 87
+; 997
+.6s: mov rax, constants + 63
 push rax
-.6t: call        .8V
+; 1000
+.6t: call        .22
+; 920
 .6u: add         rsp, 16
+; 924
 .6v: add         rsp, 0
+; 1044
 .6w: jmp         .6C
-; call print_string
+; 1045;call print_string
 .6x: sub         rsp, 0
-; literal "Window Fail!\n"
+; 909;literal "Window Fail!\n"
 .6y: push 13
-.6z: mov rax, constants + 103
+; 997
+.6z: mov rax, constants + 79
 push rax
-.6A: call        .8V
+; 1000
+.6A: call        .22
+; 920
 .6B: add         rsp, 16
+; 924
 .6C: add         rsp, 0
-; definition msg
+; 1059;definition msg
 .6D: push 0
+; 621
 .6E: push 0
+; 621
 .6F: push 0
+; 621
 .6G: push 0
+; 621
 .6H: push 0
+; 621
 .6I: push 0
-; literal true
+; 621;literal true
 .6J: push 1
+; 1006
 .6K: pop         rax
+; 1071
 .6L: test rax, rax
-jz .8S
-; binary !=;call PeekMessageA
+jz .8A
+; 1072;binary !=;call PeekMessageA
 .6M: mov         rax, rsp
+; 943
 .6N: and         rsp, -16
+; 944
 .6O: push        rax
-; load identifer PM_REMOVE
-.6P: sub         rsp, 8
-.6Q: push        rsp
-; push_address_of PM_REMOVE
-.6R: mov rax, constants + 116
-push rax
-; copy 8 bytes from PM_REMOVE into stack, reverse=false
-.6S: pop         rax
-.6T: pop         rbx
-.6U: mov         rcx, qword [rax]
-.6V: mov         qword [rbx], rcx
-; literal 0
-.6W: push 0
-; literal 0
-.6X: push 0
-; literal null
-.6Y: push 0
-; push_address_of msg
-.6Z: push        rbp
-.70: add         qword [rsp], -160
-.71: pop         rcx
-.72: pop         rdx
-.73: pop         r8
-.74: pop         r9
-.75: sub         rsp, 32
-.76: call        PeekMessageA
-.77: add         rsp, 40
-.78: pop         rsp
-.79: push        rax
-; literal 0
-.7a: push 0
-.7b: pop         rbx
-.7c: pop         rax
-.7d: push 1
+; 945;literal 0x0001
+.6P: push 1
+; 1016;literal 0
+.6Q: push 0
+; 1016;literal 0
+.6R: push 0
+; 1016;literal null
+.6S: push 0
+; 1020;push_address_of msg
+.6T: push        rbp
+; 266
+.6U: add         qword [rsp], -160
+; 267
+.6V: pop         rcx
+; 956
+.6W: pop         rdx
+; 957
+.6X: pop         r8
+; 958
+.6Y: pop         r9
+; 959
+.6Z: sub         rsp, 32
+; 963
+.70: call        PeekMessageA
+; 972
+.71: add         rsp, 40
+; 977
+.72: pop         rsp
+; 979
+.73: push        rax
+; 981;literal 0
+.74: push 0
+; 1016
+.75: pop         rbx
+; 832
+.76: pop         rax
+; 833
+.77: push 1
 mov rcx, 0
-cmp rax, rbx
+cmp eax, ebx
 cmovne rcx, qword [rsp]
 add rsp, 8
-.7e: push        rcx
-.7f: pop         rax
-.7g: test rax, rax
-jz .8Q
-; binary ==;binary .
-.7h: sub         rsp, 8
-; load identifer msg
-.7i: sub         rsp, 48
-.7j: push        rsp
-; push_address_of msg
-.7k: push        rbp
-.7l: add         qword [rsp], -160
-; copy 48 bytes from msg into stack, reverse=false
-.7m: pop         rax
-.7n: pop         rbx
-.7o: mov         rcx, qword [rax]
-.7p: mov         qword [rbx], rcx
-.7q: add         rax, 8
-.7r: add         rbx, 8
-.7s: mov         rcx, qword [rax]
-.7t: mov         qword [rbx], rcx
-.7u: add         rax, 8
-.7v: add         rbx, 8
-.7w: mov         rcx, qword [rax]
-.7x: mov         qword [rbx], rcx
-.7y: add         rax, 8
-.7z: add         rbx, 8
-.7A: mov         rcx, qword [rax]
-.7B: mov         qword [rbx], rcx
-.7C: add         rax, 8
-.7D: add         rbx, 8
-.7E: mov         rcx, qword [rax]
-.7F: mov         qword [rbx], rcx
-.7G: add         rax, 8
-.7H: add         rbx, 8
-.7I: mov         rcx, qword [rax]
-.7J: mov         qword [rbx], rcx
-.7K: push        rsp
-.7L: add         qword [rsp], 48
-.7M: push        rsp
-.7N: add         qword [rsp], 16
-; copy 4 bytes from msg.message into stack, reverse=true
-.7O: pop         rax
-.7P: pop         rbx
-.7Q: add         rax, 3
-.7R: add         rbx, 3
-.7S: mov         cl, byte [rax]
-.7T: mov         byte [rbx], cl
-.7U: sub         rax, 1
-.7V: sub         rbx, 1
-.7W: mov         cl, byte [rax]
-.7X: mov         byte [rbx], cl
-.7Y: sub         rax, 1
-.7Z: sub         rbx, 1
-.80: mov         cl, byte [rax]
-.81: mov         byte [rbx], cl
-.82: sub         rax, 1
-.83: sub         rbx, 1
-.84: mov         cl, byte [rax]
-.85: mov         byte [rbx], cl
-.86: add         rsp, 48
-; load identifer WM_QUIT
-.87: sub         rsp, 8
-.88: push        rsp
-; push_address_of WM_QUIT
-.89: mov rax, constants + 124
+; 837
+.78: push        rcx
+; 841
+.79: pop         rax
+; 1071
+.7a: test rax, rax
+jz .8y
+; 1072;binary ==;binary .
+.7b: sub         rsp, 8
+; 723;load identifer msg
+.7c: sub         rsp, 48
+; 894
+.7d: push        rsp
+; 895;push_address_of msg
+.7e: push        rbp
+; 266
+.7f: add         qword [rsp], -160
+; 267;copy 48 bytes from msg into stack, reverse=false
+.7g: pop         rax
+; 344
+.7h: pop         rbx
+; 345
+.7i: mov         rcx, qword [rax]
+; 366
+.7j: mov         qword [rbx], rcx
+; 367
+.7k: add         rax, 8
+; 370
+.7l: add         rbx, 8
+; 371
+.7m: mov         rcx, qword [rax]
+; 366
+.7n: mov         qword [rbx], rcx
+; 367
+.7o: add         rax, 8
+; 370
+.7p: add         rbx, 8
+; 371
+.7q: mov         rcx, qword [rax]
+; 366
+.7r: mov         qword [rbx], rcx
+; 367
+.7s: add         rax, 8
+; 370
+.7t: add         rbx, 8
+; 371
+.7u: mov         rcx, qword [rax]
+; 366
+.7v: mov         qword [rbx], rcx
+; 367
+.7w: add         rax, 8
+; 370
+.7x: add         rbx, 8
+; 371
+.7y: mov         rcx, qword [rax]
+; 366
+.7z: mov         qword [rbx], rcx
+; 367
+.7A: add         rax, 8
+; 370
+.7B: add         rbx, 8
+; 371
+.7C: mov         rcx, qword [rax]
+; 366
+.7D: mov         qword [rbx], rcx
+; 367
+.7E: push        rsp
+; 744
+.7F: add         qword [rsp], 48
+; 745
+.7G: push        rsp
+; 747
+.7H: add         qword [rsp], 16
+; 748;copy 4 bytes from msg.message into stack, reverse=true
+.7I: pop         rax
+; 344
+.7J: pop         rbx
+; 345
+.7K: mov         ecx, dword [rax]
+; 383
+.7L: mov         dword [rbx], ecx
+; 384
+.7M: add         rsp, 48
+; 752;load identifer WM_QUIT
+.7N: sub         rsp, 8
+; 894
+.7O: push        rsp
+; 895;push_address_of WM_QUIT
+.7P: mov rax, constants + 92
 push rax
-; copy 8 bytes from WM_QUIT into stack, reverse=false
-.8a: pop         rax
-.8b: pop         rbx
-.8c: mov         rcx, qword [rax]
-.8d: mov         qword [rbx], rcx
-.8e: pop         rbx
-.8f: pop         rax
-.8g: push 1
+; 289;copy 4 bytes from WM_QUIT into stack, reverse=false
+.7Q: pop         rax
+; 344
+.7R: pop         rbx
+; 345
+.7S: mov         ecx, dword [rax]
+; 393
+.7T: mov         dword [rbx], ecx
+; 394
+.7U: pop         rbx
+; 832
+.7V: pop         rax
+; 833
+.7W: push 1
 mov rcx, 0
-cmp rax, rbx
+cmp eax, ebx
 cmove rcx, qword [rsp]
 add rsp, 8
-.8h: push        rcx
-.8i: pop         rax
-.8j: test rax, rax
-jz .8p
-; return
-.8k: mov         rsp, rbp
-.8l: pop         rbp
-.8m: ret
-.8n: add         rsp, 0
-.8o: jmp         .8p
-.8p: add         rsp, 0
-; call TranslateMessage
-.8q: mov         rax, rsp
-.8r: and         rsp, -16
-.8s: push        rax
-.8t: sub         rsp, 8
-; push_address_of msg
-.8u: push        rbp
-.8v: add         qword [rsp], -160
-.8w: pop         rcx
-.8x: sub         rsp, 32
-.8y: call        TranslateMessage
-.8z: add         rsp, 40
-.8A: pop         rsp
-.8B: push        rax
-; call DispatchMessageA
-.8C: mov         rax, rsp
-.8D: and         rsp, -16
-.8E: push        rax
-.8F: sub         rsp, 8
-; push_address_of msg
-.8G: push        rbp
-.8H: add         qword [rsp], -160
-.8I: pop         rcx
-.8J: sub         rsp, 32
-.8K: call        DispatchMessageA
-.8L: add         rsp, 40
-.8M: pop         rsp
-.8N: push        rax
-.8O: add         rsp, 0
-.8P: jmp         .6M
-.8Q: add         rsp, 0
-.8R: jmp         .6J
-.8S: mov         rsp, rbp
-.8T: pop         rbp
-.8U: ret
-.8V: push        rbp
-.8W: mov         rbp, rsp
-; lambda print_string;call WriteConsoleA
-.8X: mov         rax, rsp
-.8Y: and         rsp, -16
-.8Z: push        rax
-; literal null
-.90: push 0
-; literal null
-.91: push 0
-; binary .
-.92: sub         rsp, 8
-; load identifer str
-.93: sub         rsp, 16
-.94: push        rsp
-; push_address_of str
-.95: push        rbp
-.96: add         qword [rsp], 16
-; copy 16 bytes from str into stack, reverse=false
-.97: pop         rax
-.98: pop         rbx
-.99: mov         rcx, qword [rax]
-.9a: mov         qword [rbx], rcx
-.9b: add         rax, 8
-.9c: add         rbx, 8
-.9d: mov         rcx, qword [rax]
-.9e: mov         qword [rbx], rcx
-.9f: push        rsp
-.9g: add         qword [rsp], 16
-.9h: push        rsp
-.9i: add         qword [rsp], 16
-; copy 8 bytes from str.count into stack, reverse=true
-.9j: pop         rax
-.9k: pop         rbx
-.9l: mov         rcx, qword [rax]
-.9m: mov         qword [rbx], rcx
-.9n: add         rsp, 16
-; binary .
-.9o: sub         rsp, 8
-; load identifer str
-.9p: sub         rsp, 16
-.9q: push        rsp
-; push_address_of str
-.9r: push        rbp
-.9s: add         qword [rsp], 16
-; copy 16 bytes from str into stack, reverse=false
-.9t: pop         rax
-.9u: pop         rbx
-.9v: mov         rcx, qword [rax]
-.9w: mov         qword [rbx], rcx
-.9x: add         rax, 8
-.9y: add         rbx, 8
-.9z: mov         rcx, qword [rax]
-.9A: mov         qword [rbx], rcx
-.9B: push        rsp
-.9C: add         qword [rsp], 16
-.9D: push        rsp
-.9E: add         qword [rsp], 8
-; copy 8 bytes from str.data into stack, reverse=true
-.9F: pop         rax
-.9G: pop         rbx
-.9H: mov         rcx, qword [rax]
-.9I: mov         qword [rbx], rcx
-.9J: add         rsp, 16
-; call GetStdHandle
-.9K: mov         rax, rsp
-.9L: and         rsp, -16
-.9M: push        rax
-.9N: sub         rsp, 8
-; load identifer STD_OUTPUT_HANDLE
-.9O: sub         rsp, 8
-.9P: push        rsp
-; push_address_of STD_OUTPUT_HANDLE
-.9Q: mov rax, constants + 132
-push rax
-; copy 8 bytes from STD_OUTPUT_HANDLE into stack, reverse=false
-.9R: pop         rax
-.9S: pop         rbx
-.9T: mov         rcx, qword [rax]
-.9U: mov         qword [rbx], rcx
-.9V: pop         rcx
-.9W: sub         rsp, 32
-.9X: call        GetStdHandle
-.9Y: add         rsp, 40
-.9Z: pop         rsp
-.a0: push        rax
-.a1: pop         rcx
-.a2: pop         rdx
-.a3: pop         r8
-.a4: pop         r9
-.a5: sub         rsp, 32
-.a6: call        WriteConsoleA
-.a7: add         rsp, 40
-.a8: pop         rsp
-.a9: push        rax
-.aa: mov         rsp, rbp
-.ab: pop         rbp
-.ac: ret
-.ad: push        rbp
-.ae: mov         rbp, rsp
+; 837
+.7X: push        rcx
+; 841
+.7Y: pop         rax
+; 1031
+.7Z: test rax, rax
+jz .85
+; 1032;return
+.80: mov         rsp, rbp
+; 689
+.81: pop         rbp
+; 690
+.82: ret
+; 691
+.83: add         rsp, 0
+; 1044
+.84: jmp         .85
+; 1045
+.85: add         rsp, 0
+; 1059;call TranslateMessage
+.86: mov         rax, rsp
+; 943
+.87: and         rsp, -16
+; 944
+.88: push        rax
+; 945
+.89: sub         rsp, 8
+; 948;push_address_of msg
+.8a: push        rbp
+; 266
+.8b: add         qword [rsp], -160
+; 267
+.8c: pop         rcx
+; 956
+.8d: sub         rsp, 32
+; 963
+.8e: call        TranslateMessage
+; 972
+.8f: add         rsp, 40
+; 977
+.8g: pop         rsp
+; 979
+.8h: push        rax
+; 981
+.8i: add         rsp, 8
+; 1136;call DispatchMessageA
+.8j: mov         rax, rsp
+; 943
+.8k: and         rsp, -16
+; 944
+.8l: push        rax
+; 945
+.8m: sub         rsp, 8
+; 948;push_address_of msg
+.8n: push        rbp
+; 266
+.8o: add         qword [rsp], -160
+; 267
+.8p: pop         rcx
+; 956
+.8q: sub         rsp, 32
+; 963
+.8r: call        DispatchMessageA
+; 972
+.8s: add         rsp, 40
+; 977
+.8t: pop         rsp
+; 979
+.8u: push        rax
+; 981
+.8v: add         rsp, 8
+; 1136
+.8w: add         rsp, 0
+; 1084
+.8x: jmp         .6M
+; 1086
+.8y: add         rsp, 0
+; 1084
+.8z: jmp         .6J
+; 1086
+.8A: mov         rsp, rbp
+; 487
+.8B: pop         rbp
+; 488
+.8C: ret
+; 489
+.8D: push        rbp
+.8E: mov         rbp, rsp
 ; lambda print_char;call WriteConsoleA
-.af: mov         rax, rsp
-.ag: and         rsp, -16
-.ah: push        rax
-; literal null
-.ai: push 0
-; literal null
-.aj: push 0
-; literal 1
-.ak: push 1
-; push_address_of char
-.al: push        rbp
-.am: add         qword [rsp], 16
-; call GetStdHandle
-.an: mov         rax, rsp
-.ao: and         rsp, -16
-.ap: push        rax
-.aq: sub         rsp, 8
-; load identifer STD_OUTPUT_HANDLE
-.ar: sub         rsp, 8
-.as: push        rsp
-; push_address_of STD_OUTPUT_HANDLE
-.at: mov rax, constants + 132
-push rax
-; copy 8 bytes from STD_OUTPUT_HANDLE into stack, reverse=false
-.au: pop         rax
-.av: pop         rbx
-.aw: mov         rcx, qword [rax]
-.ax: mov         qword [rbx], rcx
-.ay: pop         rcx
-.az: sub         rsp, 32
-.aA: call        GetStdHandle
-.aB: add         rsp, 40
-.aC: pop         rsp
-.aD: push        rax
-.aE: pop         rcx
-.aF: pop         rdx
-.aG: pop         r8
-.aH: pop         r9
-.aI: sub         rsp, 32
-.aJ: call        WriteConsoleA
-.aK: add         rsp, 40
-.aL: pop         rsp
-.aM: push        rax
-.aN: mov         rsp, rbp
-.aO: pop         rbp
-.aP: ret
-.aQ: push        rbp
-.aR: mov         rbp, rsp
+.8F: mov         rax, rsp
+; 943
+.8G: and         rsp, -16
+; 944
+.8H: push        rax
+; 945;literal null
+.8I: push 0
+; 1020;literal null
+.8J: push 0
+; 1020;literal 1
+.8K: push 1
+; 1016;cast from '*u8' to '*void';push_address_of char
+.8L: push        rbp
+; 266
+.8M: add         qword [rsp], 16
+; 267;call GetStdHandle
+.8N: mov         rax, rsp
+; 943
+.8O: and         rsp, -16
+; 944
+.8P: push        rax
+; 945
+.8Q: sub         rsp, 8
+; 948;literal 
+.8R: push -11
+; 1016
+.8S: pop         rcx
+; 956
+.8T: sub         rsp, 32
+; 963
+.8U: call        GetStdHandle
+; 972
+.8V: add         rsp, 40
+; 977
+.8W: pop         rsp
+; 979
+.8X: push        rax
+; 981
+.8Y: pop         rcx
+; 956
+.8Z: pop         rdx
+; 957
+.90: pop         r8
+; 958
+.91: pop         r9
+; 959
+.92: sub         rsp, 32
+; 963
+.93: call        WriteConsoleA
+; 972
+.94: add         rsp, 40
+; 977
+.95: pop         rsp
+; 979
+.96: push        rax
+; 981
+.97: add         rsp, 8
+; 1136
+.98: mov         rsp, rbp
+; 487
+.99: pop         rbp
+; 488
+.9a: ret
+; 489
+.9b: push        rbp
+.9c: mov         rbp, rsp
 ; lambda print_int;definition val;load identifer _val
-.aS: sub         rsp, 8
-.aT: push        rsp
-; push_address_of _val
-.aU: push        rbp
-.aV: add         qword [rsp], 16
-; copy 8 bytes from _val into stack, reverse=false
-.aW: pop         rax
-.aX: pop         rbx
-.aY: mov         rcx, qword [rax]
-.aZ: mov         qword [rbx], rcx
-; binary ==;load identifer val
-.b0: sub         rsp, 8
-.b1: push        rsp
-; push_address_of val
-.b2: push        rbp
-.b3: add         qword [rsp], -8
-; copy 8 bytes from val into stack, reverse=false
-.b4: pop         rax
-.b5: pop         rbx
-.b6: mov         rcx, qword [rax]
-.b7: mov         qword [rbx], rcx
-; literal 0
-.b8: push 0
-.b9: pop         rbx
-.ba: pop         rax
-.bb: push 1
+.9d: sub         rsp, 8
+; 894
+.9e: push        rsp
+; 895;push_address_of _val
+.9f: push        rbp
+; 266
+.9g: add         qword [rsp], 16
+; 267;copy 8 bytes from _val into stack, reverse=false
+.9h: pop         rax
+; 344
+.9i: pop         rbx
+; 345
+.9j: mov         rcx, qword [rax]
+; 366
+.9k: mov         qword [rbx], rcx
+; 367;binary ==;load identifer val
+.9l: sub         rsp, 8
+; 894
+.9m: push        rsp
+; 895;push_address_of val
+.9n: push        rbp
+; 266
+.9o: add         qword [rsp], -8
+; 267;copy 8 bytes from val into stack, reverse=false
+.9p: pop         rax
+; 344
+.9q: pop         rbx
+; 345
+.9r: mov         rcx, qword [rax]
+; 366
+.9s: mov         qword [rbx], rcx
+; 367;literal 0
+.9t: push 0
+; 1020
+.9u: pop         rbx
+; 832
+.9v: pop         rax
+; 833
+.9w: push 1
 mov rcx, 0
 cmp rax, rbx
 cmove rcx, qword [rsp]
 add rsp, 8
-.bc: push        rcx
-.bd: pop         rax
-.be: test rax, rax
-jz .bo
-; call print_char
-.bf: sub         rsp, 0
-; literal '0'
-.bg: push 48
-.bh: call        .ad
-.bi: add         rsp, 8
-; return
-.bj: mov         rsp, rbp
-.bk: pop         rbp
-.bl: ret
-.bm: add         rsp, 0
-.bn: jmp         .bo
-.bo: add         rsp, 0
-; binary <;load identifer val
-.bp: sub         rsp, 8
-.bq: push        rsp
-; push_address_of val
-.br: push        rbp
-.bs: add         qword [rsp], -8
-; copy 8 bytes from val into stack, reverse=false
-.bt: pop         rax
-.bu: pop         rbx
-.bv: mov         rcx, qword [rax]
-.bw: mov         qword [rbx], rcx
-; literal 0
-.bx: push 0
-.by: pop         rbx
-.bz: pop         rax
-.bA: push 1
+; 838
+.9x: push        rcx
+; 841
+.9y: pop         rax
+; 1031
+.9z: test rax, rax
+jz .9J
+; 1032;call print_char
+.9A: sub         rsp, 0
+; 909;literal '0'
+.9B: push 48
+; 1004
+.9C: call        .8D
+; 920
+.9D: add         rsp, 8
+; 924;return
+.9E: mov         rsp, rbp
+; 689
+.9F: pop         rbp
+; 690
+.9G: ret
+; 691
+.9H: add         rsp, 0
+; 1044
+.9I: jmp         .9J
+; 1045
+.9J: add         rsp, 0
+; 1059;binary <;load identifer val
+.9K: sub         rsp, 8
+; 894
+.9L: push        rsp
+; 895;push_address_of val
+.9M: push        rbp
+; 266
+.9N: add         qword [rsp], -8
+; 267;copy 8 bytes from val into stack, reverse=false
+.9O: pop         rax
+; 344
+.9P: pop         rbx
+; 345
+.9Q: mov         rcx, qword [rax]
+; 366
+.9R: mov         qword [rbx], rcx
+; 367;literal 0
+.9S: push 0
+; 1020
+.9T: pop         rbx
+; 832
+.9U: pop         rax
+; 833
+.9V: push 1
 mov rcx, 0
 cmp rax, rbx
 cmovl rcx, qword [rsp]
 add rsp, 8
-.bB: push        rcx
-.bC: pop         rax
-.bD: test rax, rax
-jz .c5
-; call print_char
-.bE: sub         rsp, 0
-; literal '-'
-.bF: push 45
-.bG: call        .ad
-.bH: add         rsp, 8
-; binary =;load identifer val
-.bI: sub         rsp, 8
-.bJ: push        rsp
-; push_address_of val
-.bK: push        rbp
-.bL: add         qword [rsp], -8
-; copy 8 bytes from val into stack, reverse=false
+; 838
+.9W: push        rcx
+; 841
+.9X: pop         rax
+; 1031
+.9Y: test rax, rax
+jz .aq
+; 1032;call print_char
+.9Z: sub         rsp, 0
+; 909;literal '-'
+.a0: push 45
+; 1004
+.a1: call        .8D
+; 920
+.a2: add         rsp, 8
+; 924;binary =;load identifer val
+.a3: sub         rsp, 8
+; 894
+.a4: push        rsp
+; 895;push_address_of val
+.a5: push        rbp
+; 266
+.a6: add         qword [rsp], -8
+; 267;copy 8 bytes from val into stack, reverse=false
+.a7: pop         rax
+; 344
+.a8: pop         rbx
+; 345
+.a9: mov         rcx, qword [rax]
+; 366
+.aa: mov         qword [rbx], rcx
+; 367
+.ab: pop         rbx
+; 1156
+.ac: xor         rax, rax
+; 1157
+.ad: sub         rax, rbx
+; 1158
+.ae: push        rax
+; 1159;push_address_of val
+.af: push        rbp
+; 266
+.ag: add         qword [rsp], -8
+; 267
+.ah: push        rsp
+; 801
+.ai: add         qword [rsp], 8
+; 802;copy 8 bytes from -val into val, reverse=false
+.aj: pop         rax
+; 344
+.ak: pop         rbx
+; 345
+.al: mov         rcx, qword [rax]
+; 366
+.am: mov         qword [rbx], rcx
+; 367
+.an: add         rsp, 8
+; 808
+.ao: add         rsp, 0
+; 1044
+.ap: jmp         .aq
+; 1045
+.aq: add         rsp, 0
+; 1059;definition i;load identifer val
+.ar: sub         rsp, 8
+; 894
+.as: push        rsp
+; 895;push_address_of val
+.at: push        rbp
+; 266
+.au: add         qword [rsp], -8
+; 267;copy 8 bytes from val into stack, reverse=false
+.av: pop         rax
+; 344
+.aw: pop         rbx
+; 345
+.ax: mov         rcx, qword [rax]
+; 366
+.ay: mov         qword [rbx], rcx
+; 367;definition buffer
+.az: push 0
+; 621
+.aA: push 0
+; 621
+.aB: push 0
+; 621
+.aC: push 0
+; 621
+.aD: push 0
+; 621
+.aE: push 0
+; 621
+.aF: push 0
+; 621
+.aG: push 0
+; 621
+.aH: push 0
+; 621
+.aI: push 0
+; 621
+.aJ: push 0
+; 621
+.aK: push 0
+; 621
+.aL: push 0
+; 621
+.aM: push 0
+; 621
+.aN: push 0
+; 621
+.aO: push 0
+; 621
+.aP: push 0
+; 621
+.aQ: push 0
+; 621
+.aR: push 0
+; 621
+.aS: push 0
+; 621
+.aT: push 0
+; 621
+.aU: push 0
+; 621
+.aV: push 0
+; 621
+.aW: push 0
+; 621
+.aX: push 0
+; 621
+.aY: push 0
+; 621
+.aZ: push 0
+; 621
+.b0: push 0
+; 621
+.b1: push 0
+; 621
+.b2: push 0
+; 621
+.b3: push 0
+; 621
+.b4: push 0
+; 621
+.b5: push 0
+; 621
+.b6: push 0
+; 621
+.b7: push 0
+; 621
+.b8: push 0
+; 621
+.b9: push 0
+; 621
+.ba: push 0
+; 621
+.bb: push 0
+; 621
+.bc: push 0
+; 621
+.bd: push 0
+; 621
+.be: push 0
+; 621
+.bf: push 0
+; 621
+.bg: push 0
+; 621
+.bh: push 0
+; 621
+.bi: push 0
+; 621
+.bj: push 0
+; 621
+.bk: push 0
+; 621
+.bl: push 0
+; 621
+.bm: push 0
+; 621
+.bn: push 0
+; 621
+.bo: push 0
+; 621
+.bp: push 0
+; 621
+.bq: push 0
+; 621
+.br: push 0
+; 621
+.bs: push 0
+; 621
+.bt: push 0
+; 621
+.bu: push 0
+; 621
+.bv: push 0
+; 621
+.bw: push 0
+; 621
+.bx: push 0
+; 621
+.by: push 0
+; 621
+.bz: push 0
+; 621
+.bA: push 0
+; 621;definition dst_index;literal 64
+.bB: push 64
+; 1020;binary !=;load identifer i
+.bC: sub         rsp, 8
+; 894
+.bD: push        rsp
+; 895;push_address_of i
+.bE: push        rbp
+; 266
+.bF: add         qword [rsp], -16
+; 267;copy 8 bytes from i into stack, reverse=false
+.bG: pop         rax
+; 344
+.bH: pop         rbx
+; 345
+.bI: mov         rcx, qword [rax]
+; 366
+.bJ: mov         qword [rbx], rcx
+; 367;literal 0
+.bK: push 0
+; 1020
+.bL: pop         rbx
+; 832
 .bM: pop         rax
-.bN: pop         rbx
-.bO: mov         rcx, qword [rax]
-.bP: mov         qword [rbx], rcx
-.bQ: pop         rbx
-.bR: xor         rax, rax
-.bS: sub         rax, rbx
-.bT: push        rax
-; push_address_of val
-.bU: push        rbp
-.bV: add         qword [rsp], -8
-.bW: push        rsp
-.bX: add         qword [rsp], 8
-; copy 8 bytes from -val into val, reverse=false
-.bY: pop         rax
-.bZ: pop         rbx
-.c0: mov         rcx, qword [rax]
-.c1: mov         qword [rbx], rcx
-.c2: add         rsp, 8
-.c3: add         rsp, 0
-.c4: jmp         .c5
-.c5: add         rsp, 0
-; definition i;load identifer val
-.c6: sub         rsp, 8
-.c7: push        rsp
-; push_address_of val
-.c8: push        rbp
-.c9: add         qword [rsp], -8
-; copy 8 bytes from val into stack, reverse=false
-.ca: pop         rax
-.cb: pop         rbx
-.cc: mov         rcx, qword [rax]
-.cd: mov         qword [rbx], rcx
-; definition buffer
-.ce: push 0
-.cf: push 0
-.cg: push 0
-.ch: push 0
-.ci: push 0
-.cj: push 0
-.ck: push 0
-.cl: push 0
-.cm: push 0
-.cn: push 0
-.co: push 0
-.cp: push 0
-.cq: push 0
-.cr: push 0
-.cs: push 0
-.ct: push 0
-.cu: push 0
-.cv: push 0
-.cw: push 0
-.cx: push 0
-.cy: push 0
-.cz: push 0
-.cA: push 0
-.cB: push 0
-.cC: push 0
-.cD: push 0
-.cE: push 0
-.cF: push 0
-.cG: push 0
-.cH: push 0
-.cI: push 0
-.cJ: push 0
-.cK: push 0
-.cL: push 0
-.cM: push 0
-.cN: push 0
-.cO: push 0
-.cP: push 0
-.cQ: push 0
-.cR: push 0
-.cS: push 0
-.cT: push 0
-.cU: push 0
-.cV: push 0
-.cW: push 0
-.cX: push 0
-.cY: push 0
-.cZ: push 0
-.d0: push 0
-.d1: push 0
-.d2: push 0
-.d3: push 0
-.d4: push 0
-.d5: push 0
-.d6: push 0
-.d7: push 0
-.d8: push 0
-.d9: push 0
-.da: push 0
-.db: push 0
-.dc: push 0
-.dd: push 0
-.de: push 0
-.df: push 0
-; definition dst_index;literal 64
-.dg: push 64
-; binary !=;load identifer i
-.dh: sub         rsp, 8
-.di: push        rsp
-; push_address_of i
-.dj: push        rbp
-.dk: add         qword [rsp], -16
-; copy 8 bytes from i into stack, reverse=false
-.dl: pop         rax
-.dm: pop         rbx
-.dn: mov         rcx, qword [rax]
-.do: mov         qword [rbx], rcx
-; literal 0
-.dp: push 0
-.dq: pop         rbx
-.dr: pop         rax
-.ds: push 1
+; 833
+.bN: push 1
 mov rcx, 0
 cmp rax, rbx
 cmovne rcx, qword [rsp]
 add rsp, 8
-.dt: push        rcx
-.du: pop         rax
-.dv: test rax, rax
-jz .eq
-; definition digit;binary %;load identifer i
-.dw: sub         rsp, 8
-.dx: push        rsp
-; push_address_of i
-.dy: push        rbp
-.dz: add         qword [rsp], -16
-; copy 8 bytes from i into stack, reverse=false
-.dA: pop         rax
-.dB: pop         rbx
-.dC: mov         rcx, qword [rax]
-.dD: mov         qword [rbx], rcx
-; literal 10
-.dE: push 10
-.dF: pop         rax
-.dG: mov rcx, rax
+; 838
+.bO: push        rcx
+; 841
+.bP: pop         rax
+; 1071
+.bQ: test rax, rax
+jz .cL
+; 1072;definition digit;binary %;load identifer i
+.bR: sub         rsp, 8
+; 894
+.bS: push        rsp
+; 895;push_address_of i
+.bT: push        rbp
+; 266
+.bU: add         qword [rsp], -16
+; 267;copy 8 bytes from i into stack, reverse=false
+.bV: pop         rax
+; 344
+.bW: pop         rbx
+; 345
+.bX: mov         rcx, qword [rax]
+; 366
+.bY: mov         qword [rbx], rcx
+; 367;literal 10
+.bZ: push 10
+; 1020
+.c0: pop         rax
+; 777
+.c1: mov rcx, rax
 mov rdx, 0
 mov rax, qword[rsp]
 div rcx
 mov qword[rsp], rdx
-; binary -=;literal 1
-.dH: push 1
-; push_address_of dst_index
-.dI: push        rbp
-.dJ: add         qword [rsp], -536
-.dK: pop         rax
-.dL: pop         rbx
-.dM: sub         qword [rax], rbx
-; binary =;binary +;load identifer digit
-.dN: sub         rsp, 8
-.dO: push        rsp
-; push_address_of digit
-.dP: push        rbp
-.dQ: add         qword [rsp], -544
-; copy 8 bytes from digit into stack, reverse=false
-.dR: pop         rax
-.dS: pop         rbx
-.dT: mov         rcx, qword [rax]
-.dU: mov         qword [rbx], rcx
-; literal '0'
-.dV: push 48
-.dW: pop         rax
-.dX: add         qword [rsp], rax
-; push_address_of [dst_index]buffer;push_address_of buffer
-.dY: push        rbp
-.dZ: add         qword [rsp], -528
-; load identifer dst_index
-.e0: sub         rsp, 8
-.e1: push        rsp
-; push_address_of dst_index
-.e2: push        rbp
-.e3: add         qword [rsp], -536
-; copy 8 bytes from dst_index into stack, reverse=false
-.e4: pop         rax
-.e5: pop         rbx
-.e6: mov         rcx, qword [rax]
-.e7: mov         qword [rbx], rcx
-.e8: pop         rax
-.e9: shl         rax, 3
-.ea: add         qword [rsp], rax
-.eb: push        rsp
-.ec: add         qword [rsp], 8
-; copy 8 bytes from digit + '0' into [dst_index]buffer, reverse=false
-.ed: pop         rax
-.ee: pop         rbx
-.ef: mov         rcx, qword [rax]
-.eg: mov         qword [rbx], rcx
-.eh: add         rsp, 8
-; binary /=;literal 10
-.ei: push 10
-; push_address_of i
-.ej: push        rbp
-.ek: add         qword [rsp], -16
-.el: pop         rax
-.em: pop         rbx
-.en: mov r8, rax
+; 783;binary -=;literal 1
+.c2: push 1
+; 1020;push_address_of dst_index
+.c3: push        rbp
+; 266
+.c4: add         qword [rsp], -536
+; 267
+.c5: pop         rax
+; 858
+.c6: pop         rbx
+; 859
+.c7: sub         qword [rax], rbx
+; 863;binary =;binary +;load identifer digit
+.c8: sub         rsp, 8
+; 894
+.c9: push        rsp
+; 895;push_address_of digit
+.ca: push        rbp
+; 266
+.cb: add         qword [rsp], -544
+; 267;copy 8 bytes from digit into stack, reverse=false
+.cc: pop         rax
+; 344
+.cd: pop         rbx
+; 345
+.ce: mov         rcx, qword [rax]
+; 366
+.cf: mov         qword [rbx], rcx
+; 367;literal '0'
+.cg: push 48
+; 1004
+.ch: pop         rax
+; 777
+.ci: add         qword [rsp], rax
+; 779;push_address_of [dst_index]buffer;push_address_of buffer
+.cj: push        rbp
+; 266
+.ck: add         qword [rsp], -528
+; 267;load identifer dst_index
+.cl: sub         rsp, 8
+; 894
+.cm: push        rsp
+; 895;push_address_of dst_index
+.cn: push        rbp
+; 266
+.co: add         qword [rsp], -536
+; 267;copy 8 bytes from dst_index into stack, reverse=false
+.cp: pop         rax
+; 344
+.cq: pop         rbx
+; 345
+.cr: mov         rcx, qword [rax]
+; 366
+.cs: mov         qword [rbx], rcx
+; 367
+.ct: pop         rax
+; 318
+.cu: shl         rax, 3
+; 146
+.cv: add         qword [rsp], rax
+; 324
+.cw: push        rsp
+; 801
+.cx: add         qword [rsp], 8
+; 802;copy 8 bytes from digit + '0' into [dst_index]buffer, reverse=false
+.cy: pop         rax
+; 344
+.cz: pop         rbx
+; 345
+.cA: mov         rcx, qword [rax]
+; 366
+.cB: mov         qword [rbx], rcx
+; 367
+.cC: add         rsp, 8
+; 808;binary /=;literal 10
+.cD: push 10
+; 1020;push_address_of i
+.cE: push        rbp
+; 266
+.cF: add         qword [rsp], -16
+; 267
+.cG: pop         rax
+; 858
+.cH: pop         rbx
+; 859
+.cI: mov r8, rax
 mov rdx, 0
 mov rax, qword[r8]
 div rbx
 mov qword[r8], rax
-.eo: add         rsp, 8
-.ep: jmp         .dh
-; binary !=;load identifer dst_index
-.eq: sub         rsp, 8
-.er: push        rsp
-; push_address_of dst_index
-.es: push        rbp
-.et: add         qword [rsp], -536
-; copy 8 bytes from dst_index into stack, reverse=false
-.eu: pop         rax
-.ev: pop         rbx
-.ew: mov         rcx, qword [rax]
-.ex: mov         qword [rbx], rcx
-; literal 64
-.ey: push 64
-.ez: pop         rbx
-.eA: pop         rax
-.eB: push 1
+; 865
+.cJ: add         rsp, 8
+; 1084
+.cK: jmp         .bC
+; 1086;binary !=;load identifer dst_index
+.cL: sub         rsp, 8
+; 894
+.cM: push        rsp
+; 895;push_address_of dst_index
+.cN: push        rbp
+; 266
+.cO: add         qword [rsp], -536
+; 267;copy 8 bytes from dst_index into stack, reverse=false
+.cP: pop         rax
+; 344
+.cQ: pop         rbx
+; 345
+.cR: mov         rcx, qword [rax]
+; 366
+.cS: mov         qword [rbx], rcx
+; 367;literal 64
+.cT: push 64
+; 1020
+.cU: pop         rbx
+; 832
+.cV: pop         rax
+; 833
+.cW: push 1
 mov rcx, 0
 cmp rax, rbx
 cmovne rcx, qword [rsp]
 add rsp, 8
-.eC: push        rcx
-.eD: pop         rax
-.eE: test rax, rax
-jz .fb
-; call print_char
-.eF: sub         rsp, 0
-; subscript;load identifer dst_index
-.eG: sub         rsp, 8
-.eH: push        rsp
-; push_address_of dst_index
-.eI: push        rbp
-.eJ: add         qword [rsp], -536
-; copy 8 bytes from dst_index into stack, reverse=false
-.eK: pop         rax
-.eL: pop         rbx
-.eM: mov         rcx, qword [rax]
-.eN: mov         qword [rbx], rcx
-; push_address_of buffer
-.eO: push        rbp
-.eP: add         qword [rsp], -528
-.eQ: pop         rax
-.eR: pop         rbx
-.eS: shl         rbx, 3
-.eT: add         rax, rbx
-.eU: sub         rsp, 8
-.eV: push        rsp
-.eW: push        rax
-; copy 8 bytes from [dst_index]buffer into stack, reverse=false
-.eX: pop         rax
-.eY: pop         rbx
-.eZ: mov         rcx, qword [rax]
-.f0: mov         qword [rbx], rcx
-.f1: call        .ad
-.f2: add         rsp, 8
-; binary +=;literal 1
-.f3: push 1
-; push_address_of dst_index
-.f4: push        rbp
-.f5: add         qword [rsp], -536
-.f6: pop         rax
-.f7: pop         rbx
-.f8: add         qword [rax], rbx
-.f9: add         rsp, 0
-.fa: jmp         .eq
-.fb: mov         rsp, rbp
-.fc: pop         rbp
-.fd: ret
-.fe: push        rbp
-.ff: mov         rbp, rsp
-; lambda merge;return;binary |;binary <<;load identifer a
-.fg: sub         rsp, 8
-.fh: push        rsp
-; push_address_of a
-.fi: push        rbp
-.fj: add         qword [rsp], 16
-; copy 1 bytes from a into stack, reverse=false
-.fk: pop         rax
-.fl: pop         rbx
-.fm: mov         cl, byte [rax]
-.fn: mov         byte [rbx], cl
-; literal 8
-.fo: push 8
-.fp: pop         rax
-.fq: mov cl, al
+; 838
+.cX: push        rcx
+; 841
+.cY: pop         rax
+; 1071
+.cZ: test rax, rax
+jz .dw
+; 1072;call print_char
+.d0: sub         rsp, 0
+; 909;cast from 's64' to 'u8';subscript;load identifer dst_index
+.d1: sub         rsp, 8
+; 894
+.d2: push        rsp
+; 895;push_address_of dst_index
+.d3: push        rbp
+; 266
+.d4: add         qword [rsp], -536
+; 267;copy 8 bytes from dst_index into stack, reverse=false
+.d5: pop         rax
+; 344
+.d6: pop         rbx
+; 345
+.d7: mov         rcx, qword [rax]
+; 366
+.d8: mov         qword [rbx], rcx
+; 367;push_address_of buffer
+.d9: push        rbp
+; 266
+.da: add         qword [rsp], -528
+; 267
+.db: pop         rax
+; 1176
+.dc: pop         rbx
+; 1177
+.dd: shl         rbx, 3
+; 146
+.de: add         rax, rbx
+; 1184
+.df: sub         rsp, 8
+; 1188
+.dg: push        rsp
+; 1190
+.dh: push        rax
+; 1191;copy 8 bytes from [dst_index]buffer into stack, reverse=false
+.di: pop         rax
+; 344
+.dj: pop         rbx
+; 345
+.dk: mov         rcx, qword [rax]
+; 366
+.dl: mov         qword [rbx], rcx
+; 367
+.dm: call        .8D
+; 920
+.dn: add         rsp, 8
+; 924;binary +=;literal 1
+.do: push 1
+; 1020;push_address_of dst_index
+.dp: push        rbp
+; 266
+.dq: add         qword [rsp], -536
+; 267
+.dr: pop         rax
+; 858
+.ds: pop         rbx
+; 859
+.dt: add         qword [rax], rbx
+; 862
+.du: add         rsp, 0
+; 1084
+.dv: jmp         .cL
+; 1086
+.dw: mov         rsp, rbp
+; 487
+.dx: pop         rbp
+; 488
+.dy: ret
+; 489
+.dz: push        rbp
+.dA: mov         rbp, rsp
+; lambda print_hex;definition val;load identifer _val
+.dB: sub         rsp, 8
+; 894
+.dC: push        rsp
+; 895;push_address_of _val
+.dD: push        rbp
+; 266
+.dE: add         qword [rsp], 16
+; 267;copy 8 bytes from _val into stack, reverse=false
+.dF: pop         rax
+; 344
+.dG: pop         rbx
+; 345
+.dH: mov         rcx, qword [rax]
+; 366
+.dI: mov         qword [rbx], rcx
+; 367;binary ==;load identifer val
+.dJ: sub         rsp, 8
+; 894
+.dK: push        rsp
+; 895;push_address_of val
+.dL: push        rbp
+; 266
+.dM: add         qword [rsp], -8
+; 267;copy 8 bytes from val into stack, reverse=false
+.dN: pop         rax
+; 344
+.dO: pop         rbx
+; 345
+.dP: mov         rcx, qword [rax]
+; 366
+.dQ: mov         qword [rbx], rcx
+; 367;literal 0
+.dR: push 0
+; 1020
+.dS: pop         rbx
+; 832
+.dT: pop         rax
+; 833
+.dU: push 1
+mov rcx, 0
+cmp rax, rbx
+cmove rcx, qword [rsp]
+add rsp, 8
+; 838
+.dV: push        rcx
+; 841
+.dW: pop         rax
+; 1031
+.dX: test rax, rax
+jz .e7
+; 1032;call print_char
+.dY: sub         rsp, 0
+; 909;literal '0'
+.dZ: push 48
+; 1004
+.e0: call        .8D
+; 920
+.e1: add         rsp, 8
+; 924;return
+.e2: mov         rsp, rbp
+; 689
+.e3: pop         rbp
+; 690
+.e4: ret
+; 691
+.e5: add         rsp, 0
+; 1044
+.e6: jmp         .e7
+; 1045
+.e7: add         rsp, 0
+; 1059;definition i;load identifer val
+.e8: sub         rsp, 8
+; 894
+.e9: push        rsp
+; 895;push_address_of val
+.ea: push        rbp
+; 266
+.eb: add         qword [rsp], -8
+; 267;copy 8 bytes from val into stack, reverse=false
+.ec: pop         rax
+; 344
+.ed: pop         rbx
+; 345
+.ee: mov         rcx, qword [rax]
+; 366
+.ef: mov         qword [rbx], rcx
+; 367;definition buffer
+.eg: push 0
+; 621
+.eh: push 0
+; 621
+.ei: push 0
+; 621
+.ej: push 0
+; 621
+.ek: push 0
+; 621
+.el: push 0
+; 621
+.em: push 0
+; 621
+.en: push 0
+; 621
+.eo: push 0
+; 621
+.ep: push 0
+; 621
+.eq: push 0
+; 621
+.er: push 0
+; 621
+.es: push 0
+; 621
+.et: push 0
+; 621
+.eu: push 0
+; 621
+.ev: push 0
+; 621
+.ew: push 0
+; 621
+.ex: push 0
+; 621
+.ey: push 0
+; 621
+.ez: push 0
+; 621
+.eA: push 0
+; 621
+.eB: push 0
+; 621
+.eC: push 0
+; 621
+.eD: push 0
+; 621
+.eE: push 0
+; 621
+.eF: push 0
+; 621
+.eG: push 0
+; 621
+.eH: push 0
+; 621
+.eI: push 0
+; 621
+.eJ: push 0
+; 621
+.eK: push 0
+; 621
+.eL: push 0
+; 621
+.eM: push 0
+; 621
+.eN: push 0
+; 621
+.eO: push 0
+; 621
+.eP: push 0
+; 621
+.eQ: push 0
+; 621
+.eR: push 0
+; 621
+.eS: push 0
+; 621
+.eT: push 0
+; 621
+.eU: push 0
+; 621
+.eV: push 0
+; 621
+.eW: push 0
+; 621
+.eX: push 0
+; 621
+.eY: push 0
+; 621
+.eZ: push 0
+; 621
+.f0: push 0
+; 621
+.f1: push 0
+; 621
+.f2: push 0
+; 621
+.f3: push 0
+; 621
+.f4: push 0
+; 621
+.f5: push 0
+; 621
+.f6: push 0
+; 621
+.f7: push 0
+; 621
+.f8: push 0
+; 621
+.f9: push 0
+; 621
+.fa: push 0
+; 621
+.fb: push 0
+; 621
+.fc: push 0
+; 621
+.fd: push 0
+; 621
+.fe: push 0
+; 621
+.ff: push 0
+; 621
+.fg: push 0
+; 621
+.fh: push 0
+; 621;definition dst_index;literal 64
+.fi: push 64
+; 1020;binary !=;load identifer i
+.fj: sub         rsp, 8
+; 894
+.fk: push        rsp
+; 895;push_address_of i
+.fl: push        rbp
+; 266
+.fm: add         qword [rsp], -16
+; 267;copy 8 bytes from i into stack, reverse=false
+.fn: pop         rax
+; 344
+.fo: pop         rbx
+; 345
+.fp: mov         rcx, qword [rax]
+; 366
+.fq: mov         qword [rbx], rcx
+; 367;literal 0
+.fr: push 0
+; 1020
+.fs: pop         rbx
+; 832
+.ft: pop         rax
+; 833
+.fu: push 1
+mov rcx, 0
+cmp rax, rbx
+cmovne rcx, qword [rsp]
+add rsp, 8
+; 838
+.fv: push        rcx
+; 841
+.fw: pop         rax
+; 1071
+.fx: test rax, rax
+jz .hi
+; 1072;definition digit;binary &;load identifer i
+.fy: sub         rsp, 8
+; 894
+.fz: push        rsp
+; 895;push_address_of i
+.fA: push        rbp
+; 266
+.fB: add         qword [rsp], -16
+; 267;copy 8 bytes from i into stack, reverse=false
+.fC: pop         rax
+; 344
+.fD: pop         rbx
+; 345
+.fE: mov         rcx, qword [rax]
+; 366
+.fF: mov         qword [rbx], rcx
+; 367;literal 15
+.fG: push 15
+; 1020
+.fH: pop         rax
+; 777
+.fI: and         qword [rsp], rax
+; 785;binary -=;literal 1
+.fJ: push 1
+; 1020;push_address_of dst_index
+.fK: push        rbp
+; 266
+.fL: add         qword [rsp], -536
+; 267
+.fM: pop         rax
+; 858
+.fN: pop         rbx
+; 859
+.fO: sub         qword [rax], rbx
+; 863;binary <;load identifer digit
+.fP: sub         rsp, 8
+; 894
+.fQ: push        rsp
+; 895;push_address_of digit
+.fR: push        rbp
+; 266
+.fS: add         qword [rsp], -544
+; 267;copy 8 bytes from digit into stack, reverse=false
+.fT: pop         rax
+; 344
+.fU: pop         rbx
+; 345
+.fV: mov         rcx, qword [rax]
+; 366
+.fW: mov         qword [rbx], rcx
+; 367;literal 10
+.fX: push 10
+; 1020
+.fY: pop         rbx
+; 832
+.fZ: pop         rax
+; 833
+.g0: push 1
+mov rcx, 0
+cmp rax, rbx
+cmovl rcx, qword [rsp]
+add rsp, 8
+; 838
+.g1: push        rcx
+; 841
+.g2: pop         rax
+; 1031
+.g3: test rax, rax
+jz .gB
+; 1032;binary =;binary +;load identifer digit
+.g4: sub         rsp, 8
+; 894
+.g5: push        rsp
+; 895;push_address_of digit
+.g6: push        rbp
+; 266
+.g7: add         qword [rsp], -544
+; 267;copy 8 bytes from digit into stack, reverse=false
+.g8: pop         rax
+; 344
+.g9: pop         rbx
+; 345
+.ga: mov         rcx, qword [rax]
+; 366
+.gb: mov         qword [rbx], rcx
+; 367;literal '0'
+.gc: push 48
+; 1004
+.gd: pop         rax
+; 777
+.ge: add         qword [rsp], rax
+; 779;push_address_of [dst_index]buffer;push_address_of buffer
+.gf: push        rbp
+; 266
+.gg: add         qword [rsp], -528
+; 267;load identifer dst_index
+.gh: sub         rsp, 8
+; 894
+.gi: push        rsp
+; 895;push_address_of dst_index
+.gj: push        rbp
+; 266
+.gk: add         qword [rsp], -536
+; 267;copy 8 bytes from dst_index into stack, reverse=false
+.gl: pop         rax
+; 344
+.gm: pop         rbx
+; 345
+.gn: mov         rcx, qword [rax]
+; 366
+.go: mov         qword [rbx], rcx
+; 367
+.gp: pop         rax
+; 318
+.gq: shl         rax, 3
+; 146
+.gr: add         qword [rsp], rax
+; 324
+.gs: push        rsp
+; 801
+.gt: add         qword [rsp], 8
+; 802;copy 8 bytes from digit + '0' into [dst_index]buffer, reverse=false
+.gu: pop         rax
+; 344
+.gv: pop         rbx
+; 345
+.gw: mov         rcx, qword [rax]
+; 366
+.gx: mov         qword [rbx], rcx
+; 367
+.gy: add         rsp, 8
+; 808
+.gz: add         rsp, 0
+; 1044
+.gA: jmp         .h9
+; 1045;binary =;binary +;binary -;load identifer digit
+.gB: sub         rsp, 8
+; 894
+.gC: push        rsp
+; 895;push_address_of digit
+.gD: push        rbp
+; 266
+.gE: add         qword [rsp], -544
+; 267;copy 8 bytes from digit into stack, reverse=false
+.gF: pop         rax
+; 344
+.gG: pop         rbx
+; 345
+.gH: mov         rcx, qword [rax]
+; 366
+.gI: mov         qword [rbx], rcx
+; 367;literal 10
+.gJ: push 10
+; 1020
+.gK: pop         rax
+; 777
+.gL: sub         qword [rsp], rax
+; 780;literal 'a'
+.gM: push 97
+; 1004
+.gN: pop         rax
+; 777
+.gO: add         qword [rsp], rax
+; 779;push_address_of [dst_index]buffer;push_address_of buffer
+.gP: push        rbp
+; 266
+.gQ: add         qword [rsp], -528
+; 267;load identifer dst_index
+.gR: sub         rsp, 8
+; 894
+.gS: push        rsp
+; 895;push_address_of dst_index
+.gT: push        rbp
+; 266
+.gU: add         qword [rsp], -536
+; 267;copy 8 bytes from dst_index into stack, reverse=false
+.gV: pop         rax
+; 344
+.gW: pop         rbx
+; 345
+.gX: mov         rcx, qword [rax]
+; 366
+.gY: mov         qword [rbx], rcx
+; 367
+.gZ: pop         rax
+; 318
+.h0: shl         rax, 3
+; 146
+.h1: add         qword [rsp], rax
+; 324
+.h2: push        rsp
+; 801
+.h3: add         qword [rsp], 8
+; 802;copy 8 bytes from digit - 10 + 'a' into [dst_index]buffer, reverse=false
+.h4: pop         rax
+; 344
+.h5: pop         rbx
+; 345
+.h6: mov         rcx, qword [rax]
+; 366
+.h7: mov         qword [rbx], rcx
+; 367
+.h8: add         rsp, 8
+; 808
+.h9: add         rsp, 0
+; 1059;binary >>=;literal 4
+.ha: push 4
+; 1020;push_address_of i
+.hb: push        rbp
+; 266
+.hc: add         qword [rsp], -16
+; 267
+.hd: pop         rax
+; 858
+.he: pop         rbx
+; 859
+.hf: mov cl, bl
+shr qword[rax], cl
+; 870
+.hg: add         rsp, 8
+; 1084
+.hh: jmp         .fj
+; 1086;binary !=;load identifer dst_index
+.hi: sub         rsp, 8
+; 894
+.hj: push        rsp
+; 895;push_address_of dst_index
+.hk: push        rbp
+; 266
+.hl: add         qword [rsp], -536
+; 267;copy 8 bytes from dst_index into stack, reverse=false
+.hm: pop         rax
+; 344
+.hn: pop         rbx
+; 345
+.ho: mov         rcx, qword [rax]
+; 366
+.hp: mov         qword [rbx], rcx
+; 367;literal 64
+.hq: push 64
+; 1020
+.hr: pop         rbx
+; 832
+.hs: pop         rax
+; 833
+.ht: push 1
+mov rcx, 0
+cmp rax, rbx
+cmovne rcx, qword [rsp]
+add rsp, 8
+; 838
+.hu: push        rcx
+; 841
+.hv: pop         rax
+; 1071
+.hw: test rax, rax
+jz .i3
+; 1072;call print_char
+.hx: sub         rsp, 0
+; 909;cast from 's64' to 'u8';subscript;load identifer dst_index
+.hy: sub         rsp, 8
+; 894
+.hz: push        rsp
+; 895;push_address_of dst_index
+.hA: push        rbp
+; 266
+.hB: add         qword [rsp], -536
+; 267;copy 8 bytes from dst_index into stack, reverse=false
+.hC: pop         rax
+; 344
+.hD: pop         rbx
+; 345
+.hE: mov         rcx, qword [rax]
+; 366
+.hF: mov         qword [rbx], rcx
+; 367;push_address_of buffer
+.hG: push        rbp
+; 266
+.hH: add         qword [rsp], -528
+; 267
+.hI: pop         rax
+; 1176
+.hJ: pop         rbx
+; 1177
+.hK: shl         rbx, 3
+; 146
+.hL: add         rax, rbx
+; 1184
+.hM: sub         rsp, 8
+; 1188
+.hN: push        rsp
+; 1190
+.hO: push        rax
+; 1191;copy 8 bytes from [dst_index]buffer into stack, reverse=false
+.hP: pop         rax
+; 344
+.hQ: pop         rbx
+; 345
+.hR: mov         rcx, qword [rax]
+; 366
+.hS: mov         qword [rbx], rcx
+; 367
+.hT: call        .8D
+; 920
+.hU: add         rsp, 8
+; 924;binary +=;literal 1
+.hV: push 1
+; 1020;push_address_of dst_index
+.hW: push        rbp
+; 266
+.hX: add         qword [rsp], -536
+; 267
+.hY: pop         rax
+; 858
+.hZ: pop         rbx
+; 859
+.i0: add         qword [rax], rbx
+; 862
+.i1: add         rsp, 0
+; 1084
+.i2: jmp         .hi
+; 1086
+.i3: mov         rsp, rbp
+; 487
+.i4: pop         rbp
+; 488
+.i5: ret
+; 489
+.i6: push        rbp
+.i7: mov         rbp, rsp
+; lambda merge;return;cast from 'u8' to 'u16';binary |;binary <<;load identifer a
+.i8: sub         rsp, 8
+; 894
+.i9: push        rsp
+; 895;push_address_of a
+.ia: push        rbp
+; 266
+.ib: add         qword [rsp], 16
+; 267;copy 1 bytes from a into stack, reverse=false
+.ic: pop         rax
+; 344
+.id: pop         rbx
+; 345
+.ie: mov         cl, byte [rax]
+; 420
+.if: mov         byte [rbx], cl
+; 421;literal 8
+.ig: push 8
+; 1010
+.ih: pop         rax
+; 777
+.ii: mov cl, al
 shl qword[rsp], cl
-; load identifer b
-.fr: sub         rsp, 8
-.fs: push        rsp
-; push_address_of b
-.ft: push        rbp
-.fu: add         qword [rsp], 24
-; copy 1 bytes from b into stack, reverse=false
-.fv: pop         rax
-.fw: pop         rbx
-.fx: mov         cl, byte [rax]
-.fy: mov         byte [rbx], cl
-.fz: pop         rax
-.fA:  or         qword [rsp], rax
-.fB: push        rbp
-.fC: add         qword [rsp], 32
-.fD: push        rsp
-.fE: add         qword [rsp], 8
-; copy 2 bytes from expression into parameter, reverse=false
-.fF: pop         rax
-.fG: pop         rbx
-.fH: mov         cl, byte [rax]
-.fI: mov         byte [rbx], cl
-.fJ: add         rax, 1
-.fK: add         rbx, 1
-.fL: mov         cl, byte [rax]
-.fM: mov         byte [rbx], cl
-.fN: mov         rsp, rbp
-.fO: pop         rbp
-.fP: ret
-.fQ: mov         rsp, rbp
-.fR: pop         rbp
-.fS: ret
+; 788;load identifer b
+.ij: sub         rsp, 8
+; 894
+.ik: push        rsp
+; 895;push_address_of b
+.il: push        rbp
+; 266
+.im: add         qword [rsp], 24
+; 267;copy 1 bytes from b into stack, reverse=false
+.in: pop         rax
+; 344
+.io: pop         rbx
+; 345
+.ip: mov         cl, byte [rax]
+; 420
+.iq: mov         byte [rbx], cl
+; 421
+.ir: pop         rax
+; 777
+.is:  or         qword [rsp], rax
+; 784
+.it: and         qword [rsp], 255
+; 1254
+.iu: push        rbp
+; 673
+.iv: add         qword [rsp], 32
+; 674
+.iw: push        rsp
+; 677
+.ix: add         qword [rsp], 8
+; 678;copy 2 bytes from expression into parameter, reverse=false
+.iy: pop         rax
+; 344
+.iz: pop         rbx
+; 345
+.iA: mov         cl, byte [rax]
+; 420
+.iB: mov         byte [rbx], cl
+; 421
+.iC: add         rax, 1
+; 424
+.iD: add         rbx, 1
+; 425
+.iE: mov         cl, byte [rax]
+; 420
+.iF: mov         byte [rbx], cl
+; 421
+.iG: mov         rsp, rbp
+; 689
+.iH: pop         rbp
+; 690
+.iI: ret
+; 691
+.iJ: mov         rsp, rbp
+; 487
+.iK: pop         rbp
+; 488
+.iL: ret
+; 489

@@ -1,11 +1,11 @@
 import "windows.tl"
 
 print_string :: fn (str : string) {
-    WriteConsoleA(GetStdHandle(STD_OUTPUT_HANDLE), str.data, str.count, null, null);
+    WriteConsoleA(GetStdHandle(STD_OUTPUT_HANDLE), str.data, str.count as u32, null, null);
 }
 
 print_char :: fn (char : u8) {
-    WriteConsoleA(GetStdHandle(STD_OUTPUT_HANDLE), &char, 1, null, null);
+    WriteConsoleA(GetStdHandle(STD_OUTPUT_HANDLE), &char as *void, 1, null, null);
 }
 
 print_int :: fn (_val : int) {
@@ -33,7 +33,37 @@ print_int :: fn (_val : int) {
     }
 
     while dst_index != 64 {
-        print_char([dst_index]buffer);
+        print_char([dst_index]buffer as u8);
+        dst_index += 1;
+    }
+}
+
+print_hex :: fn (_val : int) {
+    val := _val;
+    if val == 0 {
+        print_char('0');
+        return;
+    }
+
+    i := val;
+    buffer : [64]int;
+    dst_index := 64;
+
+    while i != 0 {
+        digit := i & 15;
+
+        dst_index -= 1;
+		
+		if digit < 10
+			[dst_index]buffer = digit + '0';
+		else 
+			[dst_index]buffer = digit - 10 + 'a';
+
+        i >>= 4;
+    }
+
+    while dst_index != 64 {
+        print_char([dst_index]buffer as u8);
         dst_index += 1;
     }
 }

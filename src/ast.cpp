@@ -46,6 +46,8 @@ void unlock(Scope *scope) {
 HashMap<Span<utf8>, AstDefinition *> names_not_available_for_globals;
 
 bool needs_semicolon(AstExpression *node) {
+	if (node->kind == Ast_unary_operator)
+		return needs_semicolon(((AstUnaryOperator *)node)->expression);
 	return node->kind != Ast_lambda && node->kind != Ast_struct;
 }
 
@@ -148,7 +150,6 @@ void append_type(StringBuilder &builder, AstExpression *type, bool silent_error)
 				append_type(builder, parameter->type, silent_error);
 			}
 			append(builder, ") -> ");
-			append_format(builder, "%: ", lambda->return_parameter->name);
 			append_type(builder, lambda->return_parameter->type, silent_error);
 			break;
 		}
@@ -249,7 +250,7 @@ s64 get_align(AstExpression *type) {
 			return get_align(subscript->expression);
 		}
 		case Ast_lambda: {
-			return -1;
+			return 8;
 		}
 		default: {
 			invalid_code_path();
@@ -276,6 +277,23 @@ bool types_match_ns(AstExpression *a, AstExpression *b) {
 
 	if (a->kind == Ast_unary_operator) {
 		return types_match(((AstUnaryOperator *)a)->expression, ((AstUnaryOperator *)b)->expression);
+	}
+
+	if (a->kind == Ast_lambda) {
+		auto al = (AstLambda *)a;
+		auto bl = (AstLambda *)b;
+		if (al->parameters.count != bl->parameters.count)
+			return false;
+
+		if (!types_match(al->return_parameter->type, bl->return_parameter->type))
+			return false;
+
+		for (umm i = 0; i < al->parameters.count; ++i) {
+			if (!types_match(al->parameters[i]->type, bl->parameters[i]->type))
+				return false;
+		}
+
+		return true;
 	}
 
 	return false;
@@ -379,6 +397,8 @@ Span<utf8> binary_operator_string(BinaryOperation op) {
 		case '^=': return u8"^="s;
 		case '>>': return u8">>"s;
 		case '<<': return u8"<<"s;
+		case '>>=': return u8">>="s;
+		case '<<=': return u8"<<="s;
 	}
 	invalid_code_path();
 }

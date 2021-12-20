@@ -229,9 +229,9 @@ void output_nasm(Bytecode &bytecode) {
 			case push_r:		append_format(builder, ".%: push        %\n"                   , l(idx), i.push_r.s); break;
 			case push_c:
 				if (i.push_c.s > max_value<u32>) {
-					append_format(builder, ".%: push dword %\nmov dword [rsp+4], %\n", l(idx), (s32)i.push_c.s, i.push_c.s >> 32);
+					append_format(builder, ".%: push dword %\nmov dword [rsp+4], %\n", l(idx), (s32)i.push_c.s, (s32)(i.push_c.s >> 32));
 				} else {
-					append_format(builder, ".%: push %\n", l(idx), i.push_c.s);
+					append_format(builder, ".%: push %\n", l(idx), (s32)i.push_c.s);
 				}
 				break;
 			case push_m:		append_format(builder, ".%: push        qword [%]\n"           , l(idx), i.push_m.s); break;
@@ -249,6 +249,9 @@ void output_nasm(Bytecode &bytecode) {
 				break;
 
 			case shr_rc:		append_format(builder, ".%: shr         %, %\n"                , l(idx), i.shr_rc.d, i.shr_rc.s); break;
+			case shr_mr:
+				append_format(builder, ".%: mov cl, %\nshr qword[%], cl\n", l(idx), part1b(i.shr_mr.s), i.shr_mr.d);
+				break;
 
 			case add_rc:		append_format(builder, ".%: add         %, %\n"                , l(idx), i.add_rc.d, i.add_rc.s); break;
 			case add_rr:		append_format(builder, ".%: add         %, %\n"                , l(idx), i.add_rr.d, i.add_rr.s); break;
@@ -284,6 +287,9 @@ void output_nasm(Bytecode &bytecode) {
 
 			case xor_rr:		append_format(builder, ".%: xor         %, %\n"                , l(idx), i.xor_rr.d, i.xor_rr.s); break;
 			case xor_mr:		append_format(builder, ".%: xor         qword [%], %\n"        , l(idx), i.xor_mr.d, i.xor_mr.s); break;
+			case cmp_al_bl  :	append_format(builder, ".%: push 1\nmov %, 0\ncmp  al,  bl\ncmov% %, qword [rsp]\nadd rsp, 8\n", l(idx), i.cmp_al_bl  .dst_reg, cmov_string(i.cmp_al_bl  .comparison), i.cmp_al_bl  .dst_reg); break;
+			case cmp_ax_bx  :	append_format(builder, ".%: push 1\nmov %, 0\ncmp  ax,  bx\ncmov% %, qword [rsp]\nadd rsp, 8\n", l(idx), i.cmp_ax_bx  .dst_reg, cmov_string(i.cmp_ax_bx  .comparison), i.cmp_ax_bx  .dst_reg); break;
+			case cmp_eax_ebx:	append_format(builder, ".%: push 1\nmov %, 0\ncmp eax, ebx\ncmov% %, qword [rsp]\nadd rsp, 8\n", l(idx), i.cmp_eax_ebx.dst_reg, cmov_string(i.cmp_eax_ebx.comparison), i.cmp_eax_ebx.dst_reg); break;
 			case cmp_rax_rbx:	append_format(builder, ".%: push 1\nmov %, 0\ncmp rax, rbx\ncmov% %, qword [rsp]\nadd rsp, 8\n", l(idx), i.cmp_rax_rbx.dst_reg, cmov_string(i.cmp_rax_rbx.comparison), i.cmp_rax_rbx.dst_reg); break;
 			case call_constant:	append_format(builder, ".%: call        .%\n"                  , l(idx), l(i.call_constant.constant)); break;
 			case call_string:	append_format(builder, ".%: call        %\n"                   , l(idx), i.call_string.string); break;
@@ -321,7 +327,7 @@ void output_nasm(Bytecode &bytecode) {
 
 	StringBuilder bat_builder;
 	append_format(bat_builder, u8R"(@echo off
-%\nasm -f win64 -gcv8 "%.asm" -o "%.obj"
+%\nasm -f win64 -gcv8 "%.asm" -o "%.obj" -w-number-overflow -w-db-empty
 )", executable_directory, source_path_without_extension, source_path_without_extension);
 
 	append(bat_builder, "if %errorlevel% neq 0 exit /b %errorlevel%\n");

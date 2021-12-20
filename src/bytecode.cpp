@@ -13,6 +13,13 @@ struct Relocation {
 	AstLambda *lambda;
 };
 
+struct StringInfo {
+	s64 data_and_size_offset;
+	s64 string_offset;
+
+	bool constant;
+};
+
 struct Converter {
 	InstructionBuilder builder;
 	InstructionBuilder *body_builder;
@@ -24,6 +31,8 @@ struct Converter {
 
 	List<Relocation> local_relocations;
 	List<Relocation> global_relocations;
+
+	List<StringInfo> constant_strings;
 };
 
 
@@ -61,6 +70,12 @@ s64 allocate_data(StringBuilder &conv, Span<u8> string) {
 	append_bytes(conv, string);
 	return result;
 }
+s64 allocate_data(StringBuilder &conv, s64 count) {
+	auto result = conv.count();
+	while (count--)
+		append_bytes(conv, '\0');
+	return result;
+}
 
 s64 allocate_zero_data(Converter &conv, s64 byte_count) {
 	auto result = conv.zero_data_size;
@@ -81,9 +96,9 @@ void push_comment(Converter &conv, Span<utf8> string) {
 	{.kind = InstructionKind::_kind, ._kind={__VA_ARGS__}}
 
 #define I(kind, ...) \
-	add_instruction(conv, MI(kind, __VA_ARGS__))
+	add_instruction(conv, MI(kind, __VA_ARGS__), __LINE__)
 
-Instruction &add_instruction(Converter &conv, Instruction i) {
+Instruction &add_instruction(Converter &conv, Instruction i, u32 line) {
 	timed_function();
 
 	using enum InstructionKind;
@@ -133,6 +148,9 @@ Instruction &add_instruction(Converter &conv, Instruction i) {
 			break;
 		}
 	}
+
+	i.comment = (utf8 *)concatenate(to_string(line), '\0').data;
+
 	return conv.body_builder->add(i);
 }
 
@@ -326,9 +344,10 @@ static void append_memory_copy(Converter &conv, s64 bytes_to_copy, bool reverse,
 	I(pop_r, src_reg);
 	I(pop_r, dst_reg);
 
+		// TODO: this is dumbest solution
 	if (bytes_to_copy % 8 == 0) {
 		if (reverse) {
-			auto offset = bytes_to_copy - stack_word_size;
+			auto offset = bytes_to_copy - 8;
 			if (offset) {
 				I(add_rc, src_reg, offset);
 				I(add_rc, dst_reg, offset);
@@ -336,25 +355,51 @@ static void append_memory_copy(Converter &conv, s64 bytes_to_copy, bool reverse,
 			while (bytes_to_copy > 0) {
 				I(mov8_rm, tmp_reg, src_reg);
 				I(mov8_mr, dst_reg, tmp_reg);
-				bytes_to_copy -= stack_word_size;
+				bytes_to_copy -= 8;
 				if (bytes_to_copy > 0) {
-					I(sub_rc, src_reg, stack_word_size);
-					I(sub_rc, dst_reg, stack_word_size);
+					I(sub_rc, src_reg, 8);
+					I(sub_rc, dst_reg, 8);
 				}
 			}
 		} else {
 			while (bytes_to_copy > 0) {
 				I(mov8_rm, tmp_reg, src_reg);
 				I(mov8_mr, dst_reg, tmp_reg);
-				bytes_to_copy -= stack_word_size;
+				bytes_to_copy -= 8;
 				if (bytes_to_copy > 0) {
-					I(add_rc, src_reg, stack_word_size);
-					I(add_rc, dst_reg, stack_word_size);
+					I(add_rc, src_reg, 8);
+					I(add_rc, dst_reg, 8);
+				}
+			}
+		}
+	} else if (bytes_to_copy % 4 == 0) {
+		if (reverse) {
+			auto offset = bytes_to_copy - 4;
+			if (offset) {
+				I(add_rc, src_reg, offset);
+				I(add_rc, dst_reg, offset);
+			}
+			while (bytes_to_copy > 0) {
+				I(mov4_rm, tmp_reg, src_reg);
+				I(mov4_mr, dst_reg, tmp_reg);
+				bytes_to_copy -= 4;
+				if (bytes_to_copy > 0) {
+					I(sub_rc, src_reg, 4);
+					I(sub_rc, dst_reg, 4);
+				}
+			}
+		} else {
+			while (bytes_to_copy > 0) {
+				I(mov4_rm, tmp_reg, src_reg);
+				I(mov4_mr, dst_reg, tmp_reg);
+				bytes_to_copy -= 4;
+				if (bytes_to_copy > 0) {
+					I(add_rc, src_reg, 4);
+					I(add_rc, dst_reg, 4);
 				}
 			}
 		}
 	} else {
-		// TODO: this is dumbest solution
 		if (reverse) {
 			auto offset = bytes_to_copy - 1;
 			if (offset) {
@@ -397,8 +442,12 @@ static void append(Converter &conv, AstDefinition *definition) {
 	s64 definition_size = 0;
 	if (definition->type->kind != Ast_lambda) {
 		definition_size = get_size(definition->type);
-		if (definition->type != &type_type)
+		if (definition->type != &type_type && definition->type != &type_unsized_integer)
 			assert(definition_size);
+	}
+
+	if (definition->parent_block && definition->parent_block->kind != Ast_struct && definition->is_constant) {
+		return;
 	}
 
 	if (definition->expression && definition->expression->kind == Ast_lambda) {
@@ -578,7 +627,29 @@ static void append(Converter &conv, AstDefinition *definition) {
 		}
 	} else {
 		if (definition->is_constant) {
-			ex(definition)->offset = allocate_data(conv.constant_data_builder, value_as_bytes((s64)get_constant_integer(definition->expression).value()));
+			if (definition->expression) {
+				assert(definition->expression->kind == Ast_literal);
+				auto literal = (AstLiteral *)definition->expression;
+
+
+				switch (literal->literal_kind) {
+					case LiteralKind::integer: {
+						ex(definition)->offset = allocate_data(conv.constant_data_builder, value_as_bytes((s64)literal->integer));
+						break;
+					}
+					case LiteralKind::string: {
+						invalid_code_path("not implemented");
+						auto offset = allocate_data(conv.constant_data_builder, 16);
+						ex(definition)->offset = offset;
+						conv.constant_strings.add({offset, literal->string_data_offset, true});
+						break;
+					}
+					default:
+						invalid_code_path();
+				}
+			} else {
+				ex(definition)->offset = allocate_data(conv.constant_data_builder, get_size(definition->type));
+			}
 		} else {
 			if (definition->expression) {
 				ex(definition)->offset = allocate_data(conv.data_builder, value_as_bytes((s64)get_constant_integer(definition->expression).value()));
@@ -760,7 +831,13 @@ static void append(Converter &conv, AstBinaryOperator *bin) {
 
 				I(pop_r, rbx); // right
 				I(pop_r, rax); // left
-				I(cmp_rax_rbx, .dst_reg=rcx, .comparison = convert_comparison(bin->operation));
+				switch (get_size(left->type)) {
+					case 1: I(cmp_al_bl,   .dst_reg=rcx, .comparison = convert_comparison(bin->operation)); break;
+					case 2: I(cmp_al_bl,   .dst_reg=rcx, .comparison = convert_comparison(bin->operation)); break;
+					case 4: I(cmp_eax_ebx, .dst_reg=rcx, .comparison = convert_comparison(bin->operation)); break;
+					case 8: I(cmp_rax_rbx, .dst_reg=rcx, .comparison = convert_comparison(bin->operation)); break;
+					default: invalid_code_path();
+				}
 				I(push_r, rcx); // left
 				break;
 			}
@@ -771,7 +848,9 @@ static void append(Converter &conv, AstBinaryOperator *bin) {
 			case '%=':
 			case '|=':
 			case '&=':
-			case '^=': {
+			case '^=':
+			case '<<=':
+			case '>>=': {
 				append(conv, right);
 
 				push_address_of(conv, left);
@@ -788,6 +867,12 @@ static void append(Converter &conv, AstBinaryOperator *bin) {
 					case '|=': I( or_mr, rax, rbx); break;
 					case '&=': I(and_mr, rax, rbx); break;
 					case '^=': I(xor_mr, rax, rbx); break;
+					case '>>=': I(shr_mr, rax, rbx); break;
+					case '<<=': I(shl_mr, rax, rbx); break;
+					default: {
+						invalid_code_path();
+						break;
+					}
 				}
 
 				break;
@@ -801,12 +886,10 @@ static void append(Converter &conv, AstBinaryOperator *bin) {
 	}
 }
 static void append(Converter &conv, AstIdentifier *identifier) {
-	auto definition = identifier->definition;
-	assert(definition);
-
 	push_comment(conv, format(u8"load identifer %", identifier->name));
 
-	auto size = get_size(definition->type);
+	auto size = get_size(identifier->type); // NOT definition->type because definition can be unsized
+	assert(size);
 
 	I(sub_rc, rsp, ceil(size));
 	I(push_r, rsp);
@@ -912,7 +995,11 @@ static void append(Converter &conv, AstLiteral *literal) {
 		// TODO: deduplicate strings
 
 		I(push_c, (s64)literal->string.count);
-		I(pushcda, allocate_data(conv.constant_data_builder, as_bytes(literal->string)));
+
+		auto data = allocate_data(conv.constant_data_builder, as_bytes(literal->string));
+		I(pushcda, data);
+
+		literal->string_data_offset = data;
 	} else if (literal->literal_kind == character) {
 		I(push_c, literal->character);
 	} else if (literal->literal_kind == boolean) {
@@ -959,6 +1046,8 @@ static void append(Converter &conv, AstIf *If) {
 
 	auto count_before_false = count_of(*conv.body_builder);
 
+	ex(conv.lambda)->offset_accumulator = start_offset;
+
 	for (auto statement : If->false_scope.statements) {
 		append(conv, statement);
 	}
@@ -975,7 +1064,6 @@ static void append(Converter &conv, AstIf *If) {
 }
 static void append(Converter &conv, AstWhile *While) {
 	auto start_offset = ex(conv.lambda)->offset_accumulator;
-
 
 	auto count_before_condition = count_of(*conv.body_builder);
 	append(conv, While->condition);
@@ -1001,6 +1089,8 @@ static void append(Converter &conv, AstWhile *While) {
 	jz.jz.offset = (s64)count_after_body - (s64)count_after_condition + 2;
 }
 static void append(Converter &conv, AstBlock *block) {
+	push_comment(conv, u8"block"s);
+
 	auto start_offset = ex(conv.lambda)->offset_accumulator;
 
 	for (auto statement : block->scope.statements) {
@@ -1028,7 +1118,9 @@ static void append(Converter &conv, AstExpressionStatement *es) {
 				bin->operation == '%=' ||
 				bin->operation == '|=' ||
 				bin->operation == '&=' ||
-				bin->operation == '^='
+				bin->operation == '^=' ||
+				bin->operation == '>>=' ||
+				bin->operation == '<<='
 			) {
 				// these do not push anyting
 				return;
@@ -1037,12 +1129,16 @@ static void append(Converter &conv, AstExpressionStatement *es) {
 		}
 
 		case Ast_call:
-			// these do not push anyting
+			// discard return value
+			auto call = (AstCall *)es->expression;
+			auto size = get_ceiled_size(call->type);
+			if (size) {
+				I(add_rc, rsp, size);
+			}
 			return;
 	}
 
 	invalid_code_path();
-	//I(add_rc, rsp, stack_word_size);
 }
 static void append(Converter &conv, AstUnaryOperator *unop) {
 	switch (unop->operation) {
@@ -1101,52 +1197,79 @@ static void append(Converter &conv, AstCast *cast) {
 	push_comment(conv, format(u8"cast from '%' to '%'", type_to_string(cast->expression->type), type_to_string(cast->type)));
 
 	append(conv, cast->expression);
+
 	switch (cast->cast_kind) {
-		case CastKind::u8_s8:
-		case CastKind::u16_s16:
-		case CastKind::u32_s32:
-		case CastKind::u64_s64:
-		case CastKind::s8_u8:
-		case CastKind::s16_u16:
-		case CastKind::s32_u32:
-		case CastKind::s64_u64:
+		using enum CastKind;
+			// Same size, different signs
+		case u8_s8:
+		case u16_s16:
+		case u32_s32:
+		case u64_s64:
+		case s8_u8:
+		case s16_u16:
+		case s32_u32:
+		case s64_u64:
 			break;
 
-		case CastKind::u8_s16:
-		case CastKind::u8_s32:
-		case CastKind::u8_s64:
-		case CastKind::u8_u16:
-		case CastKind::u8_u32:
-		case CastKind::u8_u64:
-		case CastKind::s8_s16:
-		case CastKind::s8_s32:
-		case CastKind::s8_s64:
-		case CastKind::s8_u16:
-		case CastKind::s8_u32:
-		case CastKind::s8_u64: {
-			I(and_mc, rsp, 0xff);
+			// Unsigned to unsigned smaller
+		case u16_u8:
+		case u32_u8:
+		case u32_u16:
+		case u64_u8:
+		case u64_u16:
+		case u64_u32:
 			break;
-		}
 
-		case CastKind::u16_s32:
-		case CastKind::u16_s64:
-		case CastKind::u16_u32:
-		case CastKind::u16_u64:
-		case CastKind::s16_s32:
-		case CastKind::s16_s64:
-		case CastKind::s16_u32:
-		case CastKind::s16_u64: {
-			I(and_mc, rsp, 0xffff);
+			// Unsigned to signed smaller
+		case u16_s8:
+		case u32_s8:
+		case u32_s16:
+		case u64_s8:
+		case u64_s16:
+		case u64_s32:
 			break;
-		}
 
-		case CastKind::u32_s64:
-		case CastKind::u32_u64:
-		case CastKind::s32_s64:
-		case CastKind::s32_u64: {
-			I(and_mc, rsp, 0xffffffff);
+			// Signed to signed smaller
+		case s16_s8:
+		case s32_s8:
+		case s32_s16:
+		case s64_s8:
+		case s64_s16:
+		case s64_s32:
 			break;
-		}
+
+			// Signed to unsigned smaller
+		case s16_u8:
+		case s32_u8:
+		case s32_u16:
+		case s64_u8:
+		case s64_u16:
+		case s64_u32:
+			break;
+
+			// Unsigned to unsigned, unsigned to signed, bigger
+			// Remove bits that are not part of the value
+		case u8_u16:  case u8_s16: ;
+		case u8_u32:  case u8_s32: ;
+		case u8_u64:  case u8_s64: I(and_mc, rsp, 0xff); break;
+		case u16_u32: case u16_s32:;
+		case u16_u64: case u16_s64:I(and_mc, rsp, 0xffff); break;
+		case u32_u64: case u32_s64:I(and_mc, rsp, 0xffffffff); break;
+			break;
+
+			// Signed to unsigned, signed to signed, bigger
+			// sign extension
+		case s8_u16:  case s8_s16:  I(movsx21_rm, rax, rsp); I(mov2_mr, rsp, rax); break;
+		case s8_u32:  case s8_s32:  I(movsx41_rm, rax, rsp); I(mov4_mr, rsp, rax); break;
+		case s8_u64:  case s8_s64:  I(movsx81_rm, rax, rsp); I(mov8_mr, rsp, rax); break;
+		case s16_u32: case s16_s32: I(movsx42_rm, rax, rsp); I(mov4_mr, rsp, rax); break;
+		case s16_u64: case s16_s64: I(movsx82_rm, rax, rsp); I(mov8_mr, rsp, rax); break;
+		case s32_u64: case s32_s64: I(movsx84_rm, rax, rsp); I(mov8_mr, rsp, rax); break;
+			break;
+
+		case pointer:
+			break;
+
 		default:
 			invalid_code_path("not implemented");
 	}

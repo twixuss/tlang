@@ -45,7 +45,7 @@ struct Scope {
 	List<AstStatement *> statements;
 	HashMap<Span<utf8>, AstDefinition *> definitions;
 	HashMap<Span<utf8>, AstLambda *> functions;
-	AstNode *parent_node = 0;
+	AstNode *node = 0;
 };
 
 extern s32 ast_node_uid_counter;
@@ -64,7 +64,7 @@ struct AstStatement : AstNode {
 struct AstBlock : AstStatement {
 	AstBlock() {
 		kind = Ast_block;
-		scope.parent_node = this;
+		scope.node = this;
 	}
 
 	Scope scope;
@@ -121,7 +121,10 @@ struct AstLiteral : AstExpression {
 	union {
 		BigInt integer;
 		bool Bool;
-		Span<utf8> string;
+		struct {
+			Span<utf8> string;
+			s64 string_data_offset;
+		};
 		utf8 character;
 	};
 
@@ -158,8 +161,8 @@ enum class CallingConvention {
 struct AstLambda : AstExpression {
 	AstLambda() {
 		kind = Ast_lambda;
-		parameter_scope.parent_node = this;
-		body_scope.parent_node = this;
+		parameter_scope.node = this;
+		body_scope.node = this;
 	}
 
 	AstDefinition *definition = 0; // not null if lambda is named
@@ -217,7 +220,7 @@ enum class StructLayout {
 struct AstStruct : AstExpression {
 	AstStruct() {
 		kind = Ast_struct;
-		scope.parent_node = this;
+		scope.node = this;
 	}
 
 	AstDefinition *definition = 0;
@@ -237,8 +240,8 @@ struct AstStruct : AstExpression {
 struct AstIf : AstStatement {
 	AstIf() {
 		kind = Ast_if;
-		true_scope.parent_node = this;
-		false_scope.parent_node = this;
+		true_scope.node = this;
+		false_scope.node = this;
 	}
 
 	AstExpression *condition = 0;
@@ -250,7 +253,7 @@ struct AstIf : AstStatement {
 struct AstWhile : AstStatement {
 	AstWhile() {
 		kind = Ast_while;
-		scope.parent_node = this;
+		scope.node = this;
 	}
 
 	AstExpression *condition = 0;
@@ -357,6 +360,8 @@ enum class CastKind {
 	s64_u16,
 	s64_u32,
 	s64_u64,
+
+	pointer,
 };
 
 struct AstCast : AstExpression {

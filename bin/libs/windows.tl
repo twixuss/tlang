@@ -46,7 +46,7 @@ PCSTR  :: PSTR;
 LPSTR  :: PSTR;
 LPCSTR :: PSTR;
 
-WNDPROC :: #type fn (hwnd : HWND, uMsg : UINT, wParam : WPARAM, lParam : LPARAM) -> LRESULT;
+WNDPROC :: *#type fn (hwnd : HWND, uMsg : UINT, wParam : WPARAM, lParam : LPARAM) -> LRESULT;
 
 #layout_c
 

@@ -35,6 +35,13 @@ enum class InstructionKind : u64 {
 	mov8_mc,
 	mov8_mr,
 
+	movsx21_rm,
+	movsx41_rm,
+	movsx81_rm,
+	movsx42_rm,
+	movsx82_rm,
+	movsx84_rm,
+
 	push_r,
 	push_c,
 	push_m,
@@ -110,6 +117,9 @@ enum class InstructionKind : u64 {
 	xor_mc,
 	xor_mr,
 
+	cmp_al_bl,
+	cmp_ax_bx,
+	cmp_eax_ebx,
 	cmp_rax_rbx,
 
 	call_constant,
@@ -160,6 +170,13 @@ struct Instruction {
 		struct { Register d; Register s; } mov8_rm;
 		struct { Register d; s64      s; } mov8_mc;
 		struct { Register d; Register s; } mov8_mr;
+
+		struct { Register d, s; } movsx21_rm;
+		struct { Register d, s; } movsx41_rm;
+		struct { Register d, s; } movsx81_rm;
+		struct { Register d, s; } movsx42_rm;
+		struct { Register d, s; } movsx82_rm;
+		struct { Register d, s; } movsx84_rm;
 
 		struct { s64      s; } push_c;
 		struct { Register s; } push_r;
@@ -238,10 +255,10 @@ struct Instruction {
 		struct { Register d; s64      s; } xor_mc;
 		struct { Register d; Register s; } xor_mr;
 
-		struct {
-			Register dst_reg;
-			Comparison comparison;
-		} cmp_rax_rbx;
+		struct { Register dst_reg; Comparison comparison; } cmp_rax_rbx;
+		struct { Register dst_reg; Comparison comparison; } cmp_eax_ebx;
+		struct { Register dst_reg; Comparison comparison; } cmp_ax_bx;
+		struct { Register dst_reg; Comparison comparison; } cmp_al_bl;
 
 
 		struct {

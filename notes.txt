@@ -1,3 +1,5 @@
+Member access operator (dot) parsing right now is implemented as a special case binary operator.
+Maybe it makes more sense to do it in `parse_sub_expression_no_cast`?
 
 Should we check that all control paths return a value or just default initialize a return value by default?
 

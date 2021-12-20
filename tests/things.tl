@@ -8,7 +8,7 @@ AStruct :: struct {
 	count : uint;
 }
 
-main :: fn () s32 {
+main :: fn () -> s32 {
     standard_output_handle = GetStdHandle(STD_OUTPUT_HANDLE);
 
     str : string = "Hello World!\n";
@@ -73,11 +73,11 @@ main :: fn () s32 {
 	a_string.data = "A STRING".data;
 	print(a_string);
 
-    return x;
+    return x as s32;
 }
 
 x :: 42;
 
-print :: fn (str : string) {
+print :: fn (str: string) {
     WriteConsoleA(standard_output_handle, str.data, str.count, null, null);
 }

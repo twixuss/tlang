@@ -13,6 +13,10 @@
             <Item Name="[value]" Condition="kind==Ast_if                  " Optional="true">*(AstIf                 *)this</Item>
             <Item Name="[value]" Condition="kind==Ast_unary_operator      " Optional="true">*(AstUnaryOperator      *)this</Item>
             <Item Name="[value]" Condition="kind==Ast_expression_statement" Optional="true">*(AstExpressionStatement*)this</Item>
+            <Item Name="[value]" Condition="kind==Ast_while               " Optional="true">*(AstWhile              *)this</Item>
+            <Item Name="[value]" Condition="kind==Ast_subscript           " Optional="true">*(AstSubscript          *)this</Item>
+            <Item Name="[value]" Condition="kind==Ast_block               " Optional="true">*(AstBlock              *)this</Item>
+            <Item Name="[value]" Condition="kind==Ast_cast                " Optional="true">*(AstCast               *)this</Item>
         </Expand>
     </Type>
     <Type Name="Token">
