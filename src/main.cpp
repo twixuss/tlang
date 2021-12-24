@@ -1,22 +1,39 @@
-﻿#define TL_ENABLE_PROFILER 1
-#define TL_IMPL
+﻿#define TL_IMPL
 #include <tl/main.h>
 #include <tl/cpu.h>
 #include <tl/time.h>
 #include <tl/hash_set.h>
-#include <ast.h>
-#include <output/nasm.h>
+#include "ast.h"
+#include "output/nasm_x86_flat.h"
+#include "output/nasm_x86_64_windows.h"
 #include "../dep/cppcoro/include/cppcoro/generator.hpp"
 #include "extern.h"
 #include "bytecode.h"
 #include "print_ast.h"
 #include <string>
+#include <algorithm>
+
+#define COUNT_ALLOCATIONS 0
 
 ThreadPool *thread_pool;
 
-bool ensure_addressable(struct Reporter *reporter, AstExpression *expression);
+u32 debug_reports_made = 0;
+u32 debug_parser_resets = 0;
+
+struct Parser;
+struct Reporter;
+
+struct SourceFileInfo {
+	Span<utf8> path;
+	Span<utf8> source;
+	List<Span<utf8>> lines;
+};
+
+SourceFileInfo &get_source_info(utf8 *location);
+bool ensure_addressable(Reporter *reporter, AstExpression *expression);
 AstExpression *make_pointer_type(AstExpression *type);
 bool is_constant(AstExpression *expression);
+AstDefinition *parse_definition(Span<utf8> name, Parser *parser);
 
 void print_help() {
 	print(R"(Usage:
@@ -25,10 +42,41 @@ void print_help() {
 }
 
 u32 get_line_number(utf8 *from) {
-	u32 result = 1;
-	while (*--from != 0)
-		result += (*from == '\n');
-	return result;
+	auto lines = get_source_info(from).lines;
+
+	// lines will be empty at lexing time.
+	// So if an error occurs at lexing time,
+	// slower algorithm is executed.
+	if (lines.count) {
+#if 1
+		auto begin = lines.data;
+		auto end = lines.data + lines.count;
+		while (1) {
+			auto line = begin + (end - begin) / 2;
+			if (line->data <= from && from < line->data + line->count) {
+				return line - lines.data + 1;
+			}
+			if (from < line->data) {
+				end = line;
+			} else {
+				begin = line + 1;
+			}
+		}
+		invalid_code_path();
+#else
+		for (auto &line : lines) {
+			if (line.begin() <= from && from < line.end()) {
+				return &line - lines.data;
+			}
+		}
+		invalid_code_path();
+#endif
+	} else {
+		u32 result = 1;
+		while (*--from != 0)
+			result += (*from == '\n');
+		return result;
+	}
 }
 
 u32 get_column_number(utf8 *from) {
@@ -137,20 +185,15 @@ void print_source_line(Span<utf8> location) {
 	print("\n\n");
 }
 
-struct SourceFileInfo {
-	Span<utf8> path;
-	Span<utf8> source;
-};
-
 List<SourceFileInfo> sources;
 
-Span<utf8> get_source_path(utf8 *location) {
-	for (auto source : sources) {
-		if (source.source.begin() <= location && location <= source.source.end()) {
-			return source.path;
+SourceFileInfo &get_source_info(utf8 *location) {
+	for (auto &source : sources) {
+		if (source.source.begin() <= location && location < source.source.end()) {
+			return source;
 		}
 	}
-	return u8"unknown source"s;
+	invalid_code_path();
 }
 
 struct Report {
@@ -160,7 +203,7 @@ struct Report {
 
 List<utf8> where(utf8 *location) {
 	if (location) {
-		return format(u8"%:%:%", get_source_path(location), get_line_number(location), get_column_number(location));
+		return format(u8"%:%:%", get_source_info(location).path, get_line_number(location), get_column_number(location));
 	} else {
 		return {};
 	}
@@ -175,6 +218,7 @@ Report make_report(Span<utf8> location, Span<utf8> severity, char const *format_
 	} else {
 		r.message = format(u8"%: %", severity, format(format_string, args...));
 	}
+	atomic_increment(&debug_reports_made);
 	return r;
 }
 
@@ -250,8 +294,7 @@ struct Reporter {
 
 
 struct Lexer {
-	static constexpr u32 block_capacity = 4096;
-	BlockList<Token, block_capacity> tokens;
+	BlockList<Token> tokens;
 
 	using Iterator = decltype(tokens)::Iterator;
 
@@ -268,7 +311,7 @@ struct Lexer {
 	bool success = false;
 	Reporter *reporter;
 
-
+	SourceFileInfo *source_info;
 	Buffer source_buffer;
 	Span<utf8> source;
 };
@@ -323,6 +366,15 @@ bool lexer_function(Lexer *lexer) {
 		//	debug_break();
 	};
 
+	utf8 *line_start = current_p;
+	List<Span<utf8>> lines;
+	lines.reserve(lexer->source.count / 32); // Guess 32 bytes per line on average
+
+	auto push_line = [&] {
+		lines.add({line_start, current_p + 1});
+		line_start = current_p + 1;
+	};
+
 	while (1) {
 	_continue:
 		token.string.data = current_p;
@@ -331,16 +383,20 @@ bool lexer_function(Lexer *lexer) {
 	nc:
 		switch (c) {
 			case '\0':
-				lexer->success = true;
-				return true;
+				goto lexer_success;
 			case ' ':
-			case '\n':
 			case '\r':
 			case '\t':
 				token.string.data += 1;
 				if (!next_char()) {
-					lexer->success = true;
-					return true;
+					goto lexer_success;
+				}
+				goto nc;
+			case '\n':
+				push_line();
+				token.string.data += 1;
+				if (!next_char()) {
+					goto lexer_success;
 				}
 				goto nc;
 
@@ -363,8 +419,7 @@ bool lexer_function(Lexer *lexer) {
 				token.kind = (TokenKind)c;
 				token.string.count = 1;
 				if (!next_char()) {
-					lexer->success = true;
-					return true;
+					goto lexer_success;
 				}
 				push_token();
 				break;
@@ -463,18 +518,65 @@ bool lexer_function(Lexer *lexer) {
 				if (next_char()) {
 					if (c == '/') {
 						while (next_char()) {
-							if (c == '\n')
+							if (c == '\n') {
 								break;
+							}
 						}
 						continue;
 					} else if (c == '*') {
-						u32 deepness = 1;
+						auto closed = [&] {
+							if (!next_char()) {
+								token.string.count = 2;
+								lexer->reporter->error(token.string, "Unclosed comment block (end of file)");
+								return false;
+							}
+							return true;
+						};
+#define check_closed \
+	if (!closed()) { \
+		return false; \
+	}
 
-						if (!next_char()) {
-							token.string.count = 2;
-							lexer->reporter->error(token.string, "Unclosed comment block (end of file)");
-							return false;
+						u32 deepness = 0;
+
+						check_closed;
+
+						while (1) {
+							if (c == '*') {
+								check_closed;
+								if (c == '/') {
+									next_char();
+									if (deepness == 0) {
+										goto end_block_comment;
+									}
+									deepness -= 1;
+									if (c == '\0') {
+										lexer->reporter->error(token.string, "Unclosed comment block (end of file)");
+										return false;
+									}
+								} else if (c == '\n') {
+									push_line();
+								}
+							} else if (c == '/') {
+								check_closed;
+								if (c == '*') {
+									deepness += 1;
+								} else if (c == '\n') {
+									push_line();
+								}
+							} else if (c == '\n') {
+								push_line();
+								check_closed;
+							} else {
+								check_closed;
+							}
 						}
+					end_block_comment:
+						continue;
+
+
+
+						// Old method that does not fill `lines` list.
 
 					continue_search:
 						auto comment_begin_or_end = find(Span(current_p, lexer->source.end()), {u8"*/"s, u8"/*"s});
@@ -619,6 +721,9 @@ bool lexer_function(Lexer *lexer) {
 			}
 		}
 	}
+
+lexer_success:
+	lexer->source_info->lines = lines;
 	lexer->success = true;
 	return true;
 }
@@ -646,6 +751,7 @@ struct Parser {
 	}
 
 	[[nodiscard]] bool reset(Parser checkpoint) {
+		atomic_increment(&debug_parser_resets);
 		if (scope_count != checkpoint.scope_count) {
 			reporter->error("Failed to recover parser state!");
 			return false;
@@ -695,8 +801,6 @@ struct Parser {
 	}
 };
 
-#if 1
-
 AstLiteral *make_integer(BigInt value, AstExpression *type = &type_unsized_integer) {
 	auto i = new_ast<AstLiteral>();
 	i->literal_kind = LiteralKind::integer;
@@ -708,15 +812,6 @@ AstLiteral *make_integer(BigInt value, AstExpression *type = &type_unsized_integ
 AstLiteral *make_integer(u64 value, AstExpression *type = &type_unsized_integer) {
 	return make_integer(make_big_int(value), type);
 }
-#else
-AstLiteral *make_integer(u64 value) {
-	auto i = new_ast<AstLiteral>();
-	i->literal_kind = LiteralKind::integer;
-	i->integer = value;
-	return i;
-}
-
-#endif
 
 AstLiteral *make_boolean(bool value) {
 	auto i = new_ast<AstLiteral>();
@@ -1081,47 +1176,34 @@ AstExpression *parse_sub_expression_no_cast(Parser *parser) {
 				if (!parser->next_not_end())
 					return 0;
 
-	#if 1
-				auto checkpoint = parser->checkpoint();
-				lambda->return_parameter = parse_definition(parser);
-				if (lambda->return_parameter) {
-					lambda->return_parameter->is_return_parameter = true;
-					lambda->return_parameter->parent_block = lambda;
-				} else {
-					if (!parser->reset(checkpoint))
+				//
+				// Parse first identifier manually to reduce parser resets
+				//
+				auto first_retparam_token = parser->token;
+				if (parser->token->kind == Token_identifier) {
+					auto ident = parser->token->string;
+					if (!parser->next_not_end()) {
 						return 0;
+					}
 
+					if (parser->token->kind == ':') {
+						lambda->return_parameter = parse_definition(ident, parser);
+						if (!lambda->return_parameter) {
+							return 0;
+						}
+						lambda->return_parameter->is_return_parameter = true;
+						lambda->return_parameter->parent_block = lambda;
+					} else {
+						parser->token = first_retparam_token;
+						goto parse_retparam_expression;
+					}
+				} else {
+				parse_retparam_expression:
 					auto return_type = parse_expression(parser);
 					if (!return_type)
 						return 0;
-
 					lambda->return_parameter = make_retparam(parser, return_type);
 				}
-	#else
-				// Parse multiple return parameters
-				for (;;) {
-					auto definition = parse_definition(parser);
-					if (!definition)
-						return 0;
-
-					definition->is_return_parameter = true;
-					definition->parent_block = lambda;
-
-					lambda->return_parameters.add(definition);
-
-					if (parser->token->kind == '{' || parser->token->kind == '=>') {
-						break;
-					}
-
-					if (!parser->expect(','))
-						return 0;
-
-					if (!parser->next_not_end())
-						return 0;
-				}
-				if (!parser->next_not_end())
-					return 0;
-	#endif
 			} else {
 				// TODO: this probably will be executed a lot, so maybe this should be cached ???
 				lambda->return_parameter = make_retparam(parser, &type_void);
@@ -1156,8 +1238,6 @@ AstExpression *parse_sub_expression_no_cast(Parser *parser) {
 					return 0;
 				}
 			}
-
-			lambda->name = format(u8"unnamed%", lambda->uid);
 
 			auto previous_lambda = parser->current_lambda;
 			parser->current_lambda = lambda;
@@ -1601,7 +1681,7 @@ parse_subscript:
 			binop->right = parse_sub_expression(parser);
 		}
 		if (!binop->right) {
-			parser->reporter->info("While parsing binary operator '%'", binary_operator_string(binop->operation));
+			parser->reporter->info("While parsing binary operator '%'", operator_string(binop->operation));
 			return 0;
 		}
 
@@ -1760,7 +1840,6 @@ AstDefinition *parse_definition(Span<utf8> name, Parser *parser) {
 		switch (expression->kind) {
 			case Ast_lambda: {
 				auto lambda = (AstLambda *)expression;
-				lambda->name.set(definition->name);
 				lambda->definition = definition;
 
 				scoped_lock(parser->current_scope);
@@ -2060,7 +2139,6 @@ LinearSet<Span<utf8>> parsed_files;
 void parse_file(Span<utf8> path) {
 	timed_function();
 
-	// TODO: normalize path
 	if (find(parsed_files, path)) {
 		return;
 	}
@@ -2093,11 +2171,13 @@ void parse_file(Span<utf8> path) {
 
 	context->parser.reporter = context->lexer.reporter = &context->reporter;
 
-	sources.add({path, source});
+	auto source_info = &sources.add({path, source});
+
+	context->lexer.source_info = source_info;
 
 	context->work_queue = make_work_queue(*thread_pool);
 
-	context->work_queue.push([context]() {
+	//context->work_queue.push([context]() {
 		if (!lexer_function(&context->lexer)) {
 			atomic_set_if_equals(failed_lexer, &context->lexer, (Lexer *)0);
 			return;
@@ -2106,16 +2186,12 @@ void parse_file(Span<utf8> path) {
 			atomic_set_if_equals(failed_parser, &context->parser, (Parser *)0);
 			return;
 		}
-	});
+	//});
 
 }
 
-f64 parser_time;
 bool parser_function(Parser *parser) {
 	timed_function();
-
-	auto timer = create_precise_timer();
-	defer { parser_time = reset(timer); };
 
 	auto lexer = parser->lexer;
 
@@ -2281,59 +2357,8 @@ struct IntegerInfo {
 IntegerInfo integer_infos[8];
 
 void report_not_convertible(Reporter *reporter, AstExpression *expression, AstExpression *type) {
+	//reporter->error(expression->location, "Expression of type\n    % is not implicitly convertible to\n    %\n", type_to_string(expression->type), type_to_string(type));
 	reporter->error(expression->location, "Expression of type '%' is not implicitly convertible to '%'", type_to_string(expression->type), type_to_string(type));
-}
-
-/*
-bool convertible(AstExpression *expression, AstExpression *type) {
-	if (type->kind == Ast_unary_operator) {
-		auto unop = (AstUnaryOperator *)type;
-		if (unop->operation == '*') {
-			if (expression->kind == Ast_literal) {
-				auto literal = (AstLiteral *)expression;
-				if (literal->literal_kind == LiteralKind::integer) {
-					if (literal->integer == 0ib) {
-						return true;
-					}
-				}
-			}
-		}
-	} else {
-		auto Struct = get_struct(type);
-		if (Struct) {
-			if (Struct == type) {
-				return true;
-			} else if (Struct == &type_string) {
-				return types_match(expression->type, &type_string);
-			} else if (
-				Struct == &type_u8 ||
-				Struct == &type_u16 ||
-				Struct == &type_u32 ||
-				Struct == &type_u64 ||
-				Struct == &type_s8 ||
-				Struct == &type_s16 ||
-				Struct == &type_s32 ||
-				Struct == &type_s64
-			) {
-				return expression->type == &type_unsized_integer;
-			}
-		}
-	}
-	return false;
-}
-*/
-
-bool is_integer(AstExpression *type) {
-	return
-		types_match(type, &type_unsized_integer) ||
-		types_match(type, &type_u8) ||
-		types_match(type, &type_u16) ||
-		types_match(type, &type_u32) ||
-		types_match(type, &type_u64) ||
-		types_match(type, &type_s8) ||
-		types_match(type, &type_s16) ||
-		types_match(type, &type_s32) ||
-		types_match(type, &type_s64);
 }
 
 void harden_type(AstExpression *expression) {
@@ -3011,7 +3036,7 @@ cppcoro::generator<TypecheckResult> typecheck(TypecheckState *state, AstExpressi
 			TYPECHECK(bin->left);
 
 			auto report_type_mismatch = [&] {
-				state->reporter.error(bin->location, "Can't use binary '%' on types '%' and '%'", binary_operator_string(bin->operation), type_to_string(bin->left->type), type_to_string(bin->right->type));
+				state->reporter.error(bin->location, "Can't use binary '%' on types '%' and '%'", operator_string(bin->operation), type_to_string(bin->left->type), type_to_string(bin->right->type));
 			};
 
 			if (bin->operation == '.') {
@@ -3263,7 +3288,7 @@ cppcoro::generator<TypecheckResult> typecheck(TypecheckState *state, AstExpressi
 
 			if (is_type(unop->expression)) {
 				if (unop->operation != '*') {
-					state->reporter.error(unop->location, "Unary operator '%' can not be applied to a type expression", unop->location);
+					state->reporter.error(unop->location, "Unary operator '%' can not be applied to a type expression", operator_string(unop->operation));
 					co_yield TypecheckResult::fail;
 				}
 				unop->type = &type_type;
@@ -3386,7 +3411,9 @@ cppcoro::generator<TypecheckResult> typecheck(TypecheckState *state, AstExpressi
 			};
 
 			if (cast->expression->type == &type_unsized_integer) {
-				if (::is_integer(cast->type)) {
+				if (::is_integer(cast->type) || (cast->type->kind == Ast_unary_operator && ((AstUnaryOperator *)cast->type)->operation == '*')) {
+					// Replace casts of literals with literals
+
 					expression = cast->expression;
 					expression->type = cast->type;
 					// LEAK: cast can be freed
@@ -3447,16 +3474,245 @@ void add_member(AstStruct &destination, AstExpression *type, Span<utf8> name, As
 
 static void write_test_source() {
 	StringBuilder test;
+	append(test, R"(
+main :: fn () {
+	main15();
+}
+)");
+#if 1
+	for (u32 i = 0; i < 256*32; ++i) {
+		append_format(test, R"FOOBAR(/*
+import "windows.tl"
+
+standard_output_handle : HANDLE;
+global_string : string;
+
+AStruct :: struct {
+	data : *void;
+	count : uint;
+}
+
+main :: fn () -> s32 {
+    standard_output_handle = GetStdHandle(STD_OUTPUT_HANDLE);
+
+    str : string = "Hello World!\n";
+
+    WriteConsoleA(standard_output_handle, str.data, str.count, null, null);
+    WriteConsoleA(standard_output_handle, "Hello World!\n".data, 13, null, null);
+    print("Hello World!\n");
+    print(str);
+
+	if true {
+		dd : u64; // block-local variable
+		print("true\n");
+	}
+
+	if 0 == 0 { print("0 is 0\n"); }
+	else      { print("0 is not 0\n"); }
+
+
+	if 1 < 2 print("1 is less than 2\n");
+
+	if true print("true\n");
+	else  { print("false\n"); }
+
+	if false { print("true\n"); }
+	else       print("false\n");
+
+	if 3 >= 0 print("3 is >= 0\n");
+	else      print("3 is not >= 0\n");
+
+	i := 10;
+
+	while i > 0 {
+		j := i;
+		while j > 0 {
+			print("*");
+			j = j - 1;
+		}
+		print("\n");
+		i = i - 1;
+	}
+
+	STR := "my file.txt\0";
+	print(STR);
+	file := CreateFileA(STR.data, GENERIC_WRITE, 0, null, CREATE_ALWAYS, /*FILE_ATTRIBUTE_NORMAL*/ 0, null);
+
+	content := "Hello World!";
+	WriteFile(file, content.data, content.count, null, null);
+
+	global_string = "A global string";
+	print(global_string);
+
+	local_string : string;
+	local_string = "a local string";
+	print(local_string);
+
+	a_struct : AStruct;
+	a_struct.count = 7;
+	a_struct.data = "AStruct".data;
+    WriteConsoleA(standard_output_handle, a_struct.data, a_struct.count, null, null);
+
+	a_string : string;
+	a_string.count = 7;
+	a_string.data = "A STRING".data;
+	print(a_string);
+
+    return x as s32;
+}
+
+x :: 42;
+
+print :: fn (str: string) {
+    WriteConsoleA(standard_output_handle, str.data, str.count, null, null);
+}
+*/
+
+
+import "std.tl"
+
+main% :: fn () {
+	class_name := "window_class\0".data;
+	window_name := "hello window\0".data;
+
+	hInstance := GetModuleHandleA(null);
+
+	wc : WNDCLASSEXA;
+	wc.hInstance = hInstance;
+	wc.cbSize = #sizeof WNDCLASSEXA;
+	wc.lpfnWndProc = fn #stdcall (hwnd : HWND, uMsg : UINT, wParam : WPARAM, lParam : LPARAM) -> LRESULT {
+		if uMsg == WM_DESTROY {
+			PostQuitMessage(0);
+			return 0;
+		}
+		return DefWindowProcA(hwnd, uMsg, wParam, lParam);
+	};
+	//wc.lpfnWndProc = &DefWindowProcA;
+	wc.lpszClassName = class_name;
+	wc.hCursor = LoadCursorA(null, IDC_ARROW);
+	if RegisterClassExA(&wc) != 0 {
+		print_string("Class created!\n");
+	} else {
+		print_string("Class Failed!\n");
+	}
+
+	window := CreateWindowExA(
+		0, class_name, window_name, WS_OVERLAPPEDWINDOW | WS_VISIBLE,
+		CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, null, null, hInstance, null
+	);
+
+	if window != null {
+		print_string("Window Success!\n");
+	} else {
+		print_string("Window Fail!\n");
+	}
+
+	msg : MSG;
+
+	while true {
+		while PeekMessageA(&msg, null, 0, 0, PM_REMOVE) != 0 {
+			if msg.message == WM_QUIT
+				return;
+			TranslateMessage(&msg);
+			DispatchMessageA(&msg);
+		}
+	}
+
+}
+/*
+foo :: fn (x: int) -> int {
+	if x == 0 {
+		main();
+		return 0;
+	}
+	return x;
+}
+
+main :: fn () -> int {
+	return foo(12);
+}
+*/
+/*
+foo :: fn (x: u8) -> u8 {
+	return x;
+}
+
+main :: fn () -> int {
+	a :: "HILLO";
+	return foo(a.count as u8);
+}
+*/
+
+/*
+import "std.tl"
+main :: fn () {
+	print_string("hello");
+}
+*/
+
+/*
+
+foo :: fn (data : *u8, size : uint) {
+}
+
+main :: fn () -> int {
+	hello :: "hello";
+	foo(hello.data, hello.count);
+}
+
+*/
+
+/*
+import "std.tl"
+
+x :: u8;
+
+main :: fn () {
+	a : x;
+	print_hex(&a);
+	print_char('\n');
+
+	{
+		b : x;
+		print_hex(&b);
+		print_char('\n');
+		c : x;
+		print_hex(&c);
+		print_char('\n');
+
+		{
+			d : x;
+			print_hex(&d);
+			print_char('\n');
+		}
+	}
+
+	e : x;
+	print_hex(&e);
+	print_char('\n');
+}
+
+*/)FOOBAR", i);
+	}
+#else
 	append_format(test, u8"♥0 :: fn (☺: s32, ☻: s32) s32 { return ☺ + ☻; } /* ♦♣♠•◘○ this is a /* nested */ comment ♦♣♠•◘○ */\n");
 	for (int i = 1; i < 4096; ++i) {
 		append_format(test, u8"♥% :: fn (☺: s32, ☻: s32) s32 { return ♥%(☺, ☻); } /* ♦♣♠•◘○ this is a /* nested */ comment ♦♣♠•◘○ */\n", i, i - 1);
 	}
-	write_entire_file("test.tl"s, as_bytes(to_string(test)));
+#endif
+	write_entire_file("performance_test.tl"s, as_bytes(to_string(test)));
 }
+
+#define ENUMERATE_OUTPUTS(x) \
+x(nasm_x86_flat) \
+x(nasm_x86_64_windows) \
+
 enum class Output {
 	none,
 	c,
-	nasm,
+#define x(name) name,
+	ENUMERATE_OUTPUTS(x)
+#undef x
 };
 struct ParsedArguments {
 	Output output = {};
@@ -3502,13 +3758,16 @@ ParsedArguments parse_arguments(Span<Span<utf8>> arguments) {
 				print("Expected an argument after --output.\n");
 				return result;
 			}
-			using enum Output;
-				 if (arguments[i] == u8"none"s) result.output = none;
-			else if (arguments[i] == u8"c"s   ) result.output = c;
-			else if (arguments[i] == u8"nasm"s) result.output = nasm;
+#define CASE(x) else if (arguments[i] == u8#x##s) result.output = Output::x;
+
+			if (false);
+			ENUMERATE_OUTPUTS(CASE)
 			else {
 				print(Print_error, "Unknown output type '%'\n", arguments[i]);
 			}
+
+#undef CASE
+
 		} else {
 			result.source_files.add(arguments[i]);
 		}
@@ -3519,21 +3778,32 @@ ParsedArguments parse_arguments(Span<Span<utf8>> arguments) {
 }
 
 s32 tl_main(Span<Span<utf8>> arguments) {
+	auto global_timer = create_precise_timer();
+	defer { print("Execution finished in % ms\n", reset(global_timer) * 1000); };
+
 	//CreateWindowExA(0, (char *)1, (char *)2, 3, 4, 5, 6, 7, (HWND)8, (HMENU)9, (HINSTANCE)10, (void *)11);
 
 	set_console_encoding(Encoding_utf8);
 
 	defer { print("Peak memory usage: %\n", format_bytes(get_memory_info().peak_usage)); };
 
-	//write_test_source();
+	// write_test_source();
 
 	init_ast_allocator();
 	extern_init();
+
+#if COUNT_ALLOCATIONS
+	static HashMap<std::source_location, u32> allocation_sizes;
+	allocation_sizes.allocator = os_allocator;
+#endif
 
 	default_allocator = current_allocator = {
 		[](AllocatorMode mode, void *data, umm old_size, umm new_size, umm align, std::source_location location, void *) -> void * {
 			switch (mode) {
 				case Allocator_allocate: {
+#if COUNT_ALLOCATIONS
+					allocation_sizes.get_or_insert(location) += new_size;
+#endif
 					return my_allocate(new_size, align);
 				}
 				case Allocator_reallocate: {
@@ -3772,6 +4042,9 @@ restart_main:
 
 	timed_end("setup"s);
 
+	print("Parsing...                      \r");
+	auto parser_timer = create_precise_timer();
+
 	parse_file(concatenate(executable_directory, u8"\\libs\\preload.tl"s));
 
 	for (auto path : args.source_files) {
@@ -3791,9 +4064,11 @@ restart_main:
 		return 1;
 	}
 
+	auto parser_time = reset(parser_timer);
 
-	f32 typecheck_time;
+	f32 typecheck_time = 0;
 	if (!args.no_typecheck) {
+		print("Typechecking...                 \r");
 		auto timer = create_precise_timer();
 		defer { typecheck_time = reset(timer); };
 
@@ -3810,15 +4085,13 @@ restart_main:
 				auto result = *state.generator_iterator;
 				switch (result) {
 					case TypecheckResult::success:
-						state.finished = true;
-						typechecks_finished++;
-						destruct(state); // This must be done to run all defers/destructors in the coroutine
-						break;
 					case TypecheckResult::fail:
 						state.finished = true;
 						typechecks_finished++;
-						state.reporter.print_all();
-						fail = true;
+						if (result == TypecheckResult::fail) {
+							state.reporter.print_all();
+							fail = true;
+						}
 						destruct(state); // This must be done to run all defers/destructors in the coroutine
 						break;
 					case TypecheckResult::wait:
@@ -3886,21 +4159,76 @@ restart_main:
 		return 1;
 	}
 
+	print("Building bytecode...            \r");
+	auto bytecode_timer = create_precise_timer();
 
 	auto bytecode = build_bytecode();
 
-	switch (args.output) {
-		using enum Output;
-		//case c:    output_c();    break;
-		case none:
-		case nasm: output_nasm(bytecode); break;
+	auto bytecode_time = reset(bytecode_timer);
+
+	f32 target_code_generation_time = 0;
+
+	PreciseTimer target_code_generation_timer;
+	if (args.output != Output::none) {
+		print("Generating target code...       \r");
+		target_code_generation_timer = create_precise_timer();
 	}
 
+	switch (args.output) {
+		//case c:    output_c();    break;
+		case Output::none: break;
+
+#define CASE(x) case Output::x: output_##x(bytecode); break;
+
+			ENUMERATE_OUTPUTS(CASE);
+		default:
+			invalid_code_path();
+
+#undef CASE
+	}
+
+	if (args.output != Output::none) {
+		target_code_generation_time = reset(target_code_generation_timer);
+	}
+
+	print("                                \r");
 	//print("Lexing took % ms. Tokens processed: %. Bytes processed: %.\n", lexer_time * 1000, lexer.tokens_lexed, format_bytes(source.count));
 	print("Parsing took % ms.\n", parser_time * 1000);
 	print("Type checking took % ms.\n", typecheck_time * 1000);
+	print("Bytecode building took % ms.\n", bytecode_time * 1000);
+	if (target_code_generation_time) {
+		print("Target code generation took % ms.\n", target_code_generation_time * 1000);
+	}
 	//print("typechecked_globals_mutex_lock_count: %\n", typechecked_globals_mutex_lock_count);
 
+	extern u32 debug_allocation_blocks;
+
+	print("debug_reports_made: %\n", debug_reports_made);
+	print("debug_parser_resets: %\n", debug_parser_resets);
+	print("debug_allocation_blocks: %\n", debug_allocation_blocks);
+
+	print("Allocations:\n");
+
+#if COUNT_ALLOCATIONS
+	struct AllocationInfo {
+		std::source_location location;
+		u32 size;
+	};
+
+	List<AllocationInfo> allocations;
+
+	for_each(allocation_sizes, [&](std::source_location location, u32 size) {
+		allocations.add({location, size});
+	});
+
+	std::sort(allocations.begin(), allocations.end(), [](auto a, auto b) {
+		return a.size > b.size;
+	});
+
+	for (auto a : allocations) {
+		print("%: %\n", a.location, format_bytes(a.size));
+	}
+#endif
 	return 0;
 }
 

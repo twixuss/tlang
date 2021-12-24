@@ -142,7 +142,11 @@ void append_type(StringBuilder &builder, AstExpression *type, bool silent_error)
 		case Ast_lambda: {
 			auto lambda = (AstLambda *)type;
 
-			append(builder, "fn (");
+			append(builder, "fn ");
+			switch (lambda->convention) {
+				case CallingConvention::stdcall: append(builder, "#stdcall "); break;
+			}
+			append(builder, "(");
 			for (auto &parameter : lambda->parameters) {
 				if (&parameter != lambda->parameters.data) {
 					append(builder, ", ");
@@ -293,6 +297,9 @@ bool types_match_ns(AstExpression *a, AstExpression *b) {
 				return false;
 		}
 
+		if (al->convention != bl->convention)
+			return false;
+
 		return true;
 	}
 
@@ -334,13 +341,15 @@ Mutex allocation_mutex;
 
 umm ast_allocation_block_size;
 
+u32 debug_allocation_blocks = 0;
+
 void new_ast_block() {
 	AllocationBlock block;
 	block.size = ast_allocation_block_size;
 	block.cursor = block.base = os_allocator.allocate<u8>(ast_allocation_block_size);
 	ast_allocation_blocks.add(block);
 	last_allocation_block_index += 1;
-	ast_allocation_block_size *= 2;
+	atomic_increment(&debug_allocation_blocks);
 }
 
 void init_ast_allocator() {
@@ -348,6 +357,7 @@ void init_ast_allocator() {
 	ast_allocation_block_size = 1024*1024;
 	last_allocation_block_index = -1;
 	new_ast_block();
+	ast_allocation_block_size *= 2;
 }
 
 void *my_allocate(umm size, umm align) {
@@ -358,6 +368,10 @@ retry:
 
 	u8 *target = (u8 *)(((umm)block->cursor + align - 1) & ~(align - 1));
 	if ((u8 *)block->base + block->size - target < size) {
+		ast_allocation_block_size *= 2;
+		while (ast_allocation_block_size < size + align - 1) {
+			ast_allocation_block_size *= 2;
+		}
 		new_ast_block();
 		goto retry;
 	}
@@ -369,7 +383,7 @@ retry:
 
 AstLambda *main_lambda;
 
-Span<utf8> binary_operator_string(BinaryOperation op) {
+Span<utf8> operator_string(u64 op) {
 	switch (op) {
 		case '+': return u8"+"s;
 		case '-': return u8"-"s;
@@ -401,4 +415,27 @@ Span<utf8> binary_operator_string(BinaryOperation op) {
 		case '<<=': return u8"<<="s;
 	}
 	invalid_code_path();
+}
+
+// TODO: can types_match be replaced with ==   ???
+bool is_integer(AstExpression *type) {
+	return
+		types_match(type, &type_unsized_integer) ||
+		types_match(type, &type_u8) ||
+		types_match(type, &type_u16) ||
+		types_match(type, &type_u32) ||
+		types_match(type, &type_u64) ||
+		types_match(type, &type_s8) ||
+		types_match(type, &type_s16) ||
+		types_match(type, &type_s32) ||
+		types_match(type, &type_s64);
+}
+
+// TODO: can types_match be replaced with ==   ???
+bool is_signed(AstExpression *type) {
+	return
+		types_match(type, &type_s8) ||
+		types_match(type, &type_s16) ||
+		types_match(type, &type_s32) ||
+		types_match(type, &type_s64);
 }

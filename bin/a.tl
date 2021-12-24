@@ -85,16 +85,7 @@ print :: fn (str: string) {
 }
 */
 
-
 import "std.tl"
-
-wnd_proc :: fn #stdcall (hwnd : HWND, uMsg : UINT, wParam : WPARAM, lParam : LPARAM) -> LRESULT {
-	if uMsg == WM_DESTROY {
-		PostQuitMessage(0);
-		return 0;
-	}
-	return DefWindowProcA(hwnd, uMsg, wParam, lParam);
-}
 
 main :: fn () {
 	class_name := "window_class\0".data;
@@ -105,14 +96,24 @@ main :: fn () {
 	wc : WNDCLASSEXA;
 	wc.hInstance = hInstance;
 	wc.cbSize = #sizeof WNDCLASSEXA;
-	wc.lpfnWndProc = &wnd_proc;
+	wc.lpfnWndProc = fn #stdcall (hwnd : HWND, uMsg : UINT, wParam : WPARAM, lParam : LPARAM) -> LRESULT {
+		// print_int(uMsg);
+		if uMsg == WM_DESTROY {
+			PostQuitMessage(0);
+			return 0;
+		}
+		return DefWindowProcA(hwnd, uMsg, wParam, lParam);
+	};
 	//wc.lpfnWndProc = &DefWindowProcA;
 	wc.lpszClassName = class_name;
+	wc.hCursor = LoadCursorA(null, IDC_ARROW);
 	if RegisterClassExA(&wc) != 0 {
 		print_string("Class created!\n");
 	} else {
 		print_string("Class Failed!\n");
 	}
+	
+	test := wc;
 	
 	window := CreateWindowExA(
 		0, class_name, window_name, WS_OVERLAPPEDWINDOW | WS_VISIBLE, 
@@ -137,27 +138,29 @@ main :: fn () {
 	}
 	
 }
+
+
 /*
-foo :: fn (x: int) -> int {
-	if x == 0 {
-		main();
-		return 0;
-	}
+#extern_library "kernel32.lib"
+GetStdHandle :: fn #stdcall (nStdHandle: u32) -> *void;
+
+test :: fn (x: int) -> int {
 	return x;
 }
 
 main :: fn () -> int {
-	return foo(12);
+	hInstance := GetStdHandle(-10);
+	return test(9);
 }
 */
+
 /*
-foo :: fn (x: u8) -> u8 {
-	return x;
+foo :: fn #stdcall () -> ret: int {
+	ret = 420;
 }
 
 main :: fn () -> int {
-	a :: "HILLO";
-	return foo(a.count as u8);
+	return foo();
 }
 */
 

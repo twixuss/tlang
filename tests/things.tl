@@ -12,7 +12,7 @@ main :: fn () -> s32 {
     standard_output_handle = GetStdHandle(STD_OUTPUT_HANDLE);
 
     str : string = "Hello World!\n";
-    WriteConsoleA(standard_output_handle, str.data, str.count, null, null);
+    WriteConsoleA(standard_output_handle, str.data, str.count as u32, null, null);
     WriteConsoleA(standard_output_handle, "Hello World!\n".data, 13, null, null);
     print("Hello World!\n");
     print(str);
@@ -54,7 +54,7 @@ main :: fn () -> s32 {
 	file := CreateFileA(STR.data, GENERIC_WRITE, 0, null, CREATE_ALWAYS, /*FILE_ATTRIBUTE_NORMAL*/ 0, null);
 
 	content := "Hello World!";
-	WriteFile(file, content.data, content.count, null, null);
+	WriteFile(file, content.data, content.count as u32, null, null);
 
 	global_string = "A global string";
 	print(global_string);
@@ -66,7 +66,7 @@ main :: fn () -> s32 {
 	a_struct : AStruct;
 	a_struct.count = 7;
 	a_struct.data = "AStruct".data;
-    WriteConsoleA(standard_output_handle, a_struct.data, a_struct.count, null, null);
+    WriteConsoleA(standard_output_handle, a_struct.data, a_struct.count as u32, null, null);
 	
 	a_string : string;
 	a_string.count = 7;
@@ -79,5 +79,5 @@ main :: fn () -> s32 {
 x :: 42;
 
 print :: fn (str: string) {
-    WriteConsoleA(standard_output_handle, str.data, str.count, null, null);
+    WriteConsoleA(standard_output_handle, str.data, str.count as u32, null, null);
 }

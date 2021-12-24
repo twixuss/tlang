@@ -4,3 +4,4 @@ temp/
 tests/*.exe
 tests/*.obj
 tests/*.asm
+bin/performance_test*

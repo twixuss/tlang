@@ -1,4 +1,12 @@
 #pragma once
+#define TL_PARENT_SOURCE_LOCATION 1
+#define TL_ENABLE_PROFILER 0
+#include <source_location>
+#include <cstring>
+inline bool operator==(std::source_location a, std::source_location b) {
+	return a.column() == b.column() && a.line() == b.line() && strcmp(a.file_name(), b.file_name()) == 0;
+}
+
 #include <tl/common.h>
 #include <tl/console.h>
 #include <tl/file.h>
@@ -24,3 +32,10 @@ enum class Comparison : u8 {
 	g,
 	ge,
 };
+
+List<utf8> where(utf8 *location);
+
+template <>
+inline umm get_hash(std::source_location l) {
+	return get_hash(l.column()) ^ get_hash(l.line());
+}

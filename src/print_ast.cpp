@@ -88,7 +88,7 @@ void print_ast(AstCall *node) {
 }
 void print_ast(AstBinaryOperator *node) {
 	print_tabs();
-	print("binary - operation: %, type: %, uid: %\n", binary_operator_string(node->operation), type_to_string(node->type, true), node->uid);
+	print("binary - operation: %, type: %, uid: %\n", operator_string(node->operation), type_to_string(node->type, true), node->uid);
 	tab_count += 1;
 
 	print_tabs();

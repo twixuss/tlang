@@ -76,6 +76,7 @@ struct AstExpressionStatement : AstStatement {
 };
 
 #define INVALID_MEMBER_OFFSET (-1)
+#define INVALID_DATA_OFFSET (-1)
 
 struct AstDefinition : AstStatement {
 	AstDefinition() { kind = Ast_definition; }
@@ -93,6 +94,9 @@ struct AstDefinition : AstStatement {
 	bool is_parameter : 1 = false;
 	bool built_in     : 1 = false;
 	bool is_return_parameter : 1 = false;
+
+
+	s64 bytecode_offset = INVALID_DATA_OFFSET;
 };
 
 struct AstReturn : AstStatement {
@@ -182,8 +186,6 @@ struct AstLambda : AstExpression {
 
 	AstLambda *parent_lambda = 0;
 
-	List<utf8> name;
-
 	// HashMap<Span<utf8>, AstDefinition *> local_definitions;
 
 	bool has_body = true;
@@ -195,8 +197,20 @@ struct AstLambda : AstExpression {
 
 	Instruction *first_instruction = 0;
 	s64 location_in_bytecode = -1;
+	s64 return_location = -1;
 
 	CallingConvention convention = CallingConvention::none;
+
+
+	// For bytecode generation
+
+	s64 offset_accumulator = 0;
+	s64 parameters_size = 0; // Sum of (parameters' size ceiled to 8 byte boundary)
+	struct ReturnInfo {
+		Instruction *jmp;
+		s64 index;
+	};
+	List<ReturnInfo> return_jumps;
 };
 
 struct AstCall : AstExpression {
@@ -412,8 +426,8 @@ AstStruct *find_built_in_type_from_token(TokenKind t);
 void *my_allocate(umm size, umm align);
 
 template <class T>
-T *new_ast() {
-	return default_allocator.allocate<T>();
+T *new_ast(TL_LPC) {
+	return default_allocator.allocate<T>(TL_LAC);
 }
 
 Optional<BigInt> get_constant_integer(AstExpression *expression);
@@ -435,4 +449,7 @@ extern LinearSet<Span<utf8>> extern_libraries;
 
 extern AstLambda *main_lambda;
 
-Span<utf8> binary_operator_string(BinaryOperation op);
+Span<utf8> operator_string(u64 op);
+
+bool is_integer(AstExpression *type);
+bool is_signed(AstExpression *type);

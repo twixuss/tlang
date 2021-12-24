@@ -1,6 +1,8 @@
 #pragma once
 #include "ast.h"
 
+#define BYTECODE_DEBUG 0
+
 /*
 
 Naming convention:
@@ -15,7 +17,7 @@ Destination of an instruction is first
 
 */
 
-enum class InstructionKind : u64 {
+enum class InstructionKind : u8 {
 	mov_rc,
 	mov_rr,
 
@@ -117,40 +119,60 @@ enum class InstructionKind : u64 {
 	xor_mc,
 	xor_mr,
 
-	cmp_al_bl,
-	cmp_ax_bx,
-	cmp_eax_ebx,
-	cmp_rax_rbx,
+	cmpu1,
+	cmpu2,
+	cmpu4,
+	cmpu8,
+
+	cmps1,
+	cmps2,
+	cmps4,
+	cmps8,
 
 	call_constant,
 	call_string,
 
 	jmp,
 	jz,
+
+	copyf_mmc,
+	copyb_mmc,
+	copyf_ssc,
+	copyb_ssc,
+
+	stdcall_begin_lambda,
+	stdcall_end_lambda,
+
+	stdcall_constant,
+	stdcall_string,
+
+	push_stdcall_result,
+
+	count,
 };
 
+// Make sure instruction count does not go over 256
+static_assert((int)InstructionKind::count >= 100);
+
 enum class Register : u8 {
-	rax,
-	rbx,
-	rcx,
-	rdx,
-	rsi,
-	rdi,
-	rbp,
-	rsp,
-	r8,
-	r9,
-	r10,
-	r11,
-	r12,
-	r13,
-	r14,
-	r15,
+	r0,
+	r1,
+	r2,
+	r3,
+	r4,
+	r5,
+	r6,
+	r7,
+	rs,
+	rb,
 };
 
 struct Instruction {
 	InstructionKind kind;
+#if BYTECODE_DEBUG
 	utf8 *comment;
+	u64 line;
+#endif
 	union {
 		struct { Register d; s64      s; } mov_rc;
 		struct { Register d; Register s; } mov_rr;
@@ -255,30 +277,33 @@ struct Instruction {
 		struct { Register d; s64      s; } xor_mc;
 		struct { Register d; Register s; } xor_mr;
 
-		struct { Register dst_reg; Comparison comparison; } cmp_rax_rbx;
-		struct { Register dst_reg; Comparison comparison; } cmp_eax_ebx;
-		struct { Register dst_reg; Comparison comparison; } cmp_ax_bx;
-		struct { Register dst_reg; Comparison comparison; } cmp_al_bl;
+		struct { Register d, a, b; Comparison c; } cmpu1;
+		struct { Register d, a, b; Comparison c; } cmpu2;
+		struct { Register d, a, b; Comparison c; } cmpu4;
+		struct { Register d, a, b; Comparison c; } cmpu8;
+		struct { Register d, a, b; Comparison c; } cmps1;
+		struct { Register d, a, b; Comparison c; } cmps2;
+		struct { Register d, a, b; Comparison c; } cmps4;
+		struct { Register d, a, b; Comparison c; } cmps8;
 
+		struct { s64 constant; } call_constant;
+		struct { Span<utf8> string; } call_string;
 
-		struct {
-			s64 constant;
-		} call_constant;
+		struct { s64 offset; } jmp;
+		struct { Register reg; s64 offset; } jz;
 
+		struct { Register d, s; s64 size; } copyf_mmc;
+		struct { Register d, s; s64 size; } copyb_mmc;
+		struct { s64 size; } copyf_ssc;
+		struct { s64 size; } copyb_ssc;
 
-		struct {
-			Span<utf8> string;
-		} call_string;
+		struct { AstLambda *lambda; } stdcall_begin_lambda;
+		struct { AstLambda *lambda; } stdcall_end_lambda;
 
-		struct {
-			s64 offset;
-		} jmp;
+		struct { s64 constant; } stdcall_constant;
+		struct { Span<utf8> string; } stdcall_string;
 
-
-		struct {
-			Register reg;
-			s64 offset;
-		} jz;
+		struct {} push_stdcall_result;
 	};
 };
 
@@ -291,30 +316,6 @@ struct Bytecode {
 };
 
 Bytecode build_bytecode();
-
-inline umm append(StringBuilder &builder, Register r) {
-	switch (r) {
-		case Register::rax: return append(builder, "rax");
-		case Register::rbx: return append(builder, "rbx");
-		case Register::rcx: return append(builder, "rcx");
-		case Register::rdx: return append(builder, "rdx");
-		case Register::rsi: return append(builder, "rsi");
-		case Register::rdi: return append(builder, "rdi");
-		case Register::rbp: return append(builder, "rbp");
-		case Register::rsp: return append(builder, "rsp");
-		case Register::r8:  return append(builder, "r8");
-		case Register::r9:  return append(builder, "r9");
-		case Register::r10: return append(builder, "r10");
-		case Register::r11: return append(builder, "r11");
-		case Register::r12: return append(builder, "r12");
-		case Register::r13: return append(builder, "r13");
-		case Register::r14: return append(builder, "r14");
-		case Register::r15: return append(builder, "r15");
-		default:
-			invalid_code_path();
-	}
-	return append(builder, (u8)r);
-}
 
 inline umm append(StringBuilder &builder, Comparison c) {
 	switch (c) {
