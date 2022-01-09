@@ -6,14 +6,12 @@
 #include "ast.h"
 #include "output/nasm_x86_flat.h"
 #include "output/nasm_x86_64_windows.h"
+#include "output/fasm_x86_64_windows.h"
 #include "../dep/cppcoro/include/cppcoro/generator.hpp"
-#include "extern.h"
 #include "bytecode.h"
 #include "print_ast.h"
 #include <string>
 #include <algorithm>
-
-#define COUNT_ALLOCATIONS 0
 
 ThreadPool *thread_pool;
 
@@ -2221,7 +2219,6 @@ bool parser_function(Parser *parser) {
 					return false;
 				}
 				parser->extern_library = unescape_string(parser->token->string);
-				extern_libraries.insert(parser->extern_library);
 				parser->next();
 			} else if (parser->token->string == u8"#stdcall"s) {
 				parser->current_convention = CallingConvention::stdcall;
@@ -3480,7 +3477,7 @@ main :: fn () {
 }
 )");
 #if 1
-	for (u32 i = 0; i < 256*32; ++i) {
+	for (u32 i = 0; i < 256; ++i) {
 		append_format(test, R"FOOBAR(/*
 import "windows.tl"
 
@@ -3706,10 +3703,10 @@ main :: fn () {
 #define ENUMERATE_OUTPUTS(x) \
 x(nasm_x86_flat) \
 x(nasm_x86_64_windows) \
+x(fasm_x86_64_windows) \
 
 enum class Output {
 	none,
-	c,
 #define x(name) name,
 	ENUMERATE_OUTPUTS(x)
 #undef x
@@ -3733,12 +3730,14 @@ ParsedArguments parse_arguments(Span<Span<utf8>> arguments) {
 	executable_path = arguments[0];
 
 	if (!is_absolute_path(executable_path)) {
-		executable_path = concatenate(to_utf8(get_current_directory()), '\\', executable_path);
+		executable_path = concatenate(current_directory, '\\', executable_path);
 	}
 
 	auto parsed = parse_path(executable_path);
 	executable_name = parsed.name;
 	executable_directory = parsed.directory;
+
+	result.output = Output::fasm_x86_64_windows;
 
 	//print("executable_path: %\nexecutable_name: %\nexecutable_directory: %\n", executable_path, executable_name, executable_directory);
 
@@ -3777,6 +3776,136 @@ ParsedArguments parse_arguments(Span<Span<utf8>> arguments) {
 	return result;
 }
 
+#define COUNT_ALLOCATIONS 1
+#if COUNT_ALLOCATIONS
+static HashMap<std::source_location, u32> allocation_sizes;
+#endif
+
+void print_allocation_count() {
+	struct AllocationInfo {
+		std::source_location location;
+		u32 size;
+	};
+
+	List<AllocationInfo> allocations;
+
+	for_each(allocation_sizes, [&](std::source_location location, u32 size) {
+		allocations.add({location, size});
+	});
+
+	std::sort(allocations.begin(), allocations.end(), [](auto a, auto b) {
+		return a.size > b.size;
+	});
+
+	for (auto a : allocations) {
+		print("%: %\n", a.location, format_bytes(a.size));
+	}
+}
+
+#include <tl/masked_block_list.h>
+
+struct SlabAllocator {
+	template <umm size>
+	struct Slabs {
+		struct alignas(size) Slab {
+			u8 data[size];
+		};
+
+		inline static constexpr umm slabs_per_block = 1 * MiB / sizeof(Slab);
+
+		StaticMaskedBlockList<Slab, slabs_per_block> list;
+
+		void *allocate() {
+			auto result = list.add();
+			return result.pointer;
+		}
+		void free(void *data) {
+			list.remove((Slab *)data);
+		}
+	};
+
+
+	Slabs<  32> slabs32;
+	Slabs<  64> slabs64;
+	Slabs< 128> slabs128;
+	Slabs< 256> slabs256;
+	Slabs< 512> slabs512;
+	Slabs<1024> slabs1024;
+	Slabs<2048> slabs2048;
+	Slabs<4096> slabs4096;
+
+	void *allocate(umm size, umm alignment, std::source_location location) {
+		assert(alignment > 0);
+		assert(size > 0);
+		assert(size >= alignment);
+		assert(size % alignment == 0);
+
+		auto slab_size = ceil(size, alignment);
+		if (slab_size <= 256) if (slab_size <=   64) if (slab_size <=   32) return slabs32  .allocate();
+		                                             else                   return slabs64  .allocate();
+		                      else                   if (slab_size <=  128) return slabs128 .allocate();
+		                                             else                   return slabs256 .allocate();
+		else                  if (slab_size <= 1024) if (slab_size <=  512) return slabs512 .allocate();
+		                                             else                   return slabs1024.allocate();
+		                      else                   if (slab_size <= 2048) return slabs2048.allocate();
+		                                             else                   return slabs4096.allocate();
+		return my_allocate(size, alignment);
+	}
+	void *reallocate(void *data, umm old_size, umm new_size, umm alignment, std::source_location location) {
+		assert(alignment > 0);
+		assert(new_size > 0);
+		assert(new_size >= alignment);
+		assert(new_size % alignment == 0);
+		assert(old_size > 0);
+		assert(old_size >= alignment);
+		assert(old_size % alignment == 0);
+
+		auto result = allocate(new_size, alignment, location);
+		memcpy(result, data, old_size);
+		free(data, old_size, alignment, location);
+		return result;
+	}
+	void free(void *data, umm size, umm alignment, std::source_location location) {
+		assert(alignment > 0);
+		assert(size > 0);
+		assert(size >= alignment);
+		assert(size % alignment == 0);
+
+		auto slab_size = ceil(size, alignment);
+
+		if (slab_size <= 256) if (slab_size <=   64) if (slab_size <=   32) return slabs32  .free(data);
+		                                             else                   return slabs64  .free(data);
+		                      else                   if (slab_size <=  128) return slabs128 .free(data);
+		                                             else                   return slabs256 .free(data);
+		else                  if (slab_size <= 1024) if (slab_size <=  512) return slabs512 .free(data);
+		                                             else                   return slabs1024.free(data);
+		                      else                   if (slab_size <= 2048) return slabs2048.free(data);
+		                                             else                   return slabs4096.free(data);
+		return my_deallocate(data, size);
+	}
+};
+
+SlabAllocator slab_allocator;
+
+auto slab_allocator_func(AllocatorMode mode, void *data, umm old_size, umm new_size, umm align, std::source_location location, void *) -> void * {
+	switch (mode) {
+		case Allocator_allocate: {
+#if COUNT_ALLOCATIONS
+			allocation_sizes.get_or_insert(location) += new_size;
+#endif
+			return slab_allocator.allocate(new_size, align, location);
+		}
+		case Allocator_reallocate: {
+			return slab_allocator.reallocate(data, old_size, new_size, align, location);
+		}
+		case Allocator_free: {
+			slab_allocator.free(data, new_size, align, location);
+			break;
+		}
+	}
+	return 0;
+}
+
 s32 tl_main(Span<Span<utf8>> arguments) {
 	auto global_timer = create_precise_timer();
 	defer { print("Execution finished in % ms\n", reset(global_timer) * 1000); };
@@ -3787,16 +3916,20 @@ s32 tl_main(Span<Span<utf8>> arguments) {
 
 	defer { print("Peak memory usage: %\n", format_bytes(get_memory_info().peak_usage)); };
 
-	// write_test_source();
+	write_test_source();
 
 	init_ast_allocator();
-	extern_init();
 
 #if COUNT_ALLOCATIONS
-	static HashMap<std::source_location, u32> allocation_sizes;
 	allocation_sizes.allocator = os_allocator;
 #endif
-
+#define USE_SLABS 0
+#if USE_SLABS
+	default_allocator = current_allocator = {
+		slab_allocator_func,
+		0
+	};
+#else
 	default_allocator = current_allocator = {
 		[](AllocatorMode mode, void *data, umm old_size, umm new_size, umm align, std::source_location location, void *) -> void * {
 			switch (mode) {
@@ -3812,6 +3945,7 @@ s32 tl_main(Span<Span<utf8>> arguments) {
 					return result;
 				}
 				case Allocator_free: {
+					my_deallocate(data, new_size);
 					return 0;
 				}
 			}
@@ -3819,6 +3953,7 @@ s32 tl_main(Span<Span<utf8>> arguments) {
 		},
 		0
 	};
+#endif
 
 #if 0//TL_ENABLE_PROFILER
 	static Allocator real_os_allocator = os_allocator;
@@ -3856,6 +3991,8 @@ s32 tl_main(Span<Span<utf8>> arguments) {
 restart_main:
 
 	timed_begin("setup"s);
+
+	current_directory = get_current_directory();
 
 	auto args = parse_arguments(arguments);
 
@@ -4210,24 +4347,7 @@ restart_main:
 	print("Allocations:\n");
 
 #if COUNT_ALLOCATIONS
-	struct AllocationInfo {
-		std::source_location location;
-		u32 size;
-	};
-
-	List<AllocationInfo> allocations;
-
-	for_each(allocation_sizes, [&](std::source_location location, u32 size) {
-		allocations.add({location, size});
-	});
-
-	std::sort(allocations.begin(), allocations.end(), [](auto a, auto b) {
-		return a.size > b.size;
-	});
-
-	for (auto a : allocations) {
-		print("%: %\n", a.location, format_bytes(a.size));
-	}
+	print_allocation_count();
 #endif
 	return 0;
 }

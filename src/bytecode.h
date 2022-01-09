@@ -307,12 +307,14 @@ struct Instruction {
 	};
 };
 
+using ExternLibraries = HashMap<Span<utf8>, List<Span<utf8>>>;
+
 struct Bytecode {
 	List<Instruction> instructions;
 	List<u8> constant_data;
 	List<u8> data;
 	umm zero_data_size;
-	List<Span<utf8>> extern_functions;
+	ExternLibraries extern_libraries;
 };
 
 Bytecode build_bytecode();

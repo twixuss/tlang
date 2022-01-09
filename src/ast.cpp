@@ -363,6 +363,10 @@ void init_ast_allocator() {
 void *my_allocate(umm size, umm align) {
 	scoped_lock(allocation_mutex);
 
+	if (ast_allocation_blocks.count == 0) {
+		init_ast_allocator();
+	}
+
 retry:
 	auto block = &ast_allocation_blocks[last_allocation_block_index];
 
@@ -379,6 +383,15 @@ retry:
 	block->cursor = target + size;
 
 	return target;
+}
+void *my_reallocate(void *data, umm old_size, umm new_size, umm align) {
+	auto result = my_allocate(new_size, align);
+	memcpy(result, data, old_size);
+	return result;
+}
+
+void my_deallocate(void *data, umm size) {
+
 }
 
 AstLambda *main_lambda;
@@ -439,3 +452,17 @@ bool is_signed(AstExpression *type) {
 		types_match(type, &type_s32) ||
 		types_match(type, &type_s64);
 }
+
+#if OVERLOAD_NEW
+void *operator new(umm size) {
+	return my_allocate(size, __STDCPP_DEFAULT_NEW_ALIGNMENT__);
+}
+void *operator new(umm size, std::align_val_t align) {
+	return my_allocate(size, (umm)align);
+}
+void operator delete(void *) {
+}
+void operator delete(void *data, umm size) {
+	my_deallocate(data, size);
+}
+#endif

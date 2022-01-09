@@ -1,7 +1,6 @@
 #define DUMBEST_BYTECODE 1
 #include "bytecode.h"
 #include "ast.h"
-#include "extern.h"
 
 static constexpr s64 stack_word_size = 8;
 static constexpr s64 register_size = 8;
@@ -23,7 +22,6 @@ struct StringInfo {
 struct Converter {
 	InstructionBuilder builder;
 	InstructionBuilder *body_builder;
-	List<Span<utf8>> extern_functions;
 	StringBuilder constant_data_builder;
 	StringBuilder data_builder;
 	umm zero_data_size = 0;
@@ -33,6 +31,8 @@ struct Converter {
 	List<Relocation> global_relocations;
 
 	List<StringInfo> constant_strings;
+
+	ExternLibraries extern_libraries;
 };
 
 
@@ -1236,8 +1236,8 @@ static void append(Converter &conv, AstLambda *lambda, bool push_address) {
 			conv.global_relocations.add(relocation);
 		}
 		conv.local_relocations.clear();
-	} else {
-		conv.extern_functions.add(lambda->definition->name);
+	} else if (lambda->extern_library.data) {
+		conv.extern_libraries.get_or_insert(lambda->extern_library).add(lambda->definition->name);
 	}
 
 	if (push_address) {
@@ -1321,7 +1321,7 @@ Bytecode build_bytecode() {
 	result.constant_data = (List<u8>)to_string(conv.constant_data_builder);
 	result.data = (List<u8>)to_string(conv.data_builder);
 	result.zero_data_size = conv.zero_data_size;
-	result.extern_functions = conv.extern_functions;
+	result.extern_libraries = conv.extern_libraries;
 
 	fix_relocations(result.instructions, conv.global_relocations);
 

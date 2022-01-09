@@ -424,6 +424,8 @@ AstStruct &get_built_in_type_from_token(TokenKind t);
 AstStruct *find_built_in_type_from_token(TokenKind t);
 
 void *my_allocate(umm size, umm align);
+void *my_reallocate(void *data, umm old_size, umm new_size, umm align);
+void my_deallocate(void *data, umm size);
 
 template <class T>
 T *new_ast(TL_LPC) {
@@ -445,11 +447,17 @@ AstStruct *get_struct(AstExpression *type);
 
 void init_ast_allocator();
 
-extern LinearSet<Span<utf8>> extern_libraries;
-
 extern AstLambda *main_lambda;
 
 Span<utf8> operator_string(u64 op);
 
 bool is_integer(AstExpression *type);
 bool is_signed(AstExpression *type);
+
+#define OVERLOAD_NEW 1
+#if OVERLOAD_NEW
+void *operator new(umm size);
+void *operator new(umm size, std::align_val_t align);
+void operator delete(void *);
+void operator delete(void *, umm size);
+#endif

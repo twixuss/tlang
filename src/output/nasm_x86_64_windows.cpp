@@ -1,6 +1,5 @@
 #include <bytecode.h>
 #include <ast.h>
-#include <extern.h>
 
 static Span<utf8> cmov_string(Comparison c) {
 	using enum Comparison;
@@ -283,14 +282,14 @@ static void append_instructions(StringBuilder &builder, List<Instruction> instru
 			case xor_rr: append_format(builder, "xor %, %"        , i.xor_rr.d, i.xor_rr.s); break;
 			case xor_mr: append_format(builder, "xor qword [%], %", i.xor_mr.d, i.xor_mr.s); break;
 
-			case cmps1: append_format(builder, "xor %, %\ncmp %, %\nset% %\n", i.cmps1.d, i.cmps1.d, part1b(i.cmps1.a), part1b(i.cmps1.b), cmps_string(i.cmps1.c), part1b(i.cmps1.d)); break;
-			case cmps2: append_format(builder, "xor %, %\ncmp %, %\nset% %\n", i.cmps2.d, i.cmps2.d, part2b(i.cmps2.a), part2b(i.cmps2.b), cmps_string(i.cmps2.c), part1b(i.cmps2.d)); break;
-			case cmps4: append_format(builder, "xor %, %\ncmp %, %\nset% %\n", i.cmps4.d, i.cmps4.d, part4b(i.cmps4.a), part4b(i.cmps4.b), cmps_string(i.cmps4.c), part1b(i.cmps4.d)); break;
-			case cmps8: append_format(builder, "xor %, %\ncmp %, %\nset% %\n", i.cmps8.d, i.cmps8.d, part8b(i.cmps8.a), part8b(i.cmps8.b), cmps_string(i.cmps8.c), part1b(i.cmps8.d)); break;
-			case cmpu1: append_format(builder, "xor %, %\ncmp %, %\nset% %\n", i.cmpu1.d, i.cmpu1.d, part1b(i.cmpu1.a), part1b(i.cmpu1.b), cmpu_string(i.cmpu1.c), part1b(i.cmpu1.d)); break;
-			case cmpu2: append_format(builder, "xor %, %\ncmp %, %\nset% %\n", i.cmpu2.d, i.cmpu2.d, part2b(i.cmpu2.a), part2b(i.cmpu2.b), cmpu_string(i.cmpu2.c), part1b(i.cmpu2.d)); break;
-			case cmpu4: append_format(builder, "xor %, %\ncmp %, %\nset% %\n", i.cmpu4.d, i.cmpu4.d, part4b(i.cmpu4.a), part4b(i.cmpu4.b), cmpu_string(i.cmpu4.c), part1b(i.cmpu4.d)); break;
-			case cmpu8: append_format(builder, "xor %, %\ncmp %, %\nset% %\n", i.cmpu8.d, i.cmpu8.d, part8b(i.cmpu8.a), part8b(i.cmpu8.b), cmpu_string(i.cmpu8.c), part1b(i.cmpu8.d)); break;
+			case cmps1: append_format(builder, "xor %, %\ncmp %, %\nset% %", i.cmps1.d, i.cmps1.d, part1b(i.cmps1.a), part1b(i.cmps1.b), cmps_string(i.cmps1.c), part1b(i.cmps1.d)); break;
+			case cmps2: append_format(builder, "xor %, %\ncmp %, %\nset% %", i.cmps2.d, i.cmps2.d, part2b(i.cmps2.a), part2b(i.cmps2.b), cmps_string(i.cmps2.c), part1b(i.cmps2.d)); break;
+			case cmps4: append_format(builder, "xor %, %\ncmp %, %\nset% %", i.cmps4.d, i.cmps4.d, part4b(i.cmps4.a), part4b(i.cmps4.b), cmps_string(i.cmps4.c), part1b(i.cmps4.d)); break;
+			case cmps8: append_format(builder, "xor %, %\ncmp %, %\nset% %", i.cmps8.d, i.cmps8.d, part8b(i.cmps8.a), part8b(i.cmps8.b), cmps_string(i.cmps8.c), part1b(i.cmps8.d)); break;
+			case cmpu1: append_format(builder, "xor %, %\ncmp %, %\nset% %", i.cmpu1.d, i.cmpu1.d, part1b(i.cmpu1.a), part1b(i.cmpu1.b), cmpu_string(i.cmpu1.c), part1b(i.cmpu1.d)); break;
+			case cmpu2: append_format(builder, "xor %, %\ncmp %, %\nset% %", i.cmpu2.d, i.cmpu2.d, part2b(i.cmpu2.a), part2b(i.cmpu2.b), cmpu_string(i.cmpu2.c), part1b(i.cmpu2.d)); break;
+			case cmpu4: append_format(builder, "xor %, %\ncmp %, %\nset% %", i.cmpu4.d, i.cmpu4.d, part4b(i.cmpu4.a), part4b(i.cmpu4.b), cmpu_string(i.cmpu4.c), part1b(i.cmpu4.d)); break;
+			case cmpu8: append_format(builder, "xor %, %\ncmp %, %\nset% %", i.cmpu8.d, i.cmpu8.d, part8b(i.cmpu8.a), part8b(i.cmpu8.b), cmpu_string(i.cmpu8.c), part1b(i.cmpu8.d)); break;
 
 			case call_constant: append_format(builder, "call .%", l(i.call_constant.constant)); break;
 			case call_string:   append_format(builder, "call %", i.call_string.string); break;
@@ -369,9 +368,12 @@ void output_nasm_x86_64_windows(Bytecode &bytecode) {
 
 	append(builder, "bits 64\nextern ExitProcess\n");
 
+	invalid_code_path();
+#if 0
 	for (auto f : bytecode.extern_functions) {
-		append_format(builder, "extern %\n", f);
+		append_format(builder, "extern %\n", f.name);
 	}
+#endif
 
 	append(builder, "section .rodata\nconstants: db ");
 	for (auto byte : bytecode.constant_data) {
@@ -386,11 +388,12 @@ void output_nasm_x86_64_windows(Bytecode &bytecode) {
 
 	append_instructions(builder, bytecode.instructions);
 
+	auto output_path_base = format("%\\%", current_directory, parse_path(source_path).name);
 
-	auto output_path = to_pathchars(format(u8"%.asm", source_path_without_extension));
+	auto asm_path = to_pathchars(format(u8"%.asm", output_path_base));
 
 	{
-		auto file = open_file(output_path, {.write = true});
+		auto file = open_file(asm_path, {.write = true});
 		defer { close(file); };
 
 		write(file, as_bytes(to_string(builder)));
@@ -411,13 +414,19 @@ void output_nasm_x86_64_windows(Bytecode &bytecode) {
 	StringBuilder bat_builder;
 	append_format(bat_builder, u8R"(@echo off
 %\nasm -f win64 -gcv8 "%.asm" -o "%.obj" -w-number-overflow -w-db-empty
-)", executable_directory, source_path_without_extension, source_path_without_extension);
+)", executable_directory, output_path_base, output_path_base);
 
 	append(bat_builder, "if %errorlevel% neq 0 exit /b %errorlevel%\n");
-	append_format(bat_builder, R"("%link" "%.obj" /out:"%.exe" /nodefaultlib /entry:"main" /subsystem:console /DEBUG:FULL /LIBPATH:"%" kernel32.lib)", msvc_directory, source_path_without_extension, source_path_without_extension, wkits_directory);
-	for (auto library : extern_libraries) {
+	append_format(bat_builder,
+		R"("%link" "%.obj" /out:"%.exe" /nodefaultlib /entry:"main" /subsystem:console /DEBUG:FULL /LIBPATH:"%" kernel32.lib)",
+		msvc_directory,
+		output_path_base,
+		output_path_base,
+		wkits_directory
+	);
+	for_each(bytecode.extern_libraries, [&](auto library, auto) {
 		append_format(bat_builder, " %", library);
-	}
+	});
 
 	auto bat_path = to_pathchars(concatenate(executable_directory, "\\nasm_build.bat"s));
 	write_entire_file(bat_path, as_bytes(to_string(bat_builder)));

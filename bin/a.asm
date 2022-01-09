@@ -1,36 +1,14 @@
-bits 64
-extern ExitProcess
-extern WNDPROC
-extern GetStdHandle
-extern WriteConsoleA
-extern CreateFileA
-extern WriteFile
-extern GetLastError
-extern VirtualAlloc
-extern GetModuleHandleA
-extern RegisterClassExA
-extern DefWindowProcA
-extern CreateWindowExA
-extern PeekMessageA
-extern TranslateMessage
-extern DispatchMessageA
-extern PostQuitMessage
-extern LoadCursorA
-section .rodata
-constants: db 246,255,255,255,255,255,255,255,245,255,255,255,255,255,255,255,244,255,255,255,255,255,255,255,0,0,0,128,0,0,0,0,0,0,0,64,0,0,0,0,0,0,0,32,0,0,0,0,0,0,0,16,0,0,0,0,4,0,0,0,0,0,0,0,1,0,0,0,0,0,0,0,2,0,0,0,0,0,0,0,2,0,0,0,0,0,0,0,1,0,0,0,0,0,0,0,4,0,0,0,0,0,0,0,3,0,0,0,0,0,0,0,5,0,0,0,0,0,0,0,1,0,0,0,0,0,0,0,2,0,0,0,0,0,0,0,4,0,0,0,0,0,0,0,32,0,0,0,0,0,0,0,128,0,0,0,0,0,0,0,0,1,0,0,0,0,0,0,0,16,0,0,0,0,0,0,0,64,0,0,0,0,0,0,0,0,0,2,0,0,0,0,0,0,0,4,0,0,0,0,0,0,0,32,0,0,0,0,0,0,16,0,0,0,0,0,0,0,32,0,0,0,0,0,0,0,0,64,0,0,0,0,0,0,0,1,0,0,0,0,0,0,0,16,0,0,0,0,0,0,128,0,0,0,0,0,0,0,0,8,0,0,0,0,0,0,0,128,0,0,0,0,0,16,0,0,0,0,0,0,0,32,0,0,0,0,0,0,0,0,8,0,0,0,0,0,0,0,0,1,0,0,0,0,0,0,0,32,0,0,0,0,0,0,64,0,0,0,0,0,0,0,16,0,0,0,0,0,0,0,32,0,0,0,0,0,0,0,128,0,0,0,0,0,0,0,192,0,0,0,0,0,0,0,0,64,0,0,0,0,0,0,0,64,0,0,0,0,0,0,0,2,0,0,0,0,0,0,0,4,0,0,0,0,0,0,0,8,0,0,0,0,0,0,64,0,0,0,0,0,0,0,2,0,0,0,0,0,0,0,16,0,0,0,0,0,0,0,0,32,0,0,0,0,0,0,0,1,0,0,0,0,0,0,1,0,0,0,0,0,0,0,0,32,0,0,0,0,0,0,2,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,207,0,0,0,0,0,0,0,0,128,0,0,0,0,0,0,136,128,0,0,0,0,0,0,4,0,0,0,0,0,0,0,8,0,0,0,0,0,0,0,1,0,0,0,0,0,0,0,4,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,207,0,0,0,0,0,0,0,0,16,0,0,0,0,0,0,32,0,0,0,0,0,0,0,0,128,0,0,0,0,0,0,0,0,0,0,0,0,1,0,0,0,0,0,0,0,2,0,0,0,0,0,0,0,2,0,0,0,0,0,0,0,16,0,0,0,0,0,0,0,18,0,0,0,0,0,0,0,138,127,0,0,0,0,0,0,0,127,0,0,0,0,0,0,3,127,0,0,0,0,0,0,137,127,0,0,0,0,0,0,139,127,0,0,0,0,0,0,1,127,0,0,0,0,0,0,129,127,0,0,0,0,0,0,136,127,0,0,0,0,0,0,128,127,0,0,0,0,0,0,134,127,0,0,0,0,0,0,131,127,0,0,0,0,0,0,133,127,0,0,0,0,0,0,130,127,0,0,0,0,0,0,132,127,0,0,0,0,0,0,4,127,0,0,0,0,0,0,2,127,0,0,0,0,0,0,119,105,110,100,111,119,95,99,108,97,115,115,0,104,101,108,108,111,32,119,105,110,100,111,119,0,67,108,97,115,115,32,99,114,101,97,116,101,100,33,10,67,108,97,115,115,32,70,97,105,108,101,100,33,10,87,105,110,100,111,119,32,83,117,99,99,101,115,115,33,10,87,105,110,100,111,119,32,70,97,105,108,33,10,
-section .data
-data: db 
-section .bss
-zeros: resb 0
-section .text
-global main
+format PE64 GUI 4.0
+entry main
+include 'win64a.inc'
+section '.text' code readable executable
 main:
 push 0
 call .cp
 pop rcx
 and rsp, -16
 sub rsp, 16
-call ExitProcess
+call [ExitProcess]
 ret
 .0: push rbp
 .1: mov rbp, rsp
@@ -88,7 +66,7 @@ rep movsb
 mov rdx, r9
 mov r8, r10
 mov r9, r11
-call GetStdHandle
+call [GetStdHandle]
 .J: add rsp, 40
 .K: pop rsp
 .L: push rax
@@ -101,7 +79,7 @@ call GetStdHandle
 mov rdx, r9
 mov r8, r10
 mov r9, r11
-call WriteConsoleA
+call [WriteConsoleA]
 .S: add rsp, 40
 .T: pop rsp
 .U: push rax
@@ -130,7 +108,7 @@ call WriteConsoleA
 mov rdx, r9
 mov r8, r10
 mov r9, r11
-call GetStdHandle
+call [GetStdHandle]
 .1h: add rsp, 40
 .1i: pop rsp
 .1j: push rax
@@ -143,7 +121,7 @@ call GetStdHandle
 mov rdx, r9
 mov r8, r10
 mov r9, r11
-call WriteConsoleA
+call [WriteConsoleA]
 .1q: add rsp, 40
 .1r: pop rsp
 .1s: push rax
@@ -175,7 +153,6 @@ call WriteConsoleA
 .1S: xor r10, r10
 cmp r8, r9
 sete r10b
-
 .1T: push r10
 .1U: pop r8
 .1V: test r8, r8
@@ -199,7 +176,6 @@ jz .21
 .2c: xor r10, r10
 cmp r8, r9
 setl r10b
-
 .2d: push r10
 .2e: pop r8
 .2f: test r8, r8
@@ -316,7 +292,6 @@ jz .2F
 .41: xor r10, r10
 cmp r8, r9
 setne r10b
-
 .42: push r10
 .43: pop r8
 .44: test r8, r8
@@ -397,7 +372,6 @@ mov qword[r8], rax
 .5a: xor r10, r10
 cmp r8, r9
 setne r10b
-
 .5b: push r10
 .5c: pop r8
 .5d: test r8, r8
@@ -459,7 +433,6 @@ jz .5I
 .66: xor r10, r10
 cmp r8, r9
 sete r10b
-
 .67: push r10
 .68: pop r8
 .69: test r8, r8
@@ -556,7 +529,6 @@ jz .6f
 .7B: xor r10, r10
 cmp r8, r9
 setne r10b
-
 .7C: push r10
 .7D: pop r8
 .7E: test r8, r8
@@ -592,7 +564,6 @@ jz .9n
 .87: xor r10, r10
 cmp r8, r9
 setl r10b
-
 .88: push r10
 .89: pop r8
 .8a: test r8, r8
@@ -686,7 +657,6 @@ shr qword[r8], cl
 .9y: xor r10, r10
 cmp r8, r9
 setne r10b
-
 .9z: push r10
 .9A: pop r8
 .9B: test r8, r8
@@ -792,7 +762,6 @@ push rax
 .b3: xor r10, r10
 cmp r8d, r9d
 sete r10b
-
 .b4: push r10
 .b5: pop r8
 .b6: test r8, r8
@@ -808,7 +777,7 @@ jz .bt
 mov rdx, r9
 mov r8, r10
 mov r9, r11
-call PostQuitMessage
+call [PostQuitMessage]
 .bf: add rsp, 40
 .bg: pop rsp
 .bh: push rax
@@ -868,7 +837,7 @@ call PostQuitMessage
 mov rdx, r9
 mov r8, r10
 mov r9, r11
-call DefWindowProcA
+call [DefWindowProcA]
 .c9: add rsp, 40
 .ca: pop rsp
 .cb: push rax
@@ -927,7 +896,7 @@ push rax
 mov rdx, r9
 mov r8, r10
 mov r9, r11
-call GetModuleHandleA
+call [GetModuleHandleA]
 .cX: add rsp, 40
 .cY: pop rsp
 .cZ: push rax
@@ -1012,7 +981,7 @@ push rax
 mov rdx, r9
 mov r8, r10
 mov r9, r11
-call LoadCursorA
+call [LoadCursorA]
 .ef: add rsp, 40
 .eg: pop rsp
 .eh: push rax
@@ -1038,7 +1007,7 @@ call LoadCursorA
 mov rdx, r9
 mov r8, r10
 mov r9, r11
-call RegisterClassExA
+call [RegisterClassExA]
 .eB: add rsp, 40
 .eC: pop rsp
 .eD: push rax
@@ -1048,7 +1017,6 @@ call RegisterClassExA
 .eH: xor r10, r10
 cmp r8w, r9w
 setne r10b
-
 .eI: push r10
 .eJ: pop r8
 .eK: test r8, r8
@@ -1119,7 +1087,7 @@ rep movsb
 mov rdx, r9
 mov r8, r10
 mov r9, r11
-call CreateWindowExA
+call [CreateWindowExA]
 .fG: add rsp, 104
 .fH: pop rsp
 .fI: push rax
@@ -1137,7 +1105,6 @@ call CreateWindowExA
 .fU: xor r10, r10
 cmp r8, r9
 setne r10b
-
 .fV: push r10
 .fW: pop r8
 .fX: test r8, r8
@@ -1181,7 +1148,7 @@ jz .hB
 mov rdx, r9
 mov r8, r10
 mov r9, r11
-call PeekMessageA
+call [PeekMessageA]
 .gv: add rsp, 40
 .gw: pop rsp
 .gx: push rax
@@ -1191,7 +1158,6 @@ call PeekMessageA
 .gB: xor r10, r10
 cmp r8d, r9d
 setne r10b
-
 .gC: push r10
 .gD: pop r8
 .gE: test r8, r8
@@ -1228,7 +1194,6 @@ push rax
 .h3: xor r10, r10
 cmp r8d, r9d
 sete r10b
-
 .h4: push r10
 .h5: pop r8
 .h6: test r8, r8
@@ -1247,7 +1212,7 @@ jz .h9
 mov rdx, r9
 mov r8, r10
 mov r9, r11
-call TranslateMessage
+call [TranslateMessage]
 .hi: add rsp, 40
 .hj: pop rsp
 .hk: push rax
@@ -1264,7 +1229,7 @@ call TranslateMessage
 mov rdx, r9
 mov r8, r10
 mov r9, r11
-call DispatchMessageA
+call [DispatchMessageA]
 .hv: add rsp, 40
 .hw: pop rsp
 .hx: push rax
@@ -1274,3 +1239,26 @@ call DispatchMessageA
 .hB: mov rsp, rbp
 .hC: pop rbp
 .hD: ret
+section '.rodata' data readable
+constants db 246,255,255,255,255,255,255,255,245,255,255,255,255,255,255,255,244,255,255,255,255,255,255,255,0,0,0,128,0,0,0,0,0,0,0,64,0,0,0,0,0,0,0,32,0,0,0,0,0,0,0,16,0,0,0,0,4,0,0,0,0,0,0,0,1,0,0,0,0,0,0,0,2,0,0,0,0,0,0,0,2,0,0,0,0,0,0,0,1,0,0,0,0,0,0,0,4,0,0,0,0,0,0,0,3,0,0,0,0,0,0,0,5,0,0,0,0,0,0,0,1,0,0,0,0,0,0,0,2,0,0,0,0,0,0,0,4,0,0,0,0,0,0,0,32,0,0,0,0,0,0,0,128,0,0,0,0,0,0,0,0,1,0,0,0,0,0,0,0,16,0,0,0,0,0,0,0,64,0,0,0,0,0,0,0,0,0,2,0,0,0,0,0,0,0,4,0,0,0,0,0,0,0,32,0,0,0,0,0,0,16,0,0,0,0,0,0,0,32,0,0,0,0,0,0,0,0,64,0,0,0,0,0,0,0,1,0,0,0,0,0,0,0,16,0,0,0,0,0,0,128,0,0,0,0,0,0,0,0,8,0,0,0,0,0,0,0,128,0,0,0,0,0,16,0,0,0,0,0,0,0,32,0,0,0,0,0,0,0,0,8,0,0,0,0,0,0,0,0,1,0,0,0,0,0,0,0,32,0,0,0,0,0,0,64,0,0,0,0,0,0,0,16,0,0,0,0,0,0,0,32,0,0,0,0,0,0,0,128,0,0,0,0,0,0,0,192,0,0,0,0,0,0,0,0,64,0,0,0,0,0,0,0,64,0,0,0,0,0,0,0,2,0,0,0,0,0,0,0,4,0,0,0,0,0,0,0,8,0,0,0,0,0,0,64,0,0,0,0,0,0,0,2,0,0,0,0,0,0,0,16,0,0,0,0,0,0,0,0,32,0,0,0,0,0,0,0,1,0,0,0,0,0,0,1,0,0,0,0,0,0,0,0,32,0,0,0,0,0,0,2,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,207,0,0,0,0,0,0,0,0,128,0,0,0,0,0,0,136,128,0,0,0,0,0,0,4,0,0,0,0,0,0,0,8,0,0,0,0,0,0,0,1,0,0,0,0,0,0,0,4,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,207,0,0,0,0,0,0,0,0,16,0,0,0,0,0,0,32,0,0,0,0,0,0,0,0,128,0,0,0,0,0,0,0,0,0,0,0,0,1,0,0,0,0,0,0,0,2,0,0,0,0,0,0,0,2,0,0,0,0,0,0,0,16,0,0,0,0,0,0,0,18,0,0,0,0,0,0,0,138,127,0,0,0,0,0,0,0,127,0,0,0,0,0,0,3,127,0,0,0,0,0,0,137,127,0,0,0,0,0,0,139,127,0,0,0,0,0,0,1,127,0,0,0,0,0,0,129,127,0,0,0,0,0,0,136,127,0,0,0,0,0,0,128,127,0,0,0,0,0,0,134,127,0,0,0,0,0,0,131,127,0,0,0,0,0,0,133,127,0,0,0,0,0,0,130,127,0,0,0,0,0,0,132,127,0,0,0,0,0,0,4,127,0,0,0,0,0,0,2,127,0,0,0,0,0,0,119,105,110,100,111,119,95,99,108,97,115,115,0,104,101,108,108,111,32,119,105,110,100,111,119,0,67,108,97,115,115,32,99,114,101,97,116,101,100,33,10,67,108,97,115,115,32,70,97,105,108,101,100,33,10,87,105,110,100,111,119,32,83,117,99,99,101,115,115,33,10,87,105,110,100,111,119,32,70,97,105,108,33,10
+section '.idata' import data readable writeable
+library user32,'user32.dll',\
+	kernel32,'kernel32.dll'
+import user32,\
+	RegisterClassExA,'RegisterClassExA',\
+	DefWindowProcA,'DefWindowProcA',\
+	CreateWindowExA,'CreateWindowExA',\
+	PeekMessageA,'PeekMessageA',\
+	TranslateMessage,'TranslateMessage',\
+	DispatchMessageA,'DispatchMessageA',\
+	PostQuitMessage,'PostQuitMessage',\
+	LoadCursorA,'LoadCursorA'
+import kernel32,\
+	GetStdHandle,'GetStdHandle',\
+	WriteConsoleA,'WriteConsoleA',\
+	CreateFileA,'CreateFileA',\
+	WriteFile,'WriteFile',\
+	GetLastError,'GetLastError',\
+	VirtualAlloc,'VirtualAlloc',\
+	GetModuleHandleA,'GetModuleHandleA',\
+	ExitProcess,'ExitProcess'

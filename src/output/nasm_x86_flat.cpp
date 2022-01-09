@@ -1,6 +1,5 @@
 #include "nasm_x86_flat.h"
 #include "ast.h"
-#include "extern.h"
 
 static Span<utf8> cmov_string(Comparison c) {
 	using enum Comparison;

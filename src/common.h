@@ -23,6 +23,7 @@ extern Span<utf8> source_path_without_extension;
 extern Span<utf8> executable_path;
 extern Span<utf8> executable_name;
 extern Span<utf8> executable_directory;
+extern Span<utf8> current_directory;
 
 enum class Comparison : u8 {
 	e,

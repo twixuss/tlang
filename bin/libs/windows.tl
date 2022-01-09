@@ -191,7 +191,7 @@ IDC_WAIT        :: 32514 as *u8;
 
 
 #stdcall
-#extern_library "kernel32.lib"
+#extern_library "kernel32"
 
 GetStdHandle :: fn (nStdHandle: DWORD) -> HANDLE;
 
@@ -228,7 +228,9 @@ GetModuleHandleA :: fn (
 	lpModuleName : LPCSTR
 ) -> HMODULE;
 
-#extern_library "user32.lib"
+ExitProcess :: fn (ret: u32);
+
+#extern_library "user32"
 
 RegisterClassExA :: fn (
 	unnamedParam1 : *WNDCLASSEXA

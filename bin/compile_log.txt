@@ -1,3 +1,2 @@
-Microsoft (R) Incremental Linker Version 14.29.30138.0
-Copyright (C) Microsoft Corporation.  All rights reserved.
-
+flat assembler  version 1.73.29  (1048576 kilobytes memory)
+3 passes, 0.2 seconds, 6144 bytes.
