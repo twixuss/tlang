@@ -1,7 +1,7 @@
 #pragma once
 #include "ast.h"
 
-#define BYTECODE_DEBUG 0
+#define BYTECODE_DEBUG 1
 
 /*
 

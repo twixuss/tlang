@@ -381,7 +381,7 @@ section '.idata' import data readable writeable
 
 
 
-	append(builder, "format PE64 GUI 4.0\nentry main\ninclude 'win64a.inc'\n");
+	append(builder, "format PE64 console\nentry main\ninclude 'win64a.inc'\n");
 
 	append_instructions(builder, bytecode.instructions);
 
@@ -426,7 +426,9 @@ section '.idata' import data readable writeable
 		//	append(builder, "library kernel32,'kernel32.dll'\nimport kernel32,ExitProcess,'ExitProcess'\n");
 		//}
 
-		if (!is_empty(bytecode.extern_libraries)) {
+		if (is_empty(bytecode.extern_libraries)) {
+			append(builder, "library kernel32,'kernel32.dll'\nimport kernel32,ExitProcess,'ExitProcess'\n");
+		} else {
 			u32 library_index = 0;
 			append(builder, "library ");
 			for_each(bytecode.extern_libraries, [&](auto library, auto functions) {
@@ -435,17 +437,24 @@ section '.idata' import data readable writeable
 				append_format(builder, "%,'%.dll'", library, library);
 				library_index += 1;
 			});
+
+			append(builder, '\n');
+
+			for_each(bytecode.extern_libraries, [&](auto library, auto functions) {
+				append_format(builder, "import %", library);
+				for (auto function : functions) {
+					append_format(builder, ",\\\n\t%,'%'", function, function);
+				}
+				if (library == u8"kernel32"s) {
+					if (!find(functions, u8"ExitProcess"s)) {
+						append(builder, ",\\\n\tExitProcess,'ExitProcess'");
+					}
+				}
+
+				append(builder, '\n');
+			});
 		}
 
-		append(builder, '\n');
-
-		for_each(bytecode.extern_libraries, [&](auto library, auto functions) {
-			append_format(builder, "import %", library);
-			for (auto function : functions) {
-				append_format(builder, ",\\\n\t%,'%'", function, function);
-			}
-			append(builder, '\n');
-		});
 	}
 
 	auto output_path_base = format("%\\%", current_directory, parse_path(source_path).name);

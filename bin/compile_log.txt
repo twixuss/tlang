@@ -1,2 +1,2 @@
 flat assembler  version 1.73.29  (1048576 kilobytes memory)
-3 passes, 0.2 seconds, 6144 bytes.
+3 passes, 1536 bytes.

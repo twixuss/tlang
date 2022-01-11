@@ -347,6 +347,7 @@ void new_ast_block() {
 	AllocationBlock block;
 	block.size = ast_allocation_block_size;
 	block.cursor = block.base = os_allocator.allocate<u8>(ast_allocation_block_size);
+	assert(block.cursor);
 	ast_allocation_blocks.add(block);
 	last_allocation_block_index += 1;
 	atomic_increment(&debug_allocation_blocks);

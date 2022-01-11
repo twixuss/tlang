@@ -368,12 +368,11 @@ void output_nasm_x86_64_windows(Bytecode &bytecode) {
 
 	append(builder, "bits 64\nextern ExitProcess\n");
 
-	invalid_code_path();
-#if 0
-	for (auto f : bytecode.extern_functions) {
-		append_format(builder, "extern %\n", f.name);
-	}
-#endif
+	for_each(bytecode.extern_libraries, [&](auto lib, auto fns) {
+		for (auto f : fns) {
+			append_format(builder, "extern %\n", f);
+		}
+	});
 
 	append(builder, "section .rodata\nconstants: db ");
 	for (auto byte : bytecode.constant_data) {

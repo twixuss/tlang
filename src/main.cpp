@@ -12,6 +12,10 @@
 #include "print_ast.h"
 #include <string>
 #include <algorithm>
+#include <tl/coroutine.h>
+
+#define YIELD_STATE state->state
+#define yield(x) (_ReadWriteBarrier(), ::tl::tl_coroutine_yield(YIELD_STATE, (void *)x))
 
 ThreadPool *thread_pool;
 
@@ -1367,9 +1371,11 @@ AstExpression *parse_sub_expression_no_cast(Parser *parser) {
 			}
 			return expression;
 		}
+#if 0
 		case '[': {
 			auto subscript = new_ast<AstSubscript>();
 			subscript->location = parser->token->string;
+			subscript->is_prefix = true;
 
 			if (!parser->next_not_end())
 				return 0;
@@ -1390,6 +1396,7 @@ AstExpression *parse_sub_expression_no_cast(Parser *parser) {
 
 			return subscript;
 		}
+#endif
 		default: {
 			if (is_unary_operator(parser->token->kind)) {
 				auto unop = new_ast<AstUnaryOperator>();
@@ -1629,10 +1636,12 @@ AstExpression *parse_expression(Parser *parser) {
 		return 0;
 	}
 
-#if 0
+#define USE_POST_SUBSCRIPT 1
+#if USE_POST_SUBSCRIPT
 parse_subscript:
 	while (parser->token->kind == '[') {
 		auto subscript = new_ast<AstSubscript>();
+		subscript->is_prefix = false;
 
 		if (!parser->next_not_end())
 			return 0;
@@ -1648,6 +1657,10 @@ parse_subscript:
 		subscript->expression = sub;
 
 		sub = subscript;
+
+		sub = parse_cast(parser, sub);
+		if (!sub)
+			return 0;
 	}
 #endif
 
@@ -1714,7 +1727,7 @@ parse_subscript:
 	}
 
 	if (sub) {
-#if 0
+#if USE_POST_SUBSCRIPT
 		if (parser->token->kind == '[') {
 			sub = top_binop;
 			goto parse_subscript;
@@ -2280,8 +2293,7 @@ struct TypecheckState {
 
 	bool finished = false;
 
-	cppcoro::generator<TypecheckResult> generator;
-	cppcoro::generator<TypecheckResult>::iterator generator_iterator;
+	CoroutineState state;
 
 	u32 no_progress_counter = 0;
 };
@@ -2292,19 +2304,11 @@ struct TypecheckState {
 	state->current_scope = scope; \
 	defer { state->current_scope = CONCAT(old_scope, __LINE__); };
 
-#define TYPECHECK(arg) \
-	for (auto ret : typecheck(state, arg)) { \
-		if (ret == TypecheckResult::success) { \
-			break; \
-		} \
-		co_yield ret; \
-	}
-
 #define typecheck_scope(scope) \
 	{ \
 		push_scope(scope); \
 		for (auto statement : (scope)->statements) { \
-			TYPECHECK(statement); \
+			typecheck(state, statement); \
 		} \
 	}
 
@@ -2459,7 +2463,7 @@ AstExpression *make_pointer_type(AstExpression *type) {
 	return unop;
 }
 
-cppcoro::generator<TypecheckResult> typecheck(TypecheckState *state, AstExpression *&expression);
+void typecheck(TypecheckState *state, AstExpression *&expression);
 
 struct CastType {
 	AstStruct *from;
@@ -2484,18 +2488,20 @@ bool implicitly_cast(TypecheckState *state, AstExpression **_expression, AstExpr
 		return true;
 	}
 
-	if (expression->type == &type_unsized_integer) {
-		if (type == &type_u8 ||
-			type == &type_u16 ||
-			type == &type_u32 ||
-			type == &type_u64 ||
-			type == &type_s8 ||
-			type == &type_s16 ||
-			type == &type_s32 ||
-			type == &type_s64
-		) {
-			expression->type = type;
-			return true;
+	if (expression->kind == Ast_literal) {
+		auto literal = (AstLiteral *)expression;
+		if (literal->literal_kind == LiteralKind::integer) {
+			auto found_info = find_if(integer_infos, [&](auto &i) { return i.type == type; });
+			if (found_info) {
+				auto &info = *found_info;
+				if (literal->integer < info.min_value || literal->integer > info.max_value) {
+					state->reporter.error(expression->location, "% does not fit into destination type %. You can explicitly bitwise-and this expression with 0x% to discard higher bits", literal->integer, type_to_string(type), FormatInt{.value=info.mask,.radix=16});
+					return false;
+				}
+
+				expression->type = type;
+				return true;
+			}
 		}
 	} else if (expression->type->kind == Ast_unary_operator) {
 		auto unop = (AstUnaryOperator *)expression->type;
@@ -2529,11 +2535,11 @@ bool implicitly_cast(TypecheckState *state, AstExpression **_expression, AstExpr
 	if (state->no_progress_counter == 256) { /* TODO: This is not the best solution */ \
 		auto _definition = definition; \
 		state->reporter.error(name, "Undeclared identifier"); \
-		co_yield TypecheckResult::fail; \
+		yield(TypecheckResult::fail); \
 	} \
-	co_yield TypecheckResult::wait
+	yield(TypecheckResult::wait)
 
-cppcoro::generator<TypecheckResult> _wait_for_definition(AstDefinition *&definition, TypecheckState *state, Span<utf8> name) {
+void _wait_for_definition(AstDefinition *&definition, TypecheckState *state, Span<utf8> name) {
 	while (1) {
 		definition = get_definition(state, name);
 		if (definition) {
@@ -2546,17 +2552,11 @@ cppcoro::generator<TypecheckResult> _wait_for_definition(AstDefinition *&definit
 
 		wait_iteration;
 	}
-	co_yield TypecheckResult::success;
 }
 
 #define wait_for_definition(definition, name) \
 	AstDefinition *definition = 0; \
-	for (auto result : _wait_for_definition(definition, state, name)) { \
-		if (result == TypecheckResult::success) { \
-			break; \
-		} \
-		co_yield result; \
-	}
+	_wait_for_definition(definition, state, name);
 
 bool ensure_addressable(Reporter *reporter, AstExpression *expression) {
 	switch (expression->kind) {
@@ -2625,7 +2625,7 @@ bool ensure_subscriptable(TypecheckState *state, AstExpression *expression) {
 	return true;
 }
 
-cppcoro::generator<TypecheckResult> typecheck(TypecheckState *state, AstStatement *statement) {
+void typecheck(TypecheckState *state, AstStatement *statement) {
 	timed_function();
 
 	auto _statement = statement;
@@ -2637,13 +2637,13 @@ cppcoro::generator<TypecheckResult> typecheck(TypecheckState *state, AstStatemen
 
 			auto &expression = ret->expression;
 			if (expression) {
-				TYPECHECK(expression);
+				typecheck(state, expression);
 				assert(expression->type);
 
 				simplify(&expression);
 
 				if (!implicitly_cast(state, &expression, lambda->return_parameter->type))
-					co_yield TypecheckResult::fail;
+					yield(TypecheckResult::fail);
 			}
 			state->current_lambda->return_statements.add(ret);
 			break;
@@ -2690,7 +2690,7 @@ cppcoro::generator<TypecheckResult> typecheck(TypecheckState *state, AstStatemen
 					state->lambda = (AstLambda *)definition->expression;
 				}
 
-				TYPECHECK(definition->expression);
+				typecheck(state, definition->expression);
 				simplify(&definition->expression);
 			}
 
@@ -2699,12 +2699,12 @@ cppcoro::generator<TypecheckResult> typecheck(TypecheckState *state, AstStatemen
 				// Lambda has already set it's type, so don't typecheck it
 				if (!(definition->expression && definition->expression->kind == Ast_lambda)) {
 
-					TYPECHECK(definition->type);
+					typecheck(state, definition->type);
 					simplify(&definition->type);
 
 					if (definition->expression) {
 						if (!implicitly_cast(state, &definition->expression, definition->type)) {
-							co_yield TypecheckResult::fail;
+							yield(TypecheckResult::fail);
 						}
 					}
 				}
@@ -2719,7 +2719,7 @@ cppcoro::generator<TypecheckResult> typecheck(TypecheckState *state, AstStatemen
 			if (definition->is_constant) {
 				if (!is_constant(definition->expression)) {
 					state->reporter.error(definition->location, "Definition marked as constant, but assigned expression is not constant");
-					co_yield TypecheckResult::fail;
+					yield(TypecheckResult::fail);
 				}
 			}
 
@@ -2728,7 +2728,7 @@ cppcoro::generator<TypecheckResult> typecheck(TypecheckState *state, AstStatemen
 
 				if (definition->is_parameter || (definition->parent_block && definition->parent_block->kind == Ast_struct)) {
 					assert(definition->type);
-					TYPECHECK(definition->type);
+					typecheck(state, definition->type);
 					simplify(&definition->type);
 				} else if (lambda) {
 
@@ -2738,17 +2738,17 @@ cppcoro::generator<TypecheckResult> typecheck(TypecheckState *state, AstStatemen
 
 
 					if (definition->expression) {
-						TYPECHECK(definition->expression);
+						typecheck(state, definition->expression);
 						simplify(&definition->expression);
 					}
 
 					if (definition->type) {
-						TYPECHECK(definition->type);
+						typecheck(state, definition->type);
 						simplify(&definition->type);
 
 						if (definition->expression) {
 							if (!implicitly_cast(state, &definition->expression, definition->type)) {
-								co_yield TypecheckResult::fail;
+								yield(TypecheckResult::fail);
 							}
 						}
 					} else {
@@ -2760,7 +2760,7 @@ cppcoro::generator<TypecheckResult> typecheck(TypecheckState *state, AstStatemen
 					if (definition->is_constant) {
 						if (!is_constant(definition->expression)) {
 							state->reporter.error(definition->location, "Definition marked as constant, but assigned expression is not constant");
-							co_yield TypecheckResult::fail;
+							yield(TypecheckResult::fail);
 						}
 					}
 				} else {
@@ -2780,7 +2780,7 @@ cppcoro::generator<TypecheckResult> typecheck(TypecheckState *state, AstStatemen
 							state->lambda = (AstLambda *)definition->expression;
 						}
 
-						TYPECHECK(definition->expression);
+						typecheck(state, definition->expression);
 						simplify(&definition->expression);
 					}
 
@@ -2788,12 +2788,12 @@ cppcoro::generator<TypecheckResult> typecheck(TypecheckState *state, AstStatemen
 					// If the type is not specified then it will be null, except for lambdas:
 					// Lambda will set the type right after typechecking it's head
 					if (definition->type && !(definition->expression && definition->expression->kind == Ast_lambda)) {
-						TYPECHECK(definition->type);
+						typecheck(state, definition->type);
 
 						if (definition->expression) {
 							if (!convertible(definition->expression, definition->type)) {
 								report_not_convertible(&state->reporter, definition->expression, definition->type);
-								co_yield TypecheckResult::fail;
+								yield(TypecheckResult::fail);
 							}
 						}
 					} else {
@@ -2810,7 +2810,7 @@ cppcoro::generator<TypecheckResult> typecheck(TypecheckState *state, AstStatemen
 							}
 							default: {
 								if (!harden_type(state, &definition->expression, definition->type)) {
-									co_yield TypecheckResult::fail;
+									yield(TypecheckResult::fail);
 								}
 								break;
 							}
@@ -2837,9 +2837,9 @@ cppcoro::generator<TypecheckResult> typecheck(TypecheckState *state, AstStatemen
 		case Ast_if: {
 			auto If = (AstIf *)statement;
 
-			TYPECHECK(If->condition);
+			typecheck(state, If->condition);
 			if (!implicitly_cast(state, &If->condition, &type_bool)) {
-				co_yield TypecheckResult::fail;
+				yield(TypecheckResult::fail);
 			}
 
 			typecheck_scope(&If->true_scope);
@@ -2850,9 +2850,9 @@ cppcoro::generator<TypecheckResult> typecheck(TypecheckState *state, AstStatemen
 		case Ast_while: {
 			auto While = (AstWhile *)statement;
 
-			TYPECHECK(While->condition);
+			typecheck(state, While->condition);
 			if (!implicitly_cast(state, &While->condition, &type_bool)) {
-				co_yield TypecheckResult::fail;
+				yield(TypecheckResult::fail);
 			}
 
 			typecheck_scope(&While->scope);
@@ -2861,7 +2861,7 @@ cppcoro::generator<TypecheckResult> typecheck(TypecheckState *state, AstStatemen
 		}
 		case Ast_expression_statement: {
 			auto es = (AstExpressionStatement *)statement;
-			TYPECHECK(es->expression);
+			typecheck(state, es->expression);
 			break;
 		}
 		case Ast_block: {
@@ -2873,17 +2873,16 @@ cppcoro::generator<TypecheckResult> typecheck(TypecheckState *state, AstStatemen
 			invalid_code_path("invalid statement kind in typecheck");
 		}
 	}
-	co_yield TypecheckResult::success;
 }
 
-cppcoro::generator<TypecheckResult> typecheck(TypecheckState *state, AstExpression *&expression) {
+void typecheck(TypecheckState *state, AstExpression *&expression) {
 	timed_function();
 
 	assert(expression);
 
 	// Skip typechecking builtin expressions
 	if (expression->type && expression->type->type) {
-		co_yield TypecheckResult::success;
+		return;
 	}
 
 	switch (expression->kind) {
@@ -2906,29 +2905,29 @@ cppcoro::generator<TypecheckResult> typecheck(TypecheckState *state, AstExpressi
 			call->definition = definition;
 			if (definition->expression->kind != Ast_lambda) {
 				state->reporter.error(call->location, "Expression in not callable");
-				co_yield TypecheckResult::fail;
+				yield(TypecheckResult::fail);
 			}
 			auto lambda = (AstLambda *)definition->expression;
 			call->lambda = lambda;
 
 			while (!lambda->finished_typechecking_head) {
-				co_yield TypecheckResult::wait;
+				yield(TypecheckResult::wait);
 			}
 
 			if (call->arguments.count != lambda->parameters.count) {
 				state->reporter.error(call->location, "Argument count does not match");
-				co_yield TypecheckResult::fail;
+				yield(TypecheckResult::fail);
 			}
 
 			for (u32 i = 0; i < call->arguments.count; ++i) {
 				auto &argument = call->arguments[i];
 				auto &parameter = lambda->parameters[i];
 
-				TYPECHECK(argument);
+				typecheck(state, argument);
 				simplify(&argument);
 
 				if (!implicitly_cast(state, &argument, parameter->type)) {
-					co_yield TypecheckResult::fail;
+					yield(TypecheckResult::fail);
 				}
 
 			}
@@ -2970,10 +2969,10 @@ cppcoro::generator<TypecheckResult> typecheck(TypecheckState *state, AstExpressi
 			defer { state->current_lambda = old_current_lamdda; };
 
 			assert(lambda->return_parameter);
-			TYPECHECK(lambda->return_parameter);
+			typecheck(state, lambda->return_parameter);
 
 			for (auto parameter : lambda->parameters) {
-				TYPECHECK(parameter);
+				typecheck(state, parameter);
 			}
 
 			// Weird way to check if lambda is global
@@ -3000,17 +2999,17 @@ cppcoro::generator<TypecheckResult> typecheck(TypecheckState *state, AstExpressi
 					if (ret->expression) {
 						if (!harden_type(state, &ret->expression, lambda->return_parameter->type)) {
 							state->reporter.info(lambda->location, "When hardening return statement expression's type (lambda's return type is '%')", type_to_string(lambda->return_parameter->type));
-							co_yield TypecheckResult::fail;
+							yield(TypecheckResult::fail);
 						}
 						if (!convertible(ret->expression, lambda->return_parameter->type)) {
 							report_not_convertible(&state->reporter, ret->expression, lambda->return_parameter->type);
-							co_yield TypecheckResult::fail;
+							yield(TypecheckResult::fail);
 						}
 					} else {
 						if (!types_match(lambda->return_parameter->type, &type_void)) {
 							if (!lambda->return_parameter->name.count) {
 								state->reporter.error(ret->location, "Attempt to return nothing when lambda's return type is '%' and return parameter is unnamed", type_to_string(lambda->return_parameter->type));
-								co_yield TypecheckResult::fail;
+								yield(TypecheckResult::fail);
 							}
 						}
 					}
@@ -3021,7 +3020,7 @@ cppcoro::generator<TypecheckResult> typecheck(TypecheckState *state, AstExpressi
 
 				//if (!do_all_paths_return(lambda)) {
 				//	state->reporter.error(lambda->location, "Not all paths return a value");
-				//	co_yield TypecheckResult::fail;
+				//	yield(TypecheckResult::fail);
 				//}
 			}
 
@@ -3030,7 +3029,7 @@ cppcoro::generator<TypecheckResult> typecheck(TypecheckState *state, AstExpressi
 		case Ast_binary_operator: {
 			auto bin = (AstBinaryOperator *)expression;
 
-			TYPECHECK(bin->left);
+			typecheck(state, bin->left);
 
 			auto report_type_mismatch = [&] {
 				state->reporter.error(bin->location, "Can't use binary '%' on types '%' and '%'", operator_string(bin->operation), type_to_string(bin->left->type), type_to_string(bin->right->type));
@@ -3057,7 +3056,7 @@ cppcoro::generator<TypecheckResult> typecheck(TypecheckState *state, AstExpressi
 						} else {
 							state->reporter.error(bin->right->location, "'%' is not a member of '%'", bin->right->location, Struct->definition->name);
 						}
-						co_yield TypecheckResult::fail;
+						yield(TypecheckResult::fail);
 					}
 
 					switch (bin->right->kind) {
@@ -3071,12 +3070,12 @@ cppcoro::generator<TypecheckResult> typecheck(TypecheckState *state, AstExpressi
 					}
 				} else {
 					state->reporter.error(bin->left->location, "Dot operator can not be applied to an expression of type '%'", type_to_string(bin->left->type));
-					co_yield TypecheckResult::fail;
+					yield(TypecheckResult::fail);
 				}
 				bin->type = bin->right->type;
 
 			} else if (bin->operation == '<' || bin->operation == '>' || bin->operation == '<=' || bin->operation == '>='|| bin->operation == '=='|| bin->operation == '!=') {
-				TYPECHECK(bin->right);
+				typecheck(state, bin->right);
 
 				if (!types_match(bin->left->type, bin->right->type)) {
 					if (bin->left->type == &type_unsized_integer) {
@@ -3090,7 +3089,7 @@ cppcoro::generator<TypecheckResult> typecheck(TypecheckState *state, AstExpressi
 						else if (bin->right->type == &type_s64) bin->left->type = &type_s64;
 						else {
 							report_type_mismatch();
-							co_yield TypecheckResult::fail;
+							yield(TypecheckResult::fail);
 						}
 					} else if (bin->right->type == &type_unsized_integer) {
 						     if (bin->left->type == &type_u8 ) bin->right->type = &type_u8;
@@ -3103,24 +3102,24 @@ cppcoro::generator<TypecheckResult> typecheck(TypecheckState *state, AstExpressi
 						else if (bin->left->type == &type_s64) bin->right->type = &type_s64;
 						else {
 							report_type_mismatch();
-							co_yield TypecheckResult::fail;
+							yield(TypecheckResult::fail);
 						}
 					} else {
 						// report_type_mismatch();
-						// co_yield TypecheckResult::fail;
+						// yield(TypecheckResult::fail);
 					}
 				}
 
 				bin->type = &type_bool;
 
 			} else if (bin->operation == '=') {
-				TYPECHECK(bin->right);
+				typecheck(state, bin->right);
 				if (!ensure_assignable(&state->reporter, bin->left)) {
-					co_yield TypecheckResult::fail;
+					yield(TypecheckResult::fail);
 				}
 
 				if (!implicitly_cast(state, &bin->right, bin->left->type)) {
-					co_yield TypecheckResult::fail;
+					yield(TypecheckResult::fail);
 				}
 				bin->type = &type_void;
 
@@ -3136,9 +3135,9 @@ cppcoro::generator<TypecheckResult> typecheck(TypecheckState *state, AstExpressi
 				bin->operation == '>>=' ||
 				bin->operation == '<<='
 			) {
-				TYPECHECK(bin->right);
+				typecheck(state, bin->right);
 				if (!ensure_assignable(&state->reporter, bin->left)) {
-					co_yield TypecheckResult::fail;
+					yield(TypecheckResult::fail);
 				}
 
 				bin->type = &type_void;
@@ -3155,7 +3154,7 @@ cppcoro::generator<TypecheckResult> typecheck(TypecheckState *state, AstExpressi
 						else if (bin->right->type == &type_s64) bin->left->type = &type_s64;
 						else {
 							report_type_mismatch();
-							co_yield TypecheckResult::fail;
+							yield(TypecheckResult::fail);
 						}
 					} else if (bin->right->type == &type_unsized_integer) {
 								if (bin->left->type == &type_u8 ) bin->right->type = &type_u8;
@@ -3168,11 +3167,11 @@ cppcoro::generator<TypecheckResult> typecheck(TypecheckState *state, AstExpressi
 						else if (bin->left->type == &type_s64) bin->right->type = &type_s64;
 						else {
 							report_type_mismatch();
-							co_yield TypecheckResult::fail;
+							yield(TypecheckResult::fail);
 						}
 					} else {
 						report_type_mismatch();
-						co_yield TypecheckResult::fail;
+						yield(TypecheckResult::fail);
 					}
 				}
 			} else if (
@@ -3187,7 +3186,7 @@ cppcoro::generator<TypecheckResult> typecheck(TypecheckState *state, AstExpressi
 				bin->operation == '<<' ||
 				bin->operation == '^'
 			) {
-				TYPECHECK(bin->right);
+				typecheck(state, bin->right);
 
 				if (types_match(bin->left->type, bin->right->type)) {
 					bin->type = bin->left->type;
@@ -3203,7 +3202,7 @@ cppcoro::generator<TypecheckResult> typecheck(TypecheckState *state, AstExpressi
 						else if (bin->right->type == &type_s64) bin->type = bin->left->type = &type_s64;
 						else {
 							report_type_mismatch();
-							co_yield TypecheckResult::fail;
+							yield(TypecheckResult::fail);
 						}
 					} else if (bin->right->type == &type_unsized_integer) {
 						     if (bin->left->type == &type_u8 ) bin->type = bin->right->type = &type_u8;
@@ -3216,7 +3215,7 @@ cppcoro::generator<TypecheckResult> typecheck(TypecheckState *state, AstExpressi
 						else if (bin->left->type == &type_s64) bin->type = bin->right->type = &type_s64;
 						else {
 							report_type_mismatch();
-							co_yield TypecheckResult::fail;
+							yield(TypecheckResult::fail);
 						}
 					} else {
 						auto left_size = get_size(bin->left->type);
@@ -3229,7 +3228,7 @@ cppcoro::generator<TypecheckResult> typecheck(TypecheckState *state, AstExpressi
 							}
 						} else {
 							report_type_mismatch();
-							co_yield TypecheckResult::fail;
+							yield(TypecheckResult::fail);
 
 						}
 					}
@@ -3255,19 +3254,19 @@ cppcoro::generator<TypecheckResult> typecheck(TypecheckState *state, AstExpressi
 				if (!types_match(bin->left->type, bin->right->type)) {
 					if (bin->left->type == &type_unsized_integer && bin->right->type == &type_unsized_integer) {
 						if (!harden_type(state, &bin->left) || !harden_type(state, &bin->right)) {
-							co_yield TypecheckResult::fail;
+							yield(TypecheckResult::fail);
 						}
 					} else if (bin->left->type == &type_unsized_integer) {
 						if (!harden_type(state, &bin->left, bin->right->type)) {
-							co_yield TypecheckResult::fail;
+							yield(TypecheckResult::fail);
 						}
 					} else if (bin->right->type == &type_unsized_integer) {
 						if (!harden_type(state, &bin->right, bin->left->type)) {
-							co_yield TypecheckResult::fail;
+							yield(TypecheckResult::fail);
 						}
 					} else {
 						state->reporter.error(bin->location, "Invalid binary operator");
-						co_yield TypecheckResult::fail;
+						yield(TypecheckResult::fail);
 					}
 				}
 				bin->type = bin->right->type;
@@ -3281,12 +3280,12 @@ cppcoro::generator<TypecheckResult> typecheck(TypecheckState *state, AstExpressi
 		case Ast_unary_operator: {
 			auto unop = (AstUnaryOperator *)expression;
 
-			TYPECHECK(unop->expression);
+			typecheck(state, unop->expression);
 
 			if (is_type(unop->expression)) {
 				if (unop->operation != '*') {
 					state->reporter.error(unop->location, "Unary operator '%' can not be applied to a type expression", operator_string(unop->operation));
-					co_yield TypecheckResult::fail;
+					yield(TypecheckResult::fail);
 				}
 				unop->type = &type_type;
 			} else {
@@ -3296,20 +3295,20 @@ cppcoro::generator<TypecheckResult> typecheck(TypecheckState *state, AstExpressi
 							unop->type = unop->expression->type;
 						} else {
 							state->reporter.error(unop->location, "Unary minus can not be applied to expression of type '%'", type_to_string(unop->expression->type));
-							co_yield TypecheckResult::fail;
+							yield(TypecheckResult::fail);
 						}
 						break;
 					}
 					case '&': {
 						if (!ensure_addressable(&state->reporter, unop->expression)) {
-							co_yield TypecheckResult::fail;
+							yield(TypecheckResult::fail);
 						}
 						unop->type = make_pointer_type(unop->expression->type);
 						break;
 					}
 					default: {
 						invalid_code_path();
-						co_yield TypecheckResult::fail;
+						yield(TypecheckResult::fail);
 					}
 				}
 			}
@@ -3330,7 +3329,7 @@ cppcoro::generator<TypecheckResult> typecheck(TypecheckState *state, AstExpressi
 			{
 				push_scope(&Struct->scope);
 				for (auto member : Struct->members) {
-					TYPECHECK(member);
+					typecheck(state, member);
 
 					switch (Struct->layout) {
 						case StructLayout::tlang: {
@@ -3362,22 +3361,22 @@ cppcoro::generator<TypecheckResult> typecheck(TypecheckState *state, AstExpressi
 		case Ast_subscript: {
 			auto subscript = (AstSubscript *)expression;
 
-			TYPECHECK(subscript->index_expression);
+			typecheck(state, subscript->index_expression);
 			simplify(&subscript->index_expression);
 
 			harden_type(subscript->index_expression);
 
 			if (!::is_integer(subscript->index_expression->type)) {
 				state->reporter.error(subscript->index_expression->location, "Expression must be of type 'integer' but is '%'", type_to_string(subscript->index_expression->type));
-				co_yield TypecheckResult::fail;
+				yield(TypecheckResult::fail);
 			}
 
-			TYPECHECK(subscript->expression);
+			typecheck(state, subscript->expression);
 			if (is_type(subscript->expression)) {
 				subscript->type = &type_type;
 			} else {
 				if (!ensure_subscriptable(state, subscript->expression)) {
-					co_yield TypecheckResult::fail;
+					yield(TypecheckResult::fail);
 				}
 
 				auto type = subscript->expression->type;
@@ -3390,7 +3389,7 @@ cppcoro::generator<TypecheckResult> typecheck(TypecheckState *state, AstExpressi
 		case Ast_sizeof: {
 			auto size_of = (AstSizeof *)expression;
 
-			TYPECHECK(size_of->expression);
+			typecheck(state, size_of->expression);
 
 			expression = make_integer(get_size(size_of->expression));
 			expression->type = &type_unsized_integer;
@@ -3399,8 +3398,8 @@ cppcoro::generator<TypecheckResult> typecheck(TypecheckState *state, AstExpressi
 		}
 		case Ast_cast: {
 			auto cast = (AstCast *)expression;
-			TYPECHECK(cast->expression);
-			TYPECHECK(cast->type);
+			typecheck(state, cast->expression);
+			typecheck(state, cast->type);
 			simplify(&cast->type);
 
 			auto report_conversion_error = [&] (AstExpression *from, AstExpression *to) {
@@ -3416,7 +3415,7 @@ cppcoro::generator<TypecheckResult> typecheck(TypecheckState *state, AstExpressi
 					// LEAK: cast can be freed
 				} else {
 					report_conversion_error(cast->expression->type, cast->type);
-					co_yield TypecheckResult::fail;
+					yield(TypecheckResult::fail);
 				}
 			} else if (
 				cast->expression->type->kind == Ast_unary_operator && ((AstUnaryOperator *)cast->expression->type)->operation == '*' &&
@@ -3429,7 +3428,7 @@ cppcoro::generator<TypecheckResult> typecheck(TypecheckState *state, AstExpressi
 					cast->cast_kind = found_built_in->kind;
 				} else {
 					report_conversion_error(cast->expression->type, cast->type);
-					co_yield TypecheckResult::fail;
+					yield(TypecheckResult::fail);
 				}
 			}
 			break;
@@ -3437,18 +3436,21 @@ cppcoro::generator<TypecheckResult> typecheck(TypecheckState *state, AstExpressi
 		default: {
 			invalid_code_path();
 			state->reporter.error(expression->location, "Internal error: typecheck(AstExpression *): unhandled case '%'", expression->kind);
-			co_yield TypecheckResult::fail;
+			yield(TypecheckResult::fail);
 		}
 	}
 	auto DEBUG_expression = expression;
 	assert(expression->type);
-	co_yield TypecheckResult::success;
 }
 
-cppcoro::generator<TypecheckResult> typecheck_global(TypecheckState *state) {
-	timed_function();
-	TYPECHECK(state->statement);
-	co_yield TypecheckResult::success;
+void *typecheck_global(CoroutineState &corostate, TypecheckState *state) {
+	{
+		timed_function();
+		typecheck(state, state->statement);
+
+	}
+	yield(TypecheckResult::success);
+	return 0;
 }
 
 bool typecheck_finished;
@@ -3779,9 +3781,9 @@ ParsedArguments parse_arguments(Span<Span<utf8>> arguments) {
 #define COUNT_ALLOCATIONS 1
 #if COUNT_ALLOCATIONS
 static HashMap<std::source_location, u32> allocation_sizes;
-#endif
 
 void print_allocation_count() {
+	print("Allocations:\n");
 	struct AllocationInfo {
 		std::source_location location;
 		u32 size;
@@ -3801,6 +3803,7 @@ void print_allocation_count() {
 		print("%: %\n", a.location, format_bytes(a.size));
 	}
 }
+#endif
 
 #include <tl/masked_block_list.h>
 
@@ -3906,7 +3909,26 @@ auto slab_allocator_func(AllocatorMode mode, void *data, umm old_size, umm new_s
 	return 0;
 }
 
+void next(CoroutineState &state, void *x) {
+	tl_coroutine_yield(state, x);
+}
+
+void *test(CoroutineState &state, void *x) {
+	StringBuilder builder;
+	append_format(builder, "xxxddasdasd\n");
+	tl_coroutine_yield(state, x);
+	print(to_string(builder));
+	next(state, x);
+	return 0;
+}
+
 s32 tl_main(Span<Span<utf8>> arguments) {
+	CoroutineState teststate;
+	init(teststate, test);
+	print("%\n", tl_coroutine_yield(teststate, (void *)15));
+	print("%\n", tl_coroutine_yield(teststate, (void *)255));
+
+
 	auto global_timer = create_precise_timer();
 	defer { print("Execution finished in % ms\n", reset(global_timer) * 1000); };
 
@@ -4218,8 +4240,7 @@ restart_main:
 			bool fail = false;
 			u32 state_index = 0;
 
-			auto process_coroutine_result = [&](auto &state) {
-				auto result = *state.generator_iterator;
+			auto process_coroutine_result = [&](auto &state, auto result) {
 				switch (result) {
 					case TypecheckResult::success:
 					case TypecheckResult::fail:
@@ -4243,13 +4264,8 @@ restart_main:
 
 				auto &state = typecheck_states[state_index];
 				state.statement = statement;
-				construct(state.generator, typecheck_global(&state));
-				construct(state.generator_iterator, state.generator.begin());
+				init(state.state, (Coroutine)typecheck_global, 1024*1024);
 				++state_index;
-
-				if (process_coroutine_result(state) == TypecheckResult::fail) {
-					break;
-				}
 			}
 			if (fail)
 				return 1;
@@ -4264,8 +4280,13 @@ restart_main:
 					if (state.finished)
 						continue;
 
-					++state.generator_iterator;
-					switch (process_coroutine_result(state)) {
+#undef YIELD_STATE
+#define YIELD_STATE state.state
+					assert(state.state.return_addr);
+					assert(state.state.rsp);
+					assert(state.state.stack_base);
+					auto result = (TypecheckResult)(int)yield(&state);
+					switch (process_coroutine_result(state, result)) {
 						//case TypecheckResult::fail:
 						//	goto typecheck_break;
 					}
@@ -4344,11 +4365,10 @@ restart_main:
 	print("debug_parser_resets: %\n", debug_parser_resets);
 	print("debug_allocation_blocks: %\n", debug_allocation_blocks);
 
-	print("Allocations:\n");
-
 #if COUNT_ALLOCATIONS
 	print_allocation_count();
 #endif
+
 	return 0;
 }
 

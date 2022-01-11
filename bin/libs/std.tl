@@ -20,20 +20,20 @@ print_int :: fn (_val : int) {
 	}
 
     i := val;
-    buffer : [64]int;
+    buffer : int[64];
     dst_index := 64;
 
     while i != 0 {
         digit := i % 10;
 
         dst_index -= 1;
-        [dst_index]buffer = digit + '0';
+        buffer[dst_index] = digit + '0';
 
         i /= 10;
     }
 
     while dst_index != 64 {
-        print_char([dst_index]buffer as u8);
+        print_char(buffer[dst_index] as u8);
         dst_index += 1;
     }
 }
@@ -46,7 +46,7 @@ print_hex :: fn (_val : int) {
     }
 
     i := val;
-    buffer : [64]int;
+    buffer : int[64];
     dst_index := 64;
 
     while i != 0 {
@@ -55,15 +55,15 @@ print_hex :: fn (_val : int) {
         dst_index -= 1;
 		
 		if digit < 10
-			[dst_index]buffer = digit + '0';
+			buffer[dst_index] = digit + '0';
 		else 
-			[dst_index]buffer = digit - 10 + 'a';
+			buffer[dst_index] = digit - 10 + 'a';
 
         i >>= 4;
     }
 
     while dst_index != 64 {
-        print_char([dst_index]buffer as u8);
+        print_char(buffer[dst_index] as u8);
         dst_index += 1;
     }
 }

@@ -300,6 +300,7 @@ struct AstSubscript : AstExpression {
 	AstSubscript() { kind = Ast_subscript; }
 	AstExpression *expression = 0;
 	AstExpression *index_expression = 0;
+	bool is_prefix = false;
 };
 
 struct AstTuple : AstExpression {
@@ -454,7 +455,7 @@ Span<utf8> operator_string(u64 op);
 bool is_integer(AstExpression *type);
 bool is_signed(AstExpression *type);
 
-#define OVERLOAD_NEW 1
+#define OVERLOAD_NEW 0
 #if OVERLOAD_NEW
 void *operator new(umm size);
 void *operator new(umm size, std::align_val_t align);

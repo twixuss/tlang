@@ -115,18 +115,18 @@ void print_ast(AstUnaryOperator *node) {
 void print_ast(AstLiteral *node) {
 	print_tabs();
 	if (typecheck_finished) {
-			 if (types_match(node->type, &type_u8  )) print("u8  literal - value: %, uid: %\n", (u8 )node->integer, node->uid);
-		else if (types_match(node->type, &type_u16 )) print("u16 literal - value: %, uid: %\n", (u16)node->integer, node->uid);
-		else if (types_match(node->type, &type_u32 )) print("u32 literal - value: %, uid: %\n", (u32)node->integer, node->uid);
-		else if (types_match(node->type, &type_u64 )) print("u64 literal - value: %, uid: %\n", (u64)node->integer, node->uid);
-		else if (types_match(node->type, &type_s8  )) print("s8  literal - value: %, uid: %\n", (s8 )node->integer, node->uid);
-		else if (types_match(node->type, &type_s16 )) print("s16 literal - value: %, uid: %\n", (s16)node->integer, node->uid);
-		else if (types_match(node->type, &type_s32 )) print("s32 literal - value: %, uid: %\n", (s32)node->integer, node->uid);
-		else if (types_match(node->type, &type_s64 )) print("s64 literal - value: %, uid: %\n", (s64)node->integer, node->uid);
-		else if (types_match(node->type, &type_unsized_integer)) print("unsized integer literal - value: %, uid: %\n", (u64)node->integer, node->uid);
-		else if (types_match(node->type, &type_bool)) print("bool literal - value: %, uid: %\n", node->Bool, node->uid);
-		else if (types_match(node->type, &type_string)) print("string literal - value: %, uid: %\n", node->location, node->uid);
-		else if (node->type == &type_pointer_to_void) print("null literal - uid: %\n", node->uid);
+			 if (node->type == &type_u8  ) print("u8  literal - value: %, uid: %\n", (u8 )node->integer, node->uid);
+		else if (node->type == &type_u16 ) print("u16 literal - value: %, uid: %\n", (u16)node->integer, node->uid);
+		else if (node->type == &type_u32 ) print("u32 literal - value: %, uid: %\n", (u32)node->integer, node->uid);
+		else if (node->type == &type_u64 ) print("u64 literal - value: %, uid: %\n", (u64)node->integer, node->uid);
+		else if (node->type == &type_s8  ) print("s8  literal - value: %, uid: %\n", (s8 )node->integer, node->uid);
+		else if (node->type == &type_s16 ) print("s16 literal - value: %, uid: %\n", (s16)node->integer, node->uid);
+		else if (node->type == &type_s32 ) print("s32 literal - value: %, uid: %\n", (s32)node->integer, node->uid);
+		else if (node->type == &type_s64 ) print("s64 literal - value: %, uid: %\n", (s64)node->integer, node->uid);
+		else if (node->type == &type_unsized_integer) print("unsized integer literal - value: %, uid: %\n", (u64)node->integer, node->uid);
+		else if (node->type == &type_bool) print("bool literal - value: %, uid: %\n", node->Bool, node->uid);
+		else if (node->type == &type_string) print("string literal - value: %, uid: %\n", node->location, node->uid);
+		else if (node->type->kind == Ast_unary_operator) print("pointer literal - value: %, uid: %\n", (s64)node->integer, node->uid);
 		else invalid_code_path();
 	} else {
 		switch (node->literal_kind) {
