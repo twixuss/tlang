@@ -6,6 +6,23 @@ Should we check that all control paths return a value or just default initialize
 
 
 
+
+# Casting rules
+
+## Implicit cast
+
+- Integer conversion with no loss
+
+## Explicit cast
+
+- Integer conversion with loss
+- *X -> *Y
+- *X -> any int
+- any int -> *X
+
+
+
+
 Bytecode:
 
 Functions:

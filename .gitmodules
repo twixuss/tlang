@@ -4,3 +4,6 @@
 [submodule "dep/cppcoro"]
 	path = dep/cppcoro
 	url = https://github.com/lewissbaker/cppcoro/
+[submodule "dep/coro"]
+	path = dep/coro
+	url = https://github.com/twixuss/coro

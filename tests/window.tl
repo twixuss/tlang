@@ -1,6 +1,6 @@
 import "std.tl"
 
-main :: fn () {
+main :: fn () -> int {
 	class_name := "window_class\0".data;
 	window_name := "hello window\0".data;
 
@@ -18,11 +18,8 @@ main :: fn () {
 	};
 	wc.lpszClassName = class_name;
 	wc.hCursor = LoadCursorA(null, IDC_ARROW);
-	if RegisterClassExA(&wc) != 0 {
-		print_string("Class created!\n");
-	} else {
-		print_string("Class Failed!\n");
-	}
+    
+    print_string(if RegisterClassExA(&wc) != 0 then "Class created!\n" else "Class Failed!\n");
 	
 	test := wc;
 	
@@ -31,11 +28,7 @@ main :: fn () {
 		CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, null, null, hInstance, null
 	);
 	
-	if window != null {
-		print_string("Window Success!\n");
-	} else {
-		print_string("Window Fail!\n");
-	}
+	print_string(if window != null then "Window Success!\n" else "Window Fail!\n");
 	
 	msg : MSG;
 	
@@ -47,5 +40,4 @@ main :: fn () {
 			DispatchMessageA(&msg);
 		}
 	}
-	
 }

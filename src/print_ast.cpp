@@ -10,6 +10,11 @@ void print_tabs() {
 	}
 }
 
+#define print_info(...) (print_tabs(), print(__VA_ARGS__))
+//#define print_info(...)
+
+#define print_label(...) (print_tabs(), print(__VA_ARGS__))
+
 void print_ast(AstBinaryOperator *node);
 void print_ast(AstDefinition *node);
 void print_ast(AstLambda *node);
@@ -43,17 +48,16 @@ void print_ast(AstNode *node) {
 		case Ast_subscript: return print_ast((AstSubscript *)node);
 		case Ast_cast : return print_ast((AstCast*)node);
 		default:
-			print_tabs();
-			print("unknown - uid: %\n", node->uid);
+			print_info("unknown - uid: %\n", node->uid);
 			break;
 	}
 }
+
 void print_ast(AstDefinition *node) {
 	if (node->built_in)
 		return;
 
-	print_tabs();
-	print("definition - name: %, type: %, uid: %\n", node->name, type_to_string(node->type, true), node->uid);
+	print_info("definition - name: %, type: %, uid: %\n", node->name, type_to_string(node->type, true), node->uid);
 	if (node->expression) {
 		tab_count += 1;
 		print_ast(node->expression);
@@ -61,8 +65,7 @@ void print_ast(AstDefinition *node) {
 	}
 }
 void print_ast(AstLambda *node) {
-	print_tabs();
-	print("lambda - return_type: %, uid: %\n", "type_to_string(node->return_type, true)", node->uid);
+	print_info("lambda - return_type: %, uid: %\n", type_to_string(node->return_parameter->type, true), node->uid);
 	tab_count += 1;
 	for (auto statement : node->body_scope.statements) {
 		print_ast(statement);
@@ -70,35 +73,33 @@ void print_ast(AstLambda *node) {
 	tab_count -= 1;
 }
 void print_ast(AstIdentifier *node) {
-	print_tabs();
-	print("identifier - type: %, uid: %, definition.uid: %\n", type_to_string(node->type, true), node->uid, node->definition ? node->definition->uid : -1);
+	print_info("identifier - type: %, uid: %, definition.uid: %\n", type_to_string(node->type, true), node->uid, node->definition ? node->definition->uid : -1);
 }
 void print_ast(AstCall *node) {
-	print_tabs();
-	print("call - name: %, type: %, uid: %, definition.uid: %\n", node->name, type_to_string(node->type, true), node->uid, node->definition ? node->definition->uid : -1);
+	print_info("call - type: %, uid: %\n", type_to_string(node->type, true), node->uid);
 	tab_count += 1;
-	print_tabs();
-	print("arguments:\n");
-	tab_count += 1;
-	for (auto argument : node->arguments) {
-		print_ast(argument);
-	}
-	tab_count -= 1;
+		print_label("expression:\n");
+		tab_count += 1;
+			print_ast(node->expression);
+		tab_count -= 1;
+		print_label("arguments:\n");
+		tab_count += 1;
+			for (auto argument : node->arguments) {
+				print_ast(argument);
+			}
+		tab_count -= 1;
 	tab_count -= 1;
 }
 void print_ast(AstBinaryOperator *node) {
-	print_tabs();
-	print("binary - operation: %, type: %, uid: %\n", operator_string(node->operation), type_to_string(node->type, true), node->uid);
+	print_info("binary - operation: %, type: %, uid: %\n", operator_string(node->operation), type_to_string(node->type, true), node->uid);
 	tab_count += 1;
 
-	print_tabs();
-	print("left:\n");
+	print_label("left:\n");
 	tab_count += 1;
 	print_ast(node->left);
 	tab_count -= 1;
 
-	print_tabs();
-	print("right:\n");
+	print_label("right:\n");
 	tab_count += 1;
 	print_ast(node->right);
 	tab_count -= 1;
@@ -106,40 +107,37 @@ void print_ast(AstBinaryOperator *node) {
 	tab_count -= 1;
 }
 void print_ast(AstUnaryOperator *node) {
-	print_tabs();
-	print("unary - operation: %, type: %, uid: %\n", node->operation, type_to_string(node->type, true), node->uid);
+	print_info("unary - operation: %, type: %, uid: %\n", node->operation, type_to_string(node->type, true), node->uid);
 	tab_count += 1;
 	print_ast(node->expression);
 	tab_count -= 1;
 }
 void print_ast(AstLiteral *node) {
-	print_tabs();
 	if (typecheck_finished) {
-			 if (node->type == &type_u8  ) print("u8  literal - value: %, uid: %\n", (u8 )node->integer, node->uid);
-		else if (node->type == &type_u16 ) print("u16 literal - value: %, uid: %\n", (u16)node->integer, node->uid);
-		else if (node->type == &type_u32 ) print("u32 literal - value: %, uid: %\n", (u32)node->integer, node->uid);
-		else if (node->type == &type_u64 ) print("u64 literal - value: %, uid: %\n", (u64)node->integer, node->uid);
-		else if (node->type == &type_s8  ) print("s8  literal - value: %, uid: %\n", (s8 )node->integer, node->uid);
-		else if (node->type == &type_s16 ) print("s16 literal - value: %, uid: %\n", (s16)node->integer, node->uid);
-		else if (node->type == &type_s32 ) print("s32 literal - value: %, uid: %\n", (s32)node->integer, node->uid);
-		else if (node->type == &type_s64 ) print("s64 literal - value: %, uid: %\n", (s64)node->integer, node->uid);
-		else if (node->type == &type_unsized_integer) print("unsized integer literal - value: %, uid: %\n", (u64)node->integer, node->uid);
-		else if (node->type == &type_bool) print("bool literal - value: %, uid: %\n", node->Bool, node->uid);
-		else if (node->type == &type_string) print("string literal - value: %, uid: %\n", node->location, node->uid);
-		else if (node->type->kind == Ast_unary_operator) print("pointer literal - value: %, uid: %\n", (s64)node->integer, node->uid);
+			 if (types_match(node->type, &type_u8  )) print_info("u8  literal - value: %, uid: %\n", (u8 )node->integer, node->uid);
+		else if (types_match(node->type, &type_u16 )) print_info("u16 literal - value: %, uid: %\n", (u16)node->integer, node->uid);
+		else if (types_match(node->type, &type_u32 )) print_info("u32 literal - value: %, uid: %\n", (u32)node->integer, node->uid);
+		else if (types_match(node->type, &type_u64 )) print_info("u64 literal - value: %, uid: %\n", (u64)node->integer, node->uid);
+		else if (types_match(node->type, &type_s8  )) print_info("s8  literal - value: %, uid: %\n", (s8 )node->integer, node->uid);
+		else if (types_match(node->type, &type_s16 )) print_info("s16 literal - value: %, uid: %\n", (s16)node->integer, node->uid);
+		else if (types_match(node->type, &type_s32 )) print_info("s32 literal - value: %, uid: %\n", (s32)node->integer, node->uid);
+		else if (types_match(node->type, &type_s64 )) print_info("s64 literal - value: %, uid: %\n", (s64)node->integer, node->uid);
+		else if (types_match(node->type, &type_unsized_integer)) print_info("unsized integer literal - value: %, uid: %\n", (u64)node->integer, node->uid);
+		else if (types_match(node->type, &type_bool)) print_info("bool literal - value: %, uid: %\n", node->Bool, node->uid);
+		else if (types_match(node->type, &type_string)) print_info("string literal - value: %, uid: %\n", node->location, node->uid);
+		else if (node->type->kind == Ast_unary_operator) print_info("pointer literal - value: %, uid: %\n", (s64)node->integer, node->uid);
 		else invalid_code_path();
 	} else {
 		switch (node->literal_kind) {
-			case LiteralKind::integer: print("integer literal - value: %, uid: %\n", (s64)node->integer, node->uid); break;
-			case LiteralKind::boolean: print("boolean literal - value: %, uid: %\n", node->Bool, node->uid); break;
-			case LiteralKind::string : print( "string literal - value: %, uid: %\n", node->location, node->uid); break;
+			case LiteralKind::integer: print_info("integer literal - value: %, uid: %\n", (s64)node->integer, node->uid); break;
+			case LiteralKind::boolean: print_info("boolean literal - value: %, uid: %\n", node->Bool, node->uid); break;
+			case LiteralKind::string : print_info( "string literal - value: %, uid: %\n", node->location, node->uid); break;
 			default: invalid_code_path();
 		}
 	}
 }
 void print_ast(AstReturn *node) {
-	print_tabs();
-	print("return - uid: %\n", node->uid);
+	print_info("return - uid: %\n", node->uid);
 	if (node->expression) {
 		tab_count += 1;
 		print_ast(node->expression);
@@ -147,11 +145,10 @@ void print_ast(AstReturn *node) {
 	}
 }
 void print_ast(AstStruct *node) {
-	print_tabs();
 	if (node->definition)
-		print("struct - name: %, uid: %\n", node->definition->name, node->uid);
+		print_info("struct - name: %, uid: %\n", node->definition->name, node->uid);
 	else
-		print("struct - unnamed, uid: %\n", node->uid);
+		print_info("struct - unnamed, uid: %\n", node->uid);
 	tab_count += 1;
 	for (auto member : node->members) {
 		print_ast(member);
@@ -159,19 +156,19 @@ void print_ast(AstStruct *node) {
 	tab_count -= 1;
 }
 void print_ast(AstIf *node) {
-	print_tabs(); print("if - uid: %\n", node->uid);
+	print_info("if - uid: %\n", node->uid);
 	tab_count += 1;
-	print_tabs(); print("condition:\n");
+	print_label("condition:\n");
 	tab_count += 1;
 	print_ast(node->condition);
 	tab_count -= 1;
-	print_tabs(); print("true statements:\n");
+	print_label("true statements:\n");
 	tab_count += 1;
 	for (auto statement : node->true_scope.statements) {
 		print_ast(statement);
 	}
 	tab_count -= 1;
-	print_tabs(); print("false statements:\n");
+	print_label("false statements:\n");
 	tab_count += 1;
 	for (auto statement : node->false_scope.statements) {
 		print_ast(statement);
@@ -183,29 +180,26 @@ void print_ast(AstExpressionStatement *node) {
 	print_ast(node->expression);
 }
 void print_ast(AstSubscript *node) {
-	print_tabs();
-	print("subscript - type: %, uid: %\n", type_to_string(node->type, true), node->uid);
+	print_info("subscript - type: %, uid: %\n", type_to_string(node->type, true), node->uid);
 	tab_count += 1;
-	print_tabs();
-	print("index expression:\n");
+	print_label("index expression:\n");
 	tab_count += 1;
 	print_ast(node->index_expression);
 	tab_count -= 1;
-	print_tabs();
-	print("expression:\n");
+	print_label("expression:\n");
 	tab_count += 1;
 	print_ast(node->expression);
 	tab_count -= 1;
 	tab_count -= 1;
 }
 void print_ast(AstWhile *node) {
-	print_tabs(); print("while - uid: %\n", node->uid);
+	print_info("while - uid: %\n", node->uid);
 	tab_count += 1;
-	print_tabs(); print("condition:\n");
+	print_label("condition:\n");
 	tab_count += 1;
 	print_ast(node->condition);
 	tab_count -= 1;
-	print_tabs(); print("statements:\n");
+	print_label("statements:\n");
 	tab_count += 1;
 	for (auto statement : node->scope.statements) {
 		print_ast(statement);
@@ -214,7 +208,7 @@ void print_ast(AstWhile *node) {
 	tab_count -= 1;
 }
 void print_ast(AstCast*cast) {
-	print_tabs(); print("cast - type: %, uid: %\n", type_to_string(cast->type), cast->uid);
+	print_info("cast - type: %, uid: %\n", type_to_string(cast->type), cast->uid);
 	print_ast(cast->expression);
 }
 

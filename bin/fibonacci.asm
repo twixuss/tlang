@@ -114,7 +114,7 @@ call [WriteConsoleA]; bytecode.cpp:829
 .15: push 0; bytecode.cpp:877
 ; literal 1
 .16: push 1; bytecode.cpp:873
-; cast from '*u8' to '*void';push_address_of char
+; push_address_of char
 .17: push rbp; bytecode.cpp:299
 .18: add qword [rsp], 16; bytecode.cpp:300
 ; call GetStdHandle

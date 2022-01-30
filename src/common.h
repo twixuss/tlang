@@ -1,5 +1,5 @@
 #pragma once
-#define TL_PARENT_SOURCE_LOCATION 1
+#define TL_PARENT_SOURCE_LOCATION 0
 #define TL_ENABLE_PROFILER 0
 #include <source_location>
 #include <cstring>
@@ -39,4 +39,8 @@ List<utf8> where(utf8 *location);
 template <>
 inline umm get_hash(std::source_location l) {
 	return get_hash(l.column()) ^ get_hash(l.line());
+}
+
+inline bool operator==(Span<utf8> a, char const *b) {
+	return as_chars(a) == as_span(b);
 }

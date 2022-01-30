@@ -41,21 +41,33 @@ static Span<utf8> cmpu_string(Comparison c) {
 }
 
 static umm append(StringBuilder &builder, Register r) {
+	using enum Register;
 	switch (r) {
-		case Register::r0: return append(builder, "r8");
-		case Register::r1: return append(builder, "r9");
-		case Register::r2: return append(builder, "r10");
-		case Register::r3: return append(builder, "r11");
-		case Register::r4: return append(builder, "r12");
-		case Register::r5: return append(builder, "r13");
-		case Register::r6: return append(builder, "r14");
-		case Register::r7: return append(builder, "r15");
-		case Register::rs:  return append(builder, "rsp");
-		case Register::rb:  return append(builder, "rbp");
+		case r0: return append(builder, "r8");
+		case r1: return append(builder, "r9");
+		case r2: return append(builder, "r10");
+		case r3: return append(builder, "r11");
+		case r4: return append(builder, "r12");
+		case r5: return append(builder, "r13");
+		case r6: return append(builder, "r14");
+		case r7: return append(builder, "r15");
+		case rs:  return append(builder, "rsp");
+		case rb:  return append(builder, "rbp");
 		default:
 			invalid_code_path();
 	}
-	return append(builder, (u8)r);
+}
+
+static umm append(StringBuilder &builder, XRegister r) {
+	using enum XRegister;
+	switch (r) {
+		case x0: return append(builder, "xmm0");
+		case x1: return append(builder, "xmm1");
+		case x2: return append(builder, "xmm2");
+		case x3: return append(builder, "xmm3");
+		default:
+			invalid_code_path();
+	}
 }
 
 static Span<utf8> locate_msvc() {
@@ -210,6 +222,10 @@ static void append_instructions(StringBuilder &builder, List<Instruction> instru
 		return r;
 	};
 
+	auto move_stdcall_registers = [&] {
+		append(builder, "mov rcx, r8\nmov rdx, r9\nmov r8, r10\nmov r9, r11\n");
+	};
+
 	s64 idx = 0;
 	for (auto i : instructions) {
 		append_format(builder, ".%: ", l(idx));
@@ -291,6 +307,7 @@ static void append_instructions(StringBuilder &builder, List<Instruction> instru
 			case cmpu4: append_format(builder, "xor %, %\ncmp %, %\nset% %", i.cmpu4.d, i.cmpu4.d, part4b(i.cmpu4.a), part4b(i.cmpu4.b), cmpu_string(i.cmpu4.c), part1b(i.cmpu4.d)); break;
 			case cmpu8: append_format(builder, "xor %, %\ncmp %, %\nset% %", i.cmpu8.d, i.cmpu8.d, part8b(i.cmpu8.a), part8b(i.cmpu8.b), cmpu_string(i.cmpu8.c), part1b(i.cmpu8.d)); break;
 
+			case popcall: append(builder, "pop rax\ncall rax"); break;
 			case call_constant: append_format(builder, "call .%", l(i.call_constant.constant)); break;
 			case call_string:   append_format(builder, "call %", i.call_string.string); break;
 
@@ -335,16 +352,49 @@ static void append_instructions(StringBuilder &builder, List<Instruction> instru
 				break;
 			}
 
+			case popstdcall:
+				move_stdcall_registers();
+				append(builder, "pop rax\ncall rax");
+				break;
 			case stdcall_constant: {
-				append_format(builder, "mov rcx, r8\nmov rdx, r9\nmov r8, r10\nmov r9, r11\ncall .%", l(i.stdcall_constant.constant));
+				move_stdcall_registers();
+				append_format(builder, "call .%", l(i.stdcall_constant.constant));
 				break;
 			}
 			case stdcall_string: {
-				append_format(builder, "mov rcx, r8\nmov rdx, r9\nmov r8, r10\nmov r9, r11\ncall %", i.stdcall_string.string);
+				move_stdcall_registers();
+				append_format(builder, "call %", i.stdcall_string.string);
 				break;
 			}
 
 			case push_stdcall_result: append(builder, "push rax"); break;
+
+			case stdcall_m:
+				move_stdcall_registers();
+				append_format(builder, "call qword [%]", i.stdcall_m.s);
+				break;
+
+			case call_m:
+				append_format(builder, "call qword [%]", i.call_m.s);
+				break;
+
+			case lea:
+				append_format(builder, "lea %, [% + %]", i.lea.d, i.lea.s, i.lea.offset);
+				break;
+
+			case cvtf64s64:
+				append(builder, "cvtsd2si rax, [rsp]\nmov [rsp], rax");
+				break;
+
+			case mov_f64r:
+				append_format(builder, "movq %, %", i.mov_f64r.d, i.mov_f64r.s);
+				break;
+	        case add_f64:
+				append_format(builder, "addsd %, %", i.add_f64.d, i.add_f64.s);
+				break;
+	        case mov_rf64:
+				append_format(builder, "movq %, %", i.mov_rf64.d, i.mov_rf64.s);
+				break;
 
 			default:invalid_code_path();
 		}
@@ -424,7 +474,7 @@ void output_nasm_x86_64_windows(Bytecode &bytecode) {
 		wkits_directory
 	);
 	for_each(bytecode.extern_libraries, [&](auto library, auto) {
-		append_format(bat_builder, " %", library);
+		append_format(bat_builder, " %.lib", library);
 	});
 
 	auto bat_path = to_pathchars(concatenate(executable_directory, "\\nasm_build.bat"s));

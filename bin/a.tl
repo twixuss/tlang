@@ -1,6 +1,6 @@
-foo :: fn (val: u64) -> s64 {
-	return val as s64;
-}
+
 main :: fn () -> s64 {
-	return foo(-1 as u64);
+    a: f64 = 41.9;
+    b: f64 = 58.9;
+    return (a * b - a / b) as s64;
 }

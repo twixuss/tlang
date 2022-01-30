@@ -41,21 +41,33 @@ static Span<utf8> cmpu_string(Comparison c) {
 }
 
 static umm append(StringBuilder &builder, Register r) {
+	using enum Register;
 	switch (r) {
-		case Register::r0: return append(builder, "r8");
-		case Register::r1: return append(builder, "r9");
-		case Register::r2: return append(builder, "r10");
-		case Register::r3: return append(builder, "r11");
-		case Register::r4: return append(builder, "r12");
-		case Register::r5: return append(builder, "r13");
-		case Register::r6: return append(builder, "r14");
-		case Register::r7: return append(builder, "r15");
-		case Register::rs:  return append(builder, "rsp");
-		case Register::rb:  return append(builder, "rbp");
+		case r0: return append(builder, "r8");
+		case r1: return append(builder, "r9");
+		case r2: return append(builder, "r10");
+		case r3: return append(builder, "r11");
+		case r4: return append(builder, "r12");
+		case r5: return append(builder, "r13");
+		case r6: return append(builder, "r14");
+		case r7: return append(builder, "r15");
+		case rs:  return append(builder, "rsp");
+		case rb:  return append(builder, "rbp");
 		default:
 			invalid_code_path();
 	}
-	return append(builder, (u8)r);
+}
+
+static umm append(StringBuilder &builder, XRegister r) {
+	using enum XRegister;
+	switch (r) {
+		case x0: return append(builder, "xmm0");
+		case x1: return append(builder, "xmm1");
+		case x2: return append(builder, "xmm2");
+		case x3: return append(builder, "xmm3");
+		default:
+			invalid_code_path();
+	}
 }
 
 static Span<utf8> locate_msvc() {
@@ -210,6 +222,10 @@ static void append_instructions(StringBuilder &builder, List<Instruction> instru
 		return r;
 	};
 
+	auto move_stdcall_registers = [&] {
+		append(builder, "mov rcx, r8\nmov rdx, r9\nmov r8, r10\nmov r9, r11\n");
+	};
+
 	s64 idx = 0;
 	for (auto i : instructions) {
 		append_format(builder, ".%: ", l(idx));
@@ -232,10 +248,22 @@ static void append_instructions(StringBuilder &builder, List<Instruction> instru
 
 			case push_r: append_format(builder, "push %", i.push_r.s); break;
 			case push_c:
-				if (i.push_c.s > max_value<u32>) {
-					append_format(builder, "push dword %\nmov dword [rsp+4], %", (s32)i.push_c.s, (s32)(i.push_c.s >> 32));
+				if (min_value<s32> <= i.push_c.s && i.push_c.s <= max_value<s32>) {
+					append_format(builder, "push qword %", (s32)i.push_c.s);
 				} else {
-					append_format(builder, "push %", (s32)i.push_c.s);
+					//if (i.push_c.s & 0x80000000) {
+						append_format(builder,
+							"sub rsp, 8\nmov dword [rsp], %\nmov dword [rsp+4], %",
+							(s32)i.push_c.s       ,
+							(s32)(i.push_c.s >> 32)
+						);
+					//} else {
+					//	append_format(builder,
+					//		"push dword %\nmov dword [rsp+4], %",
+					//		(s32)i.push_c.s       ,
+					//		(s32)(i.push_c.s >> 32)
+					//	);
+					//}
 				}
 				break;
 			case push_m: append_format(builder, "push        qword [%]"           , i.push_m.s); break;
@@ -244,7 +272,7 @@ static void append_instructions(StringBuilder &builder, List<Instruction> instru
 			case pushda:     append_format(builder, "mov rax, data + %\npush rax"     , i.pushda.s); break;
 			case pushuda:    append_format(builder, "mov rax, zeros + %\npush rax"    , i.pushuda.s); break;
 			case pushta:     append_format(builder, "mov rax, .%\npush rax"           , l(i.pushta.s)); break;
-			case pushextern: append_format(builder, "mov rax, %\npush rax"            , i.pushextern.s); break;
+			case pushextern: append_format(builder, "push [%]"            , i.pushextern.s); break;
 
 			case pop_r: append_format(builder, "pop %", i.pop_r.d); break;
 
@@ -276,7 +304,16 @@ static void append_instructions(StringBuilder &builder, List<Instruction> instru
 			case or_mr: append_format(builder, "or qword [%], %", i. or_mr.d, i. or_mr.s); break;
 
 			case and_rc: append_format(builder, "and %, %"        , i.and_rc.d, i.and_rc.s); break;
-			case and_mc: append_format(builder, "and qword [%], %", i.and_mc.d, i.and_mc.s); break;
+			case and_mc:
+				if (~i.and_mc.s & 0xffffffff00000000) {
+					auto l = (s32)i.and_mc.s;
+					auto h = (s32)((u64)i.and_mc.s >> 32);
+					append_format(builder, "and dword [%], %\n"  , i.and_mc.d, l);
+					append_format(builder, "and dword [% + 4], %", i.and_mc.d, h);
+				} else {
+					append_format(builder, "and qword [%], %", i.and_mc.d, (s32)i.and_mc.s);
+				}
+				break;
 			case and_mr: append_format(builder, "and qword [%], %", i.and_mr.d, i.and_mr.s); break;
 
 			case xor_rr: append_format(builder, "xor %, %"        , i.xor_rr.d, i.xor_rr.s); break;
@@ -291,6 +328,7 @@ static void append_instructions(StringBuilder &builder, List<Instruction> instru
 			case cmpu4: append_format(builder, "xor %, %\ncmp %, %\nset% %", i.cmpu4.d, i.cmpu4.d, part4b(i.cmpu4.a), part4b(i.cmpu4.b), cmpu_string(i.cmpu4.c), part1b(i.cmpu4.d)); break;
 			case cmpu8: append_format(builder, "xor %, %\ncmp %, %\nset% %", i.cmpu8.d, i.cmpu8.d, part8b(i.cmpu8.a), part8b(i.cmpu8.b), cmpu_string(i.cmpu8.c), part1b(i.cmpu8.d)); break;
 
+			case popcall: append(builder, "pop rax\ncall rax"); break;
 			case call_constant: append_format(builder, "call .%", l(i.call_constant.constant)); break;
 			case call_string:   invalid_code_path(); append_format(builder, "call [%]", i.call_string.string); break;
 
@@ -310,6 +348,10 @@ static void append_instructions(StringBuilder &builder, List<Instruction> instru
 				break;
 			case copyb_ssc:
 				append_format(builder, "mov rcx, %\npop rsi\npop rdi\nadd rsi, %\nadd rdi, %\nstd\nrep movsb", i.copyb_ssc.size, i.copyb_ssc.size - 1, i.copyb_ssc.size - 1);
+				break;
+
+			case set_mcc:
+				append_format(builder, "mov rdi, %\nmov al, %\nmov rcx, %\ncld\nrep stosb", i.set_mcc.d, i.set_mcc.s, i.set_mcc.size);
 				break;
 
 			case stdcall_begin_lambda: {
@@ -335,16 +377,51 @@ static void append_instructions(StringBuilder &builder, List<Instruction> instru
 				break;
 			}
 
+			case popstdcall:
+				move_stdcall_registers();
+				append(builder, "pop rax\ncall rax");
+				break;
 			case stdcall_constant: {
-				append_format(builder, "mov rcx, r8\nmov rdx, r9\nmov r8, r10\nmov r9, r11\ncall .%", l(i.stdcall_constant.constant));
+				move_stdcall_registers();
+				append_format(builder, "call .%", l(i.stdcall_constant.constant));
 				break;
 			}
 			case stdcall_string: {
-				append_format(builder, "mov rcx, r8\nmov rdx, r9\nmov r8, r10\nmov r9, r11\ncall [%]", i.stdcall_string.string);
+				move_stdcall_registers();
+				append_format(builder, "call [%]", i.stdcall_string.string);
 				break;
 			}
 
 			case push_stdcall_result: append(builder, "push rax"); break;
+
+			case stdcall_m:
+				move_stdcall_registers();
+				append_format(builder, "call qword [%]", i.stdcall_m.s);
+				break;
+
+			case call_m:
+				append_format(builder, "call qword [%]", i.call_m.s);
+				break;
+
+			case lea:
+				append_format(builder, "lea %, [% + %]", i.lea.d, i.lea.s, i.lea.offset);
+				break;
+
+			case cvtf64s64:
+				append(builder, "cvtsd2si rax, [rsp]\nmov [rsp], rax");
+				break;
+
+			case mov_f64r:
+				append_format(builder, "movq %, %", i.mov_f64r.d, i.mov_f64r.s);
+				break;
+	        case mov_rf64:
+				append_format(builder, "movq %, %", i.mov_rf64.d, i.mov_rf64.s);
+				break;
+
+	        case add_f64: append_format(builder, "addsd %, %", i.add_f64.d, i.add_f64.s); break;
+	        case sub_f64: append_format(builder, "subsd %, %", i.sub_f64.d, i.sub_f64.s); break;
+	        case mul_f64: append_format(builder, "mulsd %, %", i.mul_f64.d, i.mul_f64.s); break;
+	        case div_f64: append_format(builder, "divsd %, %", i.div_f64.d, i.div_f64.s); break;
 
 			default:invalid_code_path();
 		}

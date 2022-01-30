@@ -44,6 +44,8 @@ enum class InstructionKind : u8 {
 	movsx82_rm,
 	movsx84_rm,
 
+	lea,
+
 	push_r,
 	push_c,
 	push_m,
@@ -129,6 +131,14 @@ enum class InstructionKind : u8 {
 	cmps4,
 	cmps8,
 
+	call_r,
+	call_m,
+
+	stdcall_r,
+	stdcall_m,
+
+	popcall,
+	popstdcall,
 	call_constant,
 	call_string,
 
@@ -140,6 +150,8 @@ enum class InstructionKind : u8 {
 	copyf_ssc,
 	copyb_ssc,
 
+	set_mcc,
+
 	stdcall_begin_lambda,
 	stdcall_end_lambda,
 
@@ -147,6 +159,16 @@ enum class InstructionKind : u8 {
 	stdcall_string,
 
 	push_stdcall_result,
+
+	cvtf64s64,
+
+	mov_f64r,
+	mov_rf64,
+
+	add_f64,
+	sub_f64,
+	mul_f64,
+	div_f64,
 
 	count,
 };
@@ -167,8 +189,20 @@ enum class Register : u8 {
 	rb,
 };
 
+enum class XRegister : u8 {
+	x0,
+	x1,
+	x2,
+	x3,
+};
+
+enum InstructionFlags : u8 {
+	InstructionFlags_jump_destination = 0x1,
+};
+
 struct Instruction {
 	InstructionKind kind;
+	InstructionFlags flags;
 #if BYTECODE_DEBUG
 	utf8 *comment;
 	u64 line;
@@ -199,6 +233,8 @@ struct Instruction {
 		struct { Register d, s; } movsx42_rm;
 		struct { Register d, s; } movsx82_rm;
 		struct { Register d, s; } movsx84_rm;
+
+		struct { Register d, s; s64 offset; } lea;
 
 		struct { s64      s; } push_c;
 		struct { Register s; } push_r;
@@ -286,6 +322,14 @@ struct Instruction {
 		struct { Register d, a, b; Comparison c; } cmps4;
 		struct { Register d, a, b; Comparison c; } cmps8;
 
+		struct { Register s; } call_r;
+		struct { Register s; } call_m;
+
+		struct { Register s; } stdcall_r;
+		struct { Register s; } stdcall_m;
+
+		struct {} popcall;
+		struct {} popstdcall;
 		struct { s64 constant; } call_constant;
 		struct { Span<utf8> string; } call_string;
 
@@ -297,6 +341,8 @@ struct Instruction {
 		struct { s64 size; } copyf_ssc;
 		struct { s64 size; } copyb_ssc;
 
+		struct { Register d; s64 s, size; } set_mcc;
+
 		struct { AstLambda *lambda; } stdcall_begin_lambda;
 		struct { AstLambda *lambda; } stdcall_end_lambda;
 
@@ -304,6 +350,16 @@ struct Instruction {
 		struct { Span<utf8> string; } stdcall_string;
 
 		struct {} push_stdcall_result;
+
+		struct {} cvtf64s64;
+
+		struct { XRegister d; Register s; } mov_f64r;
+		struct { Register d; XRegister s; } mov_rf64;
+
+		struct { XRegister d; XRegister s; } add_f64;
+		struct { XRegister d; XRegister s; } sub_f64;
+		struct { XRegister d; XRegister s; } mul_f64;
+		struct { XRegister d; XRegister s; } div_f64;
 	};
 };
 

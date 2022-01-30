@@ -13,6 +13,8 @@ E(struct,   0x2000008) \
 E(import,   0x2000009) \
 E(null,     0x200000a) \
 E(as,       0x200000b) \
+E(then,     0x200000c) \
+E(simd,     0x200000d) \
 
 #define ENUMERATE_TOKEN_KINDS(E) \
 E(identifier,        0x1000000) \
@@ -20,6 +22,7 @@ E(integer_literal,   0x1000001) \
 E(string_literal,    0x1000002) \
 E(directive,         0x1000003) \
 E(character_literal, 0x1000004) \
+E(float_literal,     0x1000005) \
 ENUMERATE_KEYWORDS(E) \
 
 using TokenKind = u32;

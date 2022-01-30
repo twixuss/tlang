@@ -82,9 +82,9 @@ MSG :: struct {
 
 LPMSG :: *MSG;
 
-STD_INPUT_HANDLE  :: -10; // The standard input device. Initially, this is the console input buffer, CONIN$.
-STD_OUTPUT_HANDLE :: -11; // The standard output device. Initially, this is the active console screen buffer, CONOUT$.
-STD_ERROR_HANDLE  :: -12; // The standard error device. Initially, this is the active console screen buffer, CONOUT$.
+STD_INPUT_HANDLE  :: -10 as u32; // The standard input device. Initially, this is the console input buffer, CONIN$.
+STD_OUTPUT_HANDLE :: -11 as u32; // The standard output device. Initially, this is the active console screen buffer, CONOUT$.
+STD_ERROR_HANDLE  :: -12 as u32; // The standard error device. Initially, this is the active console screen buffer, CONOUT$.
 
 SECURITY_ATTRIBUTES :: void;
 OVERLAPPED :: void;

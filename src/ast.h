@@ -22,6 +22,8 @@ e(block) \
 e(tuple) \
 e(cast) \
 e(sizeof) \
+e(test) \
+e(ifx) \
 
 enum AstKind {
 #define e(name) Ast_ ## name,
@@ -116,6 +118,8 @@ enum class LiteralKind : u8 {
 	boolean,
 	string,
 	character,
+	noinit,
+	Float,
 };
 
 struct AstLiteral : AstExpression {
@@ -129,7 +133,8 @@ struct AstLiteral : AstExpression {
 			Span<utf8> string;
 			s64 string_data_offset;
 		};
-		utf8 character;
+		u32 character;
+		f64 Float;
 	};
 
 	AstLiteral() {
@@ -188,9 +193,9 @@ struct AstLambda : AstExpression {
 
 	// HashMap<Span<utf8>, AstDefinition *> local_definitions;
 
-	bool has_body = true;
-
-	bool finished_typechecking_head = false;
+	bool has_body                   : 1 = true;
+	bool is_type                    : 1 = false;
+	bool finished_typechecking_head : 1 = false;
 
 	ExternLanguage extern_language = {};
 	Span<utf8> extern_library;
@@ -216,13 +221,9 @@ struct AstLambda : AstExpression {
 struct AstCall : AstExpression {
 	AstCall() { kind = Ast_call; }
 
-	AstDefinition *definition = 0;
-
-	AstLambda *lambda = 0;
-
+	AstExpression *expression = 0;
 	List<AstExpression *> arguments;
 
-	Span<utf8> name;
 };
 
 enum class StructLayout {
@@ -275,7 +276,39 @@ struct AstWhile : AstStatement {
 	Scope scope;
 };
 
-using BinaryOperation = u32;
+enum class BinaryOperation {
+	dot,     // .
+    ass,     // =
+    add,     // +
+    sub,     // -
+    mul,     // *
+    div,     // /
+    mod,     // %
+    bxor,    // ^
+    band,    // &
+    bor,     // |
+    bsl,     // <<
+    bsr,     // >>
+    eq,      // ==
+    ne,      // !=
+    gt,      // >
+    lt,      // <
+    ge,      // >=
+    le,      // <=
+    land,    // &&
+    lor,     // ||
+    addass,  // +=
+    subass,  // -=
+    mulass,  // *=
+    divass,  // /=
+    modass,  // %=
+    bxorass, // ^=
+    bandass, // &=
+    borass,  // |=
+    bslass,  // <<=
+    bsrass,  // >>=
+    count,
+};
 
 struct AstBinaryOperator : AstExpression {
 	AstBinaryOperator() { kind = Ast_binary_operator; }
@@ -300,7 +333,11 @@ struct AstSubscript : AstExpression {
 	AstSubscript() { kind = Ast_subscript; }
 	AstExpression *expression = 0;
 	AstExpression *index_expression = 0;
-	bool is_prefix = false;
+
+	u64 simd_size = 0;
+
+	bool is_prefix : 1 = false;
+	bool is_simd   : 1 = false;
 };
 
 struct AstTuple : AstExpression {
@@ -376,7 +413,9 @@ enum class CastKind {
 	s64_u32,
 	s64_u64,
 
-	pointer,
+	f64_s64,
+
+	no_op,
 };
 
 struct AstCast : AstExpression {
@@ -393,6 +432,26 @@ struct AstSizeof : AstExpression {
 	AstExpression *expression = 0;
 };
 
+struct AstTest : AstStatement {
+	AstTest() {
+		kind = Ast_test;
+		scope.node = this;
+	}
+
+	bool should_compile = false;
+
+	Scope scope;
+};
+
+struct AstIfx : AstExpression {
+	AstIfx() {
+		kind = Ast_ifx;
+	}
+	AstExpression *condition = 0;
+	AstExpression *true_expression = 0;
+	AstExpression *false_expression = 0;
+};
+
 extern AstStruct type_type;
 extern AstStruct type_void;
 extern AstStruct type_bool;
@@ -404,11 +463,17 @@ extern AstStruct type_s8;
 extern AstStruct type_s16;
 extern AstStruct type_s32;
 extern AstStruct type_s64;
+extern AstStruct type_f32;
+extern AstStruct type_f64;
 extern AstStruct type_string;
-extern AstUnaryOperator type_pointer_to_void;
-
+extern AstStruct type_noinit;
 extern AstStruct type_unsized_integer;
+extern AstStruct type_unsized_float;
+inline constexpr u32 built_in_struct_count = 14;
+
+extern AstUnaryOperator type_pointer_to_void;
 extern AstStruct *type_default_integer;
+extern AstStruct *type_default_float;
 
 extern Scope global_scope;
 
@@ -445,12 +510,14 @@ bool types_match(AstExpression *type_a, AstExpression *type_b);
 bool is_type(AstExpression *expression);
 
 AstStruct *get_struct(AstExpression *type);
+AstExpression *direct(AstExpression *type);
 
 void init_ast_allocator();
 
 extern AstLambda *main_lambda;
 
 Span<utf8> operator_string(u64 op);
+Span<utf8> operator_string(BinaryOperation op);
 
 bool is_integer(AstExpression *type);
 bool is_signed(AstExpression *type);
@@ -462,3 +529,12 @@ void *operator new(umm size, std::align_val_t align);
 void operator delete(void *);
 void operator delete(void *, umm size);
 #endif
+
+bool is_pointer(AstExpression *type);
+
+AstLiteral *get_literal(AstExpression *expression);
+bool is_constant(AstExpression *expression);
+AstLambda *get_lambda(AstExpression *expression);
+
+bool struct_is_built_in(AstStruct *type);
+bool type_is_built_in(AstExpression *type);
