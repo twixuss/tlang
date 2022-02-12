@@ -540,7 +540,6 @@ static void append(Converter &conv, AstDefinition *definition) {
 		}
 	}
 }
-
 static void append(Converter &conv, AstReturn *ret) {
 	push_comment(conv, u8"return"s);
 
@@ -578,7 +577,6 @@ static void append(Converter &conv, AstReturn *ret) {
 	I(ret);
 	*/
 }
-
 static void append(Converter &conv, AstBinaryOperator *bin) {
 	push_comment(conv, format(u8"binary %"s, operator_string(bin->operation)));
 
@@ -1263,7 +1261,14 @@ static void append(Converter &conv, AstLambda *lambda, bool push_address) {
 		conv.body_builder->add(MI(push_r, rb));
 		conv.body_builder->add(MI(mov_rr, rb, rs));
 
-		append_memory_set(conv, rb+16, 0, ceil(get_size(lambda->return_parameter->type)));
+		s64 parameter_size_accumulator = 0;
+		for (auto parameter : lambda->parameters) {
+			parameter->bytecode_offset = parameter_size_accumulator;
+			parameter_size_accumulator += ceil(get_size(parameter->type));
+		}
+		lambda->parameters_size = parameter_size_accumulator;
+
+		append_memory_set(conv, rb+16+lambda->parameters_size, 0, ceil(get_size(lambda->return_parameter->type)));
 
 
 		if (lambda->definition) {
@@ -1276,14 +1281,7 @@ static void append(Converter &conv, AstLambda *lambda, bool push_address) {
 		conv.lambda = lambda;
 		defer { conv.lambda = old_lambda; };
 
-		auto calc_parameter_offsets_and_append_body = [&] {
-			s64 parameter_size_accumulator = 0;
-			for (auto parameter : lambda->parameters) {
-				parameter->bytecode_offset = parameter_size_accumulator;
-				parameter_size_accumulator += ceil(get_size(parameter->type));
-			}
-			lambda->parameters_size = parameter_size_accumulator;
-
+		auto append_body = [&] {
 			for (auto statement : lambda->body_scope.statements) {
 				append(conv, statement);
 			}
@@ -1302,14 +1300,14 @@ static void append(Converter &conv, AstLambda *lambda, bool push_address) {
 		switch (lambda->convention) {
 			case CallingConvention::tlang: {
 
-				calc_parameter_offsets_and_append_body();
+				append_body();
 
 				break;
 			}
 			case CallingConvention::stdcall: {
 				I(stdcall_begin_lambda, lambda);
 
-				calc_parameter_offsets_and_append_body();
+				append_body();
 
 				I(stdcall_end_lambda, lambda);
 				break;

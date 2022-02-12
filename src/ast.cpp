@@ -589,12 +589,14 @@ bool is_signed(AstStruct *type) {
 
 bool is_float(AstExpression *type) {
 	return
+		types_match(type, &type_unsized_float) ||
 		types_match(type, &type_f32) ||
 		types_match(type, &type_f64);
 }
 
 bool is_float(AstStruct *type) {
 	return
+		type == &type_unsized_float ||
 		type == &type_f32 ||
 		type == &type_f64;
 }

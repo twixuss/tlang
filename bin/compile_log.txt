@@ -1,2 +1,0 @@
-flat assembler  version 1.73.29  (1048576 kilobytes memory)
-3 passes, 1536 bytes.

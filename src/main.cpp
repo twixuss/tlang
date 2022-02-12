@@ -8,7 +8,6 @@
 #include "output/nasm_x86_flat.h"
 #include "output/nasm_x86_64_windows.h"
 #include "output/fasm_x86_64_windows.h"
-#include "../dep/cppcoro/include/cppcoro/generator.hpp"
 #include "bytecode.h"
 #include "print_ast.h"
 #include <string>
@@ -336,19 +335,19 @@ struct Reporter {
 
 
 struct Lexer {
-    BlockList<Token> tokens;
-
-    using Iterator = decltype(tokens)::Iterator;
+    Token *tokens_start;
+    Token *tokens_end;
+    Token *token_cursor;
 
     void add(Token token) {
-        tokens.add(token);
-        tokens_lexed += 1;
+        *token_cursor++ = token;
     }
 
-    auto begin() { return tokens.begin(); }
-    auto end()   { return tokens.end();   }
+    auto begin() { return tokens_start; }
+    auto end()   { return token_cursor;   }
 
-    u32 tokens_lexed = 0;
+    umm tokens_lexed() { return token_cursor - tokens_start; }
+
     bool finished = false;
     bool success = false;
     Reporter *reporter;
@@ -771,7 +770,7 @@ u32 main_return_value = 0;
 
 struct Parser {
     Lexer *lexer = 0;
-    Lexer::Iterator token;
+    Token *token;
     u32 token_index = 0;
     bool reached_end = false;
     AstLambda *current_lambda = 0;
@@ -784,11 +783,11 @@ struct Parser {
     CallingConvention current_convention = CallingConvention::tlang;
     StructLayout current_struct_layout = StructLayout::tlang;
 
+    // TODO: get rid of `checkpoint` and `reset`
     Parser checkpoint() {
         reporter_checkpoint = reporter->checkpoint();
         return *this;
     }
-
     [[nodiscard]] bool reset(Parser checkpoint) {
         atomic_increment(&debug_parser_resets);
         if (scope_count != checkpoint.scope_count) {
@@ -801,10 +800,6 @@ struct Parser {
     }
 
     bool next() {
-        if (reached_end) {
-            return false;
-        }
-
         auto old_token = token;
         ++token;
         if (token == lexer->end()) {
@@ -1704,28 +1699,30 @@ void simplify(AstExpression **_expression) {
                     auto right_literal = get_literal(binop->right);
                     if (!left_literal || !right_literal)
                         return;
-                    auto left  = left_literal->integer;
-                    auto right = right_literal->integer;
+                    if (left_literal->literal_kind == LiteralKind::integer && right_literal->literal_kind == LiteralKind::integer) {
+                        auto left  = left_literal->integer;
+                        auto right = right_literal->integer;
 
-                    BigInt value;
+                        BigInt value;
 
-                    switch (binop->operation) {
-                        case add: expression = make_integer(left + right, binop->type); return;
-                        case sub: expression = make_integer(left - right, binop->type); return;
-                        case mul: expression = make_integer(left * right, binop->type); return;
-                        case div: invalid_code_path("not implemented"); // expression = make_integer(left / right, binop->type); return;
-                        case band: expression = make_integer(left & right, binop->type); return;
-                        case bor: expression = make_integer(left | right, binop->type); return;
-                        case bxor: expression = make_integer(left ^ right, binop->type); return;
-                        case bsl: invalid_code_path("not implemented"); // expression = make_integer(left << right, binop->type); return;
-                        case bsr: invalid_code_path("not implemented"); // expression = make_integer(left >> right, binop->type); return;
-                        case lt:  expression = make_boolean(left < right); return;
-                        case gt:  expression = make_boolean(left > right); return;
-                        case le: expression = make_boolean(left <= right); return;
-                        case ge: expression = make_boolean(left >= right); return;
-                        case ne: expression = make_boolean(left != right); return;
-                        case eq: expression = make_boolean(left == right); return;
-                        default: invalid_code_path(); break;
+                        switch (binop->operation) {
+                            case add: expression = make_integer(left + right, binop->type); return;
+                            case sub: expression = make_integer(left - right, binop->type); return;
+                            case mul: expression = make_integer(left * right, binop->type); return;
+                            case div: invalid_code_path("not implemented"); // expression = make_integer(left / right, binop->type); return;
+                            case band: expression = make_integer(left & right, binop->type); return;
+                            case bor: expression = make_integer(left | right, binop->type); return;
+                            case bxor: expression = make_integer(left ^ right, binop->type); return;
+                            case bsl: invalid_code_path("not implemented"); // expression = make_integer(left << right, binop->type); return;
+                            case bsr: invalid_code_path("not implemented"); // expression = make_integer(left >> right, binop->type); return;
+                            case lt:  expression = make_boolean(left < right); return;
+                            case gt:  expression = make_boolean(left > right); return;
+                            case le: expression = make_boolean(left <= right); return;
+                            case ge: expression = make_boolean(left >= right); return;
+                            case ne: expression = make_boolean(left != right); return;
+                            case eq: expression = make_boolean(left == right); return;
+                            default: invalid_code_path(); break;
+                        }
                     }
                 }
                 break;
@@ -2439,6 +2436,12 @@ void parse_file(Span<utf8> path) {
 
     context->lexer.source_info = source_info;
 
+    constexpr auto max_token_count = (1*GiB)/sizeof(Token);
+
+    context->lexer.tokens_start = (Token *)VirtualAlloc(0, max_token_count*sizeof(Token), MEM_COMMIT|MEM_RESERVE, PAGE_READWRITE);
+    context->lexer.tokens_end = context->lexer.tokens_start + max_token_count;
+    context->lexer.token_cursor = context->lexer.tokens_start;
+
     context->work_queue = make_work_queue(*thread_pool);
 
     //context->work_queue.push([context]() {
@@ -2459,9 +2462,9 @@ bool parser_function(Parser *parser) {
 
     auto lexer = parser->lexer;
 
-    while (lexer->tokens_lexed == 0 && !lexer->finished) {} // Wait for tokens
+    while (lexer->tokens_lexed() == 0 && !lexer->finished) {} // Wait for tokens
 
-    if (lexer->tokens_lexed == 0) {
+    if (lexer->tokens_lexed() == 0) {
         return true;
     }
 
@@ -2570,37 +2573,33 @@ List<AstDefinition *> get_definitions(TypecheckState *state, Span<utf8> name) {
     //if (state->definition && state->definition->name == name)
     //    result.add(state->definition);
 
-    if (state->current_lambda) {
-        auto found_param = find_if(state->current_lambda->parameters, [&](AstDefinition *d) { return d->name == name; });
-        if (found_param)
-            result.add(*found_param);
-
-        //auto found_retparam = find_if(state->current_lambda->return_parameters, [&](AstDefinition *d) { return d->name == name; });
-        //if (found_retparam)
-        //	return *found_retparam;
-
-        if (state->current_lambda->return_parameter->name == name)
-            result.add(state->current_lambda->return_parameter);
-
-        auto scope = state->current_scope;
-        while (1) {
-            auto found_local = scope->definitions.find(name);
-            if (found_local)
-                result.add(*found_local);
-            if (scope == &global_scope)
-                break;
-            scope = scope->parent;
-            assert(scope);
-        }
+    // if (state->current_lambda) {
+    //     auto found_param = find_if(state->current_lambda->parameters, [&](AstDefinition *d) { return d->name == name; });
+    //     if (found_param)
+    //         result.add(*found_param);
+    //
+    //     //auto found_retparam = find_if(state->current_lambda->return_parameters, [&](AstDefinition *d) { return d->name == name; });
+    //     //if (found_retparam)
+    //     //	return *found_retparam;
+    //
+    //     if (state->current_lambda->return_parameter->name == name)
+    //         result.add(state->current_lambda->return_parameter);
+    //
+    // }
+    auto scope = state->current_scope;
+    while (scope) {
+        auto found_local = scope->definitions.find(name);
+        if (found_local)
+            result.add(*found_local);
+        scope = scope->parent;
     }
 
-    scoped_lock(&global_scope);
-    auto found = global_scope.definitions.find(name);
-    if (found) {
-        return *found;
-    } else {
-        return {};
-    }
+    // scoped_lock(&global_scope);
+    // auto found = global_scope.definitions.find(name);
+    // if (found) {
+    //     result.add(*found);
+    // }
+    return result;
 }
 
 struct IntegerInfo {
@@ -3305,8 +3304,9 @@ void typecheck(TypecheckState *state, AstExpression *&expression) {
             auto call = (AstCall *)expression;
 
             typecheck(state, call->expression);
-            for (u32 i = 0; i < call->arguments.count; ++i)
+            for (u32 i = 0; i < call->arguments.count; ++i) {
                 typecheck(state, call->arguments[i]);
+            }
 
             struct Match {
                 AstDefinition *definition = 0;
@@ -3318,7 +3318,33 @@ void typecheck(TypecheckState *state, AstExpression *&expression) {
 
             if (call->expression->kind == Ast_identifier) {
                 auto identifier = (AstIdentifier *)call->expression;
-                if (!identifier->definition) {
+                Match match;
+                // TODO: These branches have similar code
+                if (identifier->definition) {
+                    match = {identifier->definition, get_lambda(identifier->definition->expression)};
+                    if (!match.lambda) {
+                        state->reporter.error(call->location, "No lambda with that name was found.");
+                        state->reporter.info (match.definition->location, "Found a definition.");
+                        yield(TypecheckResult::fail);
+                    }
+
+                    auto lambda = match.lambda;
+                    while (!lambda->finished_typechecking_head)
+                        yield(TypecheckResult::wait);
+
+                    if (call->arguments.count != lambda->parameters.count) {
+                        state->reporter.info(match.definition->location, "Argument count does not match");
+                        yield(TypecheckResult::fail);
+                    }
+
+                    for (u32 i = 0; i < call->arguments.count; ++i) {
+                        auto &argument = call->arguments[i];
+                        auto &parameter = lambda->parameters[i];
+                        if (!implicitly_cast(&state->reporter, &argument, parameter->type)) {
+                            yield(TypecheckResult::fail);
+                        }
+                    }
+                } else {
                     for (auto definition : identifier->possible_definitions) {
                         auto e = direct(definition->expression);
                         if (e->kind != Ast_lambda)
@@ -3342,49 +3368,53 @@ void typecheck(TypecheckState *state, AstExpression *&expression) {
                         matches.add({definition, lambda});
                     _continue_definition0:;
                     }
-                }
-                if (matches.count == 0) {
-                    state->reporter.error(call->location, "No matching lambda was found.");
-                    state->reporter.info("Here is the list of definitions with that name:");
-                    for (auto definition : identifier->possible_definitions) {
-                        auto e = direct(definition->expression);
-                        if (e->kind != Ast_lambda) {
-                            state->reporter.info(definition->location, "This is not a lambda");
-                            continue;
-                        }
+                    if (matches.count == 0) {
+                        if (identifier->possible_definitions.count) {
+                            state->reporter.error(call->location, "No matching lambda was found.");
+                            state->reporter.info("Here is the list of definitions with that name:");
+                            for (auto definition : identifier->possible_definitions) {
+                                auto e = direct(definition->expression);
+                                if (e->kind != Ast_lambda) {
+                                    state->reporter.info(definition->location, "This is not a lambda");
+                                    continue;
+                                }
 
-                        auto lambda = (AstLambda *)e;
-                        while (!lambda->finished_typechecking_head)
-                            yield(TypecheckResult::wait);
+                                auto lambda = (AstLambda *)e;
+                                while (!lambda->finished_typechecking_head)
+                                    yield(TypecheckResult::wait);
 
-                        if (call->arguments.count != lambda->parameters.count) {
-                            state->reporter.info(definition->location, "Argument count does not match");
-                            continue;
-                        }
+                                if (call->arguments.count != lambda->parameters.count) {
+                                    state->reporter.info(definition->location, "Argument count does not match");
+                                    continue;
+                                }
 
-                        for (u32 i = 0; i < call->arguments.count; ++i) {
-                            auto &argument = call->arguments[i];
-                            auto &parameter = lambda->parameters[i];
-                            if (!implicitly_cast(&state->reporter, &argument, parameter->type)) { // implicitly_cast will add a report
-                                goto _continue_definition1;
+                                for (u32 i = 0; i < call->arguments.count; ++i) {
+                                    auto &argument = call->arguments[i];
+                                    auto &parameter = lambda->parameters[i];
+                                    if (!implicitly_cast(&state->reporter, &argument, parameter->type)) { // implicitly_cast will add a report
+                                        goto _continue_definition1;
+                                    }
+                                }
+                            _continue_definition1:;
                             }
+                        } else {
+                            state->reporter.error(call->location, "Lambda with that name was not defined.");
                         }
-                    _continue_definition1:;
+                        yield(TypecheckResult::fail);
                     }
-                    yield(TypecheckResult::fail);
-                }
-                if (matches.count != 1) {
-                    state->reporter.error(call->location, "Ambiguous overloads were found.");
-                    for (auto match : matches) {
-                        state->reporter.info(match.definition->location, "Here");
+                    if (matches.count != 1) {
+                        state->reporter.error(call->location, "Ambiguous overloads were found.");
+                        for (auto match : matches) {
+                            state->reporter.info(match.definition->location, "Here");
+                        }
+                        yield(TypecheckResult::fail);
                     }
-                    yield(TypecheckResult::fail);
-                }
 
-                auto match = matches[0];
-                identifier->definition = match.definition;
-                identifier->type = match.definition->type;
-                //identifier->possible_definitions = {}; // actually this is redundant
+                    match = matches[0];
+                    identifier->definition = match.definition;
+                    identifier->type = match.definition->type;
+                    //identifier->possible_definitions = {}; // actually this is redundant
+                }
 
                 auto lambda = match.lambda;
                 call->type = lambda->return_parameter->type;
@@ -3432,6 +3462,7 @@ void typecheck(TypecheckState *state, AstExpression *&expression) {
             assert(lambda->return_parameter);
             typecheck(state, lambda->return_parameter);
 
+            push_scope(&lambda->parameter_scope);
             for (auto parameter : lambda->parameters) {
                 typecheck(state, parameter);
             }
