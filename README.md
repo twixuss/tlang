@@ -74,3 +74,5 @@ a :: 999999999999999999999999999 * 123456789;
 * Multiple return parameters
 * Optimization
 * Context
+* Extension methods
+* 
