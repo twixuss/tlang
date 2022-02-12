@@ -61,6 +61,7 @@ main :: fn () {
 a :: 999999999999999999999999999 * 123456789;
 ```
 * Implicit lossless conversions
+* Nested comments `/* /* /* */ */ */`
 
 ## TODO
 * Functions with polymorphic arguments
