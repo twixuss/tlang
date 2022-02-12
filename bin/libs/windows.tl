@@ -40,6 +40,7 @@ HBRUSH    :: *void;
 HCURSOR   :: *void;
 HINSTANCE :: *void;
 HMENU     :: *void;
+HDC       :: *void;
 
 PSTR   :: *u8;
 PCSTR  :: PSTR;
@@ -282,3 +283,7 @@ LoadCursorA :: fn (
   hInstance    : HINSTANCE,
   lpCursorName : LPCSTR
 ) -> HCURSOR;
+
+GetDC :: fn (
+  hWnd : HWND
+) -> HDC;

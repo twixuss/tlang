@@ -170,6 +170,9 @@ enum class InstructionKind : u8 {
 	mul_f64,
 	div_f64,
 
+	tobool_r,
+	toboolnot_r,
+
 	count,
 };
 
@@ -200,6 +203,28 @@ enum InstructionFlags : u8 {
 	InstructionFlags_jump_destination = 0x1,
 };
 
+struct Address {
+	Register base = {};
+	Register register_offset = {};
+	s64      register_offset_scale = {};
+	s64      constant_offset = {};
+
+	Address() = default;
+	Address(Register base) : base(base) {}
+};
+
+inline Address operator+(Register r, s64 c) {
+	Address a;
+	a.base = r;
+	a.constant_offset = c;
+	return a;
+}
+
+inline Address operator+(Address a, s64 c) {
+	a.constant_offset += c;
+	return a;
+}
+
 struct Instruction {
 	InstructionKind kind;
 	InstructionFlags flags;
@@ -211,34 +236,33 @@ struct Instruction {
 		struct { Register d; s64      s; } mov_rc;
 		struct { Register d; Register s; } mov_rr;
 
-		struct { Register d; Register s; } mov1_rm;
-		struct { Register d; s64      s; } mov1_mc;
-		struct { Register d; Register s; } mov1_mr;
+		struct { Register d; Address s; } mov1_rm;
+		struct { Register d; Address s; } mov2_rm;
+		struct { Register d; Address s; } mov4_rm;
+		struct { Register d; Address s; } mov8_rm;
 
-		struct { Register d; Register s; } mov2_rm;
-		struct { Register d; s64      s; } mov2_mc;
-		struct { Register d; Register s; } mov2_mr;
+		struct { Address d; s64 s; } mov1_mc;
+		struct { Address d; s64 s; } mov2_mc;
+		struct { Address d; s64 s; } mov4_mc;
+		struct { Address d; s64 s; } mov8_mc;
 
-		struct { Register d; Register s; } mov4_rm;
-		struct { Register d; s64      s; } mov4_mc;
-		struct { Register d; Register s; } mov4_mr;
+		struct { Address d; Register s; } mov1_mr;
+		struct { Address d; Register s; } mov2_mr;
+		struct { Address d; Register s; } mov4_mr;
+		struct { Address d; Register s; } mov8_mr;
 
-		struct { Register d; Register s; } mov8_rm;
-		struct { Register d; s64      s; } mov8_mc;
-		struct { Register d; Register s; } mov8_mr;
+		struct { Register d; Address s; } movsx21_rm;
+		struct { Register d; Address s; } movsx41_rm;
+		struct { Register d; Address s; } movsx81_rm;
+		struct { Register d; Address s; } movsx42_rm;
+		struct { Register d; Address s; } movsx82_rm;
+		struct { Register d; Address s; } movsx84_rm;
 
-		struct { Register d, s; } movsx21_rm;
-		struct { Register d, s; } movsx41_rm;
-		struct { Register d, s; } movsx81_rm;
-		struct { Register d, s; } movsx42_rm;
-		struct { Register d, s; } movsx82_rm;
-		struct { Register d, s; } movsx84_rm;
-
-		struct { Register d, s; s64 offset; } lea;
+		struct { Register d; Address s; } lea;
 
 		struct { s64      s; } push_c;
 		struct { Register s; } push_r;
-		struct { Register s; } push_m;
+		struct { Address  s; } push_m;
 
 		struct { s64 s; } pushcda;
 		struct { s64 s; } pushda;
@@ -248,70 +272,70 @@ struct Instruction {
 
 
 		struct { Register d; } pop_r;
-		struct { Register d; } pop_m;
+		struct { Address d; } pop_m;
 
 
 		struct {} ret;
 
 		struct { Register d; s64      s; } shr_rc;
 		struct { Register d; Register s; } shr_rr;
-		struct { Register d; Register s; } shr_rm;
-		struct { Register d; s64      s; } shr_mc;
-		struct { Register d; Register s; } shr_mr;
+		struct { Register d; Address  s; } shr_rm;
+		struct { Address  d; s64      s; } shr_mc;
+		struct { Address  d; Register s; } shr_mr;
 
 		struct { Register d; s64      s; } shl_rc;
 		struct { Register d; Register s; } shl_rr;
-		struct { Register d; Register s; } shl_rm;
-		struct { Register d; s64      s; } shl_mc;
-		struct { Register d; Register s; } shl_mr;
+		struct { Register d; Address  s; } shl_rm;
+		struct { Address  d; s64      s; } shl_mc;
+		struct { Address  d; Register s; } shl_mr;
 
 		struct { Register d; s64      s; } add_rc;
 		struct { Register d; Register s; } add_rr;
-		struct { Register d; Register s; } add_rm;
-		struct { Register d; s64      s; } add_mc;
-		struct { Register d; Register s; } add_mr;
+		struct { Register d; Address  s; } add_rm;
+		struct { Address  d; s64      s; } add_mc;
+		struct { Address  d; Register s; } add_mr;
 
 		struct { Register d; s64      s; } sub_rc;
 		struct { Register d; Register s; } sub_rr;
-		struct { Register d; Register s; } sub_rm;
-		struct { Register d; s64      s; } sub_mc;
-		struct { Register d; Register s; } sub_mr;
+		struct { Register d; Address  s; } sub_rm;
+		struct { Address  d; s64      s; } sub_mc;
+		struct { Address  d; Register s; } sub_mr;
 
 		struct { Register d; s64      s; } mul_rc;
 		struct { Register d; Register s; } mul_rr;
-		struct { Register d; Register s; } mul_rm;
-		struct { Register d; s64      s; } mul_mc;
-		struct { Register d; Register s; } mul_mr;
+		struct { Register d; Address  s; } mul_rm;
+		struct { Address  d; s64      s; } mul_mc;
+		struct { Address  d; Register s; } mul_mr;
 
 		struct { Register d; s64      s; } div_rc;
 		struct { Register d; Register s; } div_rr;
-		struct { Register d; Register s; } div_rm;
-		struct { Register d; s64      s; } div_mc;
-		struct { Register d; Register s; } div_mr;
+		struct { Register d; Address  s; } div_rm;
+		struct { Address  d; s64      s; } div_mc;
+		struct { Address  d; Register s; } div_mr;
 
 		struct { Register d; s64      s; } mod_rc;
 		struct { Register d; Register s; } mod_rr;
-		struct { Register d; Register s; } mod_rm;
-		struct { Register d; s64      s; } mod_mc;
-		struct { Register d; Register s; } mod_mr;
+		struct { Register d; Address  s; } mod_rm;
+		struct { Address  d; s64      s; } mod_mc;
+		struct { Address  d; Register s; } mod_mr;
 
 		struct { Register d; s64      s; } or_rc;
 		struct { Register d; Register s; } or_rr;
-		struct { Register d; Register s; } or_rm;
-		struct { Register d; s64      s; } or_mc;
-		struct { Register d; Register s; } or_mr;
+		struct { Register d; Address  s; } or_rm;
+		struct { Address  d; s64      s; } or_mc;
+		struct { Address  d; Register s; } or_mr;
 
 		struct { Register d; s64      s; } and_rc;
 		struct { Register d; Register s; } and_rr;
-		struct { Register d; Register s; } and_rm;
-		struct { Register d; s64      s; } and_mc;
-		struct { Register d; Register s; } and_mr;
+		struct { Register d; Address  s; } and_rm;
+		struct { Address  d; s64      s; } and_mc;
+		struct { Address  d; Register s; } and_mr;
 
 		struct { Register d; s64      s; } xor_rc;
 		struct { Register d; Register s; } xor_rr;
-		struct { Register d; Register s; } xor_rm;
-		struct { Register d; s64      s; } xor_mc;
-		struct { Register d; Register s; } xor_mr;
+		struct { Register d; Address  s; } xor_rm;
+		struct { Address  d; s64      s; } xor_mc;
+		struct { Address  d; Register s; } xor_mr;
 
 		struct { Register d, a, b; Comparison c; } cmpu1;
 		struct { Register d, a, b; Comparison c; } cmpu2;
@@ -323,10 +347,10 @@ struct Instruction {
 		struct { Register d, a, b; Comparison c; } cmps8;
 
 		struct { Register s; } call_r;
-		struct { Register s; } call_m;
+		struct { Address  s; } call_m;
 
 		struct { Register s; } stdcall_r;
-		struct { Register s; } stdcall_m;
+		struct { Address  s; } stdcall_m;
 
 		struct {} popcall;
 		struct {} popstdcall;
@@ -360,6 +384,9 @@ struct Instruction {
 		struct { XRegister d; XRegister s; } sub_f64;
 		struct { XRegister d; XRegister s; } mul_f64;
 		struct { XRegister d; XRegister s; } div_f64;
+
+		struct { Register d; } tobool_r;
+		struct { Register d; } toboolnot_r;
 	};
 };
 

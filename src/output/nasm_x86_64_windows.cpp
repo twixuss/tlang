@@ -58,6 +58,24 @@ static umm append(StringBuilder &builder, Register r) {
 	}
 }
 
+static umm append(StringBuilder &builder, Address a) {
+	assert(!a.register_offset_scale);
+
+	umm result = 0;
+	auto append_ = [&](auto &b, auto v) {
+		result += append(b, v);
+	};
+
+	append_(builder, '[');
+	append_(builder, a.base);
+	if (a.constant_offset) {
+		append_(builder, '+');
+		append_(builder, a.constant_offset);
+	}
+	append_(builder, ']');
+	return result;
+}
+
 static umm append(StringBuilder &builder, XRegister r) {
 	using enum XRegister;
 	switch (r) {
@@ -234,17 +252,20 @@ static void append_instructions(StringBuilder &builder, List<Instruction> instru
 			case mov_rr: append_format(builder, "mov %, %", i.mov_rr.d, i.mov_rr.s); break;
 			case mov_rc: append_format(builder, "mov %, %", i.mov_rc.d, i.mov_rc.s); break;
 
-			case mov1_rm: append_format(builder, "mov %, byte [%]", part1b(i.mov1_rm.d), i.mov1_rm.s); break;
-			case mov1_mr: append_format(builder, "mov byte [%], %", i.mov1_mr.d, part1b(i.mov1_mr.s)); break;
+			case mov1_mc: append_format(builder, "mov byte %, %", i.mov1_mc.d, i.mov1_mc.s); break;
+			case mov2_mc: append_format(builder, "mov word %, %", i.mov2_mc.d, i.mov2_mc.s); break;
+			case mov4_mc: append_format(builder, "mov dword %, %", i.mov4_mc.d, i.mov4_mc.s); break;
+			case mov8_mc: append_format(builder, "mov qword %, %", i.mov8_mc.d, i.mov8_mc.s); break;
 
-			case mov2_rm: append_format(builder, "mov %, word [%]", part2b(i.mov2_rm.d), i.mov2_rm.s); break;
-			case mov2_mr: append_format(builder, "mov word [%], %", i.mov2_mr.d, part2b(i.mov2_mr.s)); break;
+			case mov1_rm: append_format(builder, "mov %, byte %", part1b(i.mov1_rm.d), i.mov1_rm.s); break;
+			case mov2_rm: append_format(builder, "mov %, word %", part2b(i.mov2_rm.d), i.mov2_rm.s); break;
+			case mov4_rm: append_format(builder, "mov %, dword %", part4b(i.mov4_rm.d), i.mov4_rm.s); break;
+			case mov8_rm: append_format(builder, "mov %, qword %", part8b(i.mov8_rm.d), i.mov8_rm.s); break;
 
-			case mov4_rm: append_format(builder, "mov %, dword [%]", part4b(i.mov4_rm.d), i.mov4_rm.s); break;
-			case mov4_mr: append_format(builder, "mov dword [%], %", i.mov4_mr.d, part4b(i.mov4_mr.s)); break;
-
-			case mov8_rm: append_format(builder, "mov %, qword [%]", part8b(i.mov8_rm.d), i.mov8_rm.s); break;
-			case mov8_mr: append_format(builder, "mov qword [%], %", i.mov8_mr.d, part8b(i.mov8_mr.s)); break;
+			case mov1_mr: append_format(builder, "mov byte %, %", i.mov1_mr.d, part1b(i.mov1_mr.s)); break;
+			case mov2_mr: append_format(builder, "mov word %, %", i.mov2_mr.d, part2b(i.mov2_mr.s)); break;
+			case mov4_mr: append_format(builder, "mov dword %, %", i.mov4_mr.d, part4b(i.mov4_mr.s)); break;
+			case mov8_mr: append_format(builder, "mov qword %, %", i.mov8_mr.d, part8b(i.mov8_mr.s)); break;
 
 			case push_r: append_format(builder, "push %", i.push_r.s); break;
 			case push_c:
@@ -254,7 +275,7 @@ static void append_instructions(StringBuilder &builder, List<Instruction> instru
 					append_format(builder, "push %", (s32)i.push_c.s);
 				}
 				break;
-			case push_m: append_format(builder, "push        qword [%]"           , i.push_m.s); break;
+			case push_m: append_format(builder, "push        qword %"           , i.push_m.s); break;
 
 			case pushcda:    append_format(builder, "mov rax, constants + %\npush rax", i.pushcda.s); break;
 			case pushda:     append_format(builder, "mov rax, data + %\npush rax"     , i.pushda.s); break;
@@ -267,36 +288,36 @@ static void append_instructions(StringBuilder &builder, List<Instruction> instru
 			case ret: append_format(builder, "ret"); break;
 
 			case shl_rc: append_format(builder, "shl %, %", i.shl_rc.d, i.shl_rc.s); break;
-			case shl_mr: append_format(builder, "mov cl, %\nshl qword[%], cl", part1b(i.shl_mr.s), i.shl_mr.d); break;
+			case shl_mr: append_format(builder, "mov cl, %\nshl qword %, cl", part1b(i.shl_mr.s), i.shl_mr.d); break;
 
 			case shr_rc: append_format(builder, "shr %, %", i.shr_rc.d, i.shr_rc.s); break;
-			case shr_mr: append_format(builder, "mov cl, %\nshr qword[%], cl", part1b(i.shr_mr.s), i.shr_mr.d); break;
+			case shr_mr: append_format(builder, "mov cl, %\nshr qword %, cl", part1b(i.shr_mr.s), i.shr_mr.d); break;
 
 			case add_rc: append_format(builder, "add %, %"        , i.add_rc.d, i.add_rc.s); break;
 			case add_rr: append_format(builder, "add %, %"        , i.add_rr.d, i.add_rr.s); break;
-			case add_mc: append_format(builder, "add qword [%], %", i.add_mc.d, i.add_mc.s); break;
-			case add_mr: append_format(builder, "add qword [%], %", i.add_mr.d, i.add_mr.s); break;
+			case add_mc: append_format(builder, "add qword %, %", i.add_mc.d, i.add_mc.s); break;
+			case add_mr: append_format(builder, "add qword %, %", i.add_mr.d, i.add_mr.s); break;
 
 			case sub_rc: append_format(builder, "sub %, %"        , i.sub_rc.d, i.sub_rc.s); break;
 			case sub_rr: append_format(builder, "sub %, %"        , i.sub_rr.d, i.sub_rr.s); break;
-			case sub_mc: append_format(builder, "sub qword [%], %", i.sub_mc.d, i.sub_mc.s); break;
-			case sub_mr: append_format(builder, "sub qword [%], %", i.sub_mr.d, i.sub_mr.s); break;
+			case sub_mc: append_format(builder, "sub qword %, %", i.sub_mc.d, i.sub_mc.s); break;
+			case sub_mr: append_format(builder, "sub qword %, %", i.sub_mr.d, i.sub_mr.s); break;
 
 			case mul_rc: append_format(builder, "imul %, %", i.mul_rc.d, i.mul_rc.s); break;
-			case mul_mr: append_format(builder, "imul %, qword [%]\nmov qword [%], %", i.mul_mr.s, i.mul_mr.d, i.mul_mr.d, i.mul_mr.s); break;
+			case mul_mr: append_format(builder, "imul %, qword %\nmov qword %, %", i.mul_mr.s, i.mul_mr.d, i.mul_mr.d, i.mul_mr.s); break;
 
-			case div_mr: append_format(builder, "mov rdx, 0\nmov rax, qword[%]\ndiv %\nmov qword[%], rax", i.div_mr.d, i.div_mr.s, i.div_mr.d); break;
+			case div_mr: append_format(builder, "mov rdx, 0\nmov rax, qword %\ndiv %\nmov qword %, rax", i.div_mr.d, i.div_mr.s, i.div_mr.d); break;
 
-			case mod_mr: append_format(builder, "mov rdx, 0\nmov rax, qword[%]\ndiv %\nmov qword[%], rdx", i.mod_mr.d, i.mod_mr.s, i.mod_mr.d); break;
+			case mod_mr: append_format(builder, "mov rdx, 0\nmov rax, qword %\ndiv %\nmov qword %, rdx", i.mod_mr.d, i.mod_mr.s, i.mod_mr.d); break;
 
-			case or_mr: append_format(builder, "or qword [%], %", i. or_mr.d, i. or_mr.s); break;
+			case or_mr: append_format(builder, "or qword %, %", i. or_mr.d, i. or_mr.s); break;
 
 			case and_rc: append_format(builder, "and %, %"        , i.and_rc.d, i.and_rc.s); break;
-			case and_mc: append_format(builder, "and qword [%], %", i.and_mc.d, i.and_mc.s); break;
-			case and_mr: append_format(builder, "and qword [%], %", i.and_mr.d, i.and_mr.s); break;
+			case and_mc: append_format(builder, "and qword %, %", i.and_mc.d, i.and_mc.s); break;
+			case and_mr: append_format(builder, "and qword %, %", i.and_mr.d, i.and_mr.s); break;
 
 			case xor_rr: append_format(builder, "xor %, %"        , i.xor_rr.d, i.xor_rr.s); break;
-			case xor_mr: append_format(builder, "xor qword [%], %", i.xor_mr.d, i.xor_mr.s); break;
+			case xor_mr: append_format(builder, "xor qword %, %", i.xor_mr.d, i.xor_mr.s); break;
 
 			case cmps1: append_format(builder, "xor %, %\ncmp %, %\nset% %", i.cmps1.d, i.cmps1.d, part1b(i.cmps1.a), part1b(i.cmps1.b), cmps_string(i.cmps1.c), part1b(i.cmps1.d)); break;
 			case cmps2: append_format(builder, "xor %, %\ncmp %, %\nset% %", i.cmps2.d, i.cmps2.d, part2b(i.cmps2.a), part2b(i.cmps2.b), cmps_string(i.cmps2.c), part1b(i.cmps2.d)); break;
@@ -327,6 +348,10 @@ static void append_instructions(StringBuilder &builder, List<Instruction> instru
 				break;
 			case copyb_ssc:
 				append_format(builder, "mov rcx, %\npop rsi\npop rdi\nadd rsi, %\nadd rdi, %\nstd\nrep movsb", i.copyb_ssc.size, i.copyb_ssc.size - 1, i.copyb_ssc.size - 1);
+				break;
+
+			case set_mcc:
+				append_format(builder, "mov rdi, %\nmov al, %\nmov rcx, %\ncld\nrep stosb", i.set_mcc.d, i.set_mcc.s, i.set_mcc.size);
 				break;
 
 			case stdcall_begin_lambda: {
@@ -371,30 +396,28 @@ static void append_instructions(StringBuilder &builder, List<Instruction> instru
 
 			case stdcall_m:
 				move_stdcall_registers();
-				append_format(builder, "call qword [%]", i.stdcall_m.s);
+				append_format(builder, "call qword %", i.stdcall_m.s);
 				break;
 
 			case call_m:
-				append_format(builder, "call qword [%]", i.call_m.s);
+				append_format(builder, "call qword %", i.call_m.s);
 				break;
 
 			case lea:
-				append_format(builder, "lea %, [% + %]", i.lea.d, i.lea.s, i.lea.offset);
+				append_format(builder, "lea %, %", i.lea.d, i.lea.s);
 				break;
 
 			case cvtf64s64:
 				append(builder, "cvtsd2si rax, [rsp]\nmov [rsp], rax");
 				break;
 
-			case mov_f64r:
-				append_format(builder, "movq %, %", i.mov_f64r.d, i.mov_f64r.s);
-				break;
-	        case add_f64:
-				append_format(builder, "addsd %, %", i.add_f64.d, i.add_f64.s);
-				break;
-	        case mov_rf64:
-				append_format(builder, "movq %, %", i.mov_rf64.d, i.mov_rf64.s);
-				break;
+			case mov_f64r: append_format(builder, "movq %, %", i.mov_f64r.d, i.mov_f64r.s); break;
+	        case mov_rf64: append_format(builder, "movq %, %", i.mov_rf64.d, i.mov_rf64.s); break;
+
+	        case add_f64: append_format(builder, "addsd %, %", i.add_f64.d, i.add_f64.s); break;
+	        case sub_f64: append_format(builder, "subsd %, %", i.sub_f64.d, i.sub_f64.s); break;
+	        case mul_f64: append_format(builder, "mulsd %, %", i.mul_f64.d, i.mul_f64.s); break;
+	        case div_f64: append_format(builder, "divsd %, %", i.div_f64.d, i.div_f64.s); break;
 
 			default:invalid_code_path();
 		}

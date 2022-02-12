@@ -24,6 +24,9 @@ e(cast) \
 e(sizeof) \
 e(test) \
 e(ifx) \
+e(assert) \
+e(typeof) \
+e(print) \
 
 enum AstKind {
 #define e(name) Ast_ ## name,
@@ -39,14 +42,14 @@ struct AstExpression;
 struct AstDefinition;
 struct AstLambda;
 struct AstStruct;
+struct AstLiteral;
 
 struct Scope {
 	Scope *parent = 0;
 	u32 level = 0;
 	List<Scope *> children;
 	List<AstStatement *> statements;
-	HashMap<Span<utf8>, AstDefinition *> definitions;
-	HashMap<Span<utf8>, AstLambda *> functions;
+	HashMap<Span<utf8>, List<AstDefinition *>> definitions; // multiple definitions for a single name in case of function overloading
 	AstNode *node = 0;
 };
 
@@ -87,6 +90,8 @@ struct AstDefinition : AstStatement {
 	AstExpression *expression = 0;
 	AstExpression *type = 0;
 
+	AstLiteral *evaluated = 0;
+
 	AstExpression *parent_block = 0;
 	Scope *parent_scope = 0;
 
@@ -108,8 +113,17 @@ struct AstReturn : AstStatement {
 	AstLambda *lambda = 0;
 };
 
+/*
+enum class ExpressionContext {
+	unknown,
+	type,
+	value,
+};
+*/
+
 struct AstExpression : AstNode {
 	AstExpression *type = 0;
+	// ExpressionContext context = {};
 };
 
 enum class LiteralKind : u8 {
@@ -120,6 +134,7 @@ enum class LiteralKind : u8 {
 	character,
 	noinit,
 	Float,
+	type,
 };
 
 struct AstLiteral : AstExpression {
@@ -135,6 +150,7 @@ struct AstLiteral : AstExpression {
 		};
 		u32 character;
 		f64 Float;
+		AstExpression *type_value;
 	};
 
 	AstLiteral() {
@@ -150,6 +166,7 @@ struct AstIdentifier : AstExpression {
 	AstIdentifier() { kind = Ast_identifier; }
 
 	AstDefinition *definition = 0;
+	List<AstDefinition *> possible_definitions;
 
 	Span<utf8> name;
 };
@@ -277,8 +294,6 @@ struct AstWhile : AstStatement {
 };
 
 enum class BinaryOperation {
-	dot,     // .
-    ass,     // =
     add,     // +
     sub,     // -
     mul,     // *
@@ -297,6 +312,8 @@ enum class BinaryOperation {
     le,      // <=
     land,    // &&
     lor,     // ||
+	dot,     // .
+    ass,     // =
     addass,  // +=
     subass,  // -=
     mulass,  // *=
@@ -344,6 +361,11 @@ struct AstTuple : AstExpression {
 	AstTuple() { kind = Ast_tuple; }
 
 	List<AstExpression *> expressions;
+};
+
+struct AstPrint : AstStatement {
+	AstPrint() {kind = Ast_print;}
+	AstExpression *expression = 0;
 };
 
 enum class CastKind {
@@ -432,6 +454,12 @@ struct AstSizeof : AstExpression {
 	AstExpression *expression = 0;
 };
 
+struct AstTypeof : AstExpression {
+	AstTypeof() { kind = Ast_typeof; }
+
+	AstExpression *expression = 0;
+};
+
 struct AstTest : AstStatement {
 	AstTest() {
 		kind = Ast_test;
@@ -450,6 +478,13 @@ struct AstIfx : AstExpression {
 	AstExpression *condition = 0;
 	AstExpression *true_expression = 0;
 	AstExpression *false_expression = 0;
+};
+
+struct AstAssert : AstStatement {
+	AstAssert() {
+		kind = Ast_assert;
+	}
+	AstExpression *condition = 0;
 };
 
 extern AstStruct type_type;
@@ -500,7 +535,12 @@ T *new_ast(TL_LPC) {
 
 Optional<BigInt> get_constant_integer(AstExpression *expression);
 
+// Returns a human readable string.
+// For example for type `int` it will return "int (aka s64)"
 List<utf8> type_to_string(AstExpression *type, bool silent_error = false);
+
+// Returns just the name of the type without synonyms
+List<utf8> type_name     (AstExpression *type, bool silent_error = false);
 
 s64 get_size(AstExpression *type);
 s64 get_align(AstExpression *type);
@@ -521,6 +561,11 @@ Span<utf8> operator_string(BinaryOperation op);
 
 bool is_integer(AstExpression *type);
 bool is_signed(AstExpression *type);
+bool is_float(AstExpression *type);
+
+bool is_integer(AstStruct *type);
+bool is_signed(AstStruct *type);
+bool is_float(AstStruct *type);
 
 #define OVERLOAD_NEW 0
 #if OVERLOAD_NEW
@@ -535,6 +580,7 @@ bool is_pointer(AstExpression *type);
 AstLiteral *get_literal(AstExpression *expression);
 bool is_constant(AstExpression *expression);
 AstLambda *get_lambda(AstExpression *expression);
+bool is_lambda(AstExpression *expression);
 
 bool struct_is_built_in(AstStruct *type);
 bool type_is_built_in(AstExpression *type);

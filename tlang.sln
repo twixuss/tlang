@@ -27,6 +27,20 @@ Project("{911E67C6-3D85-4FCE-B560-20A9C3E3FF48}") = "a", "bin\a.exe", "{72B146B8
 		IORedirection = Auto
 	EndProjectSection
 EndProject
+Project("{911E67C6-3D85-4FCE-B560-20A9C3E3FF48}") = "fibonacci", "bin\fibonacci.exe", "{58501B36-4231-4506-B2A2-FB3EE6AE2E0F}"
+	ProjectSection(DebuggerProjectSystem) = preProject
+		PortSupplier = 00000000-0000-0000-0000-000000000000
+		Executable = F:\tlang\bin\fibonacci.exe
+		RemoteMachine = DESKTOP-2HA4U8E
+		StartingDirectory = F:\tlang\bin
+		Environment = По умолчанию
+		LaunchingEngine = 00000000-0000-0000-0000-000000000000
+		UseLegacyDebugEngines = No
+		LaunchSQLEngine = No
+		AttachLaunchAction = No
+		IORedirection = Auto
+	EndProjectSection
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|x64 = Debug|x64
@@ -55,6 +69,10 @@ Global
 		{72B146B8-867E-42A2-83C6-150271C80750}.Debug|x86.ActiveCfg = Release
 		{72B146B8-867E-42A2-83C6-150271C80750}.Release|x64.ActiveCfg = Release
 		{72B146B8-867E-42A2-83C6-150271C80750}.Release|x86.ActiveCfg = Release
+		{58501B36-4231-4506-B2A2-FB3EE6AE2E0F}.Debug|x64.ActiveCfg = Release|x64
+		{58501B36-4231-4506-B2A2-FB3EE6AE2E0F}.Debug|x86.ActiveCfg = Release|x64
+		{58501B36-4231-4506-B2A2-FB3EE6AE2E0F}.Release|x64.ActiveCfg = Release|x64
+		{58501B36-4231-4506-B2A2-FB3EE6AE2E0F}.Release|x86.ActiveCfg = Release|x64
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

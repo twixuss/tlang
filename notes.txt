@@ -5,8 +5,6 @@ Should we check that all control paths return a value or just default initialize
 
 
 
-
-
 # Casting rules
 
 ## Implicit cast
@@ -47,3 +45,21 @@ saved rbp <- rbp
 
 ...
 0
+
+
+
+idea for templated functions:
+To make a template, just don't specify the type of a parameter.
+The type then can be obtained using typeof directive:
+
+pow2 :: fn (x) -> #typeof x => x * x;
+
+Also it would be nice to add return type deduction. Like this:
+
+pow2 :: fn (x) => x * x;
+
+
+
+
+
+

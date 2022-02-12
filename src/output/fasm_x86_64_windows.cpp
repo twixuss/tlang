@@ -58,6 +58,24 @@ static umm append(StringBuilder &builder, Register r) {
 	}
 }
 
+static umm append(StringBuilder &builder, Address a) {
+	assert(!a.register_offset_scale);
+
+	umm result = 0;
+	auto append_ = [&](auto &b, auto v) {
+		result += append(b, v);
+	};
+
+	append_(builder, '[');
+	append_(builder, a.base);
+	if (a.constant_offset) {
+		append_(builder, '+');
+		append_(builder, a.constant_offset);
+	}
+	append_(builder, ']');
+	return result;
+}
+
 static umm append(StringBuilder &builder, XRegister r) {
 	using enum XRegister;
 	switch (r) {
@@ -70,110 +88,13 @@ static umm append(StringBuilder &builder, XRegister r) {
 	}
 }
 
-static Span<utf8> locate_msvc() {
-	Span<utf8> path = u8"C:\\Program Files (x86)\\Microsoft Visual Studio\\"s;
-
-	auto find_version = [&]() -> Span<utf8> {
-		Span<utf8> supported_versions[] = {
-			u8"2022"s,
-			u8"2019"s,
-			u8"2017"s,
-		};
-		auto found_versions = get_items_in_directory(path);
-		for (auto supported_version : supported_versions) {
-			for (auto found_version : found_versions) {
-				if (found_version.kind == FileItem_directory) {
-					auto name = to_utf8(found_version.name);
-					if (name == supported_version) {
-						return format(u8"%%", path, name);
-					}
-				}
-			}
-		}
-		return {};
-	};
-	auto find_edition = [&]() -> Span<utf8> {
-		auto found_editions = get_items_in_directory(path);
-		Span<utf8> supported_editions[] = {
-			u8"Community"s,
-			u8"Professional"s,
-		};
-		for (auto supported_edition : supported_editions) {
-			for (auto found_edition : found_editions) {
-				if (found_edition.kind == FileItem_directory) {
-					auto name = to_utf8(found_edition.name);
-					if (name == supported_edition) {
-						return format(u8"%\\%\\VC\\Tools\\MSVC\\", path, name);
-					}
-				}
-			}
-		}
-		return {};
-	};
-
-
-	path = find_version();
-	if (!path.data) {
-		return {};
-	}
-	path = find_edition();
-	if (!path.data) {
-		return {};
-	}
-
-	auto found_builds = get_items_in_directory(path);
-	if (!found_builds.count) {
-		return {};
-	}
-	path = format(u8"%%\\bin\\Hostx64\\x64\\", path, found_builds.back().name);
-
-	return path;
-}
-
-static Span<utf8> locate_wkits() {
-	Span<utf8> path = u8"C:\\Program Files (x86)\\Windows Kits\\"s;
-
-	auto find_version = [&]() -> Span<utf8> {
-		Span<utf8> supported_versions[] = {
-			u8"10"s,
-			u8"8.1"s,
-			u8"7"s,
-		};
-		auto found_versions = get_items_in_directory(path);
-		for (auto supported_version : supported_versions) {
-			for (auto found_version : found_versions) {
-				if (found_version.kind == FileItem_directory) {
-					auto name = to_utf8(found_version.name);
-					if (name == supported_version) {
-						return format(u8"%%\\Lib\\", path, name);
-					}
-				}
-			}
-		}
-		return {};
-	};
-
-	path = find_version();
-	if (!path.data) {
-		return {};
-	}
-
-	auto found_builds = get_items_in_directory(path);
-	if (!found_builds.count) {
-		return {};
-	}
-	path = format(u8"%%\\um\\x64", path, found_builds.back().name); // NO SLASH AT THE END BECAUSE LINK.EXE IS ...
-
-	return path;
-}
-
 static void append_instructions(StringBuilder &builder, List<Instruction> instructions) {
 	timed_function();
 
 	auto l = [](auto val) { return FormatInt{.value=val, .radix=62}; };
 	append_format(builder, "section '.text' code readable executable\nmain:\npush 0\ncall .%\npop rcx\nand rsp, -16\nsub rsp, 16\ncall [ExitProcess]\nret\n", l(main_lambda->location_in_bytecode));
 
-	auto part1b = [&](Register r) {
+	auto part1b = [](Register r) {
 		switch (r) {
 			case Register::rb: return u8"bpl"s;
 			case Register::rs: return u8"spl"s;
@@ -234,17 +155,20 @@ static void append_instructions(StringBuilder &builder, List<Instruction> instru
 			case mov_rr: append_format(builder, "mov %, %", i.mov_rr.d, i.mov_rr.s); break;
 			case mov_rc: append_format(builder, "mov %, %", i.mov_rc.d, i.mov_rc.s); break;
 
-			case mov1_rm: append_format(builder, "mov %, byte [%]", part1b(i.mov1_rm.d), i.mov1_rm.s); break;
-			case mov1_mr: append_format(builder, "mov byte [%], %", i.mov1_mr.d, part1b(i.mov1_mr.s)); break;
+			case mov1_mc: append_format(builder, "mov byte %, %", i.mov1_mc.d, i.mov1_mc.s); break;
+			case mov2_mc: append_format(builder, "mov word %, %", i.mov2_mc.d, i.mov2_mc.s); break;
+			case mov4_mc: append_format(builder, "mov dword %, %", i.mov4_mc.d, i.mov4_mc.s); break;
+			case mov8_mc: append_format(builder, "mov qword %, %", i.mov8_mc.d, i.mov8_mc.s); break;
 
-			case mov2_rm: append_format(builder, "mov %, word [%]", part2b(i.mov2_rm.d), i.mov2_rm.s); break;
-			case mov2_mr: append_format(builder, "mov word [%], %", i.mov2_mr.d, part2b(i.mov2_mr.s)); break;
+			case mov1_mr: append_format(builder, "mov byte %, %", i.mov1_mr.d, part1b(i.mov1_mr.s)); break;
+			case mov2_mr: append_format(builder, "mov word %, %", i.mov2_mr.d, part2b(i.mov2_mr.s)); break;
+			case mov4_mr: append_format(builder, "mov dword %, %", i.mov4_mr.d, part4b(i.mov4_mr.s)); break;
+			case mov8_mr: append_format(builder, "mov qword %, %", i.mov8_mr.d, part8b(i.mov8_mr.s)); break;
 
-			case mov4_rm: append_format(builder, "mov %, dword [%]", part4b(i.mov4_rm.d), i.mov4_rm.s); break;
-			case mov4_mr: append_format(builder, "mov dword [%], %", i.mov4_mr.d, part4b(i.mov4_mr.s)); break;
-
-			case mov8_rm: append_format(builder, "mov %, qword [%]", part8b(i.mov8_rm.d), i.mov8_rm.s); break;
-			case mov8_mr: append_format(builder, "mov qword [%], %", i.mov8_mr.d, part8b(i.mov8_mr.s)); break;
+			case mov1_rm: append_format(builder, "mov %, byte %", part1b(i.mov1_rm.d), i.mov1_rm.s); break;
+			case mov2_rm: append_format(builder, "mov %, word %", part2b(i.mov2_rm.d), i.mov2_rm.s); break;
+			case mov4_rm: append_format(builder, "mov %, dword %", part4b(i.mov4_rm.d), i.mov4_rm.s); break;
+			case mov8_rm: append_format(builder, "mov %, qword %", part8b(i.mov8_rm.d), i.mov8_rm.s); break;
 
 			case push_r: append_format(builder, "push %", i.push_r.s); break;
 			case push_c:
@@ -266,10 +190,10 @@ static void append_instructions(StringBuilder &builder, List<Instruction> instru
 					//}
 				}
 				break;
-			case push_m: append_format(builder, "push        qword [%]"           , i.push_m.s); break;
+			case push_m: append_format(builder, "push        qword %"           , i.push_m.s); break;
 
 			case pushcda:    append_format(builder, "mov rax, constants + %\npush rax", i.pushcda.s); break;
-			case pushda:     append_format(builder, "mov rax, data + %\npush rax"     , i.pushda.s); break;
+			case pushda:     append_format(builder, "mov rax, rwdata + %\npush rax"     , i.pushda.s); break;
 			case pushuda:    append_format(builder, "mov rax, zeros + %\npush rax"    , i.pushuda.s); break;
 			case pushta:     append_format(builder, "mov rax, .%\npush rax"           , l(i.pushta.s)); break;
 			case pushextern: append_format(builder, "push [%]"            , i.pushextern.s); break;
@@ -279,45 +203,47 @@ static void append_instructions(StringBuilder &builder, List<Instruction> instru
 			case ret: append_format(builder, "ret"); break;
 
 			case shl_rc: append_format(builder, "shl %, %", i.shl_rc.d, i.shl_rc.s); break;
-			case shl_mr: append_format(builder, "mov cl, %\nshl qword[%], cl", part1b(i.shl_mr.s), i.shl_mr.d); break;
+			case shl_mr: append_format(builder, "mov cl, %\nshl qword %, cl", part1b(i.shl_mr.s), i.shl_mr.d); break;
 
 			case shr_rc: append_format(builder, "shr %, %", i.shr_rc.d, i.shr_rc.s); break;
-			case shr_mr: append_format(builder, "mov cl, %\nshr qword[%], cl", part1b(i.shr_mr.s), i.shr_mr.d); break;
+			case shr_mr: append_format(builder, "mov cl, %\nshr qword %, cl", part1b(i.shr_mr.s), i.shr_mr.d); break;
 
 			case add_rc: append_format(builder, "add %, %"        , i.add_rc.d, i.add_rc.s); break;
 			case add_rr: append_format(builder, "add %, %"        , i.add_rr.d, i.add_rr.s); break;
-			case add_mc: append_format(builder, "add qword [%], %", i.add_mc.d, i.add_mc.s); break;
-			case add_mr: append_format(builder, "add qword [%], %", i.add_mr.d, i.add_mr.s); break;
+			case add_mc: append_format(builder, "add qword %, %", i.add_mc.d, i.add_mc.s); break;
+			case add_mr: append_format(builder, "add qword %, %", i.add_mr.d, i.add_mr.s); break;
 
 			case sub_rc: append_format(builder, "sub %, %"        , i.sub_rc.d, i.sub_rc.s); break;
 			case sub_rr: append_format(builder, "sub %, %"        , i.sub_rr.d, i.sub_rr.s); break;
-			case sub_mc: append_format(builder, "sub qword [%], %", i.sub_mc.d, i.sub_mc.s); break;
-			case sub_mr: append_format(builder, "sub qword [%], %", i.sub_mr.d, i.sub_mr.s); break;
+			case sub_mc: append_format(builder, "sub qword %, %", i.sub_mc.d, i.sub_mc.s); break;
+			case sub_mr: append_format(builder, "sub qword %, %", i.sub_mr.d, i.sub_mr.s); break;
 
 			case mul_rc: append_format(builder, "imul %, %", i.mul_rc.d, i.mul_rc.s); break;
-			case mul_mr: append_format(builder, "imul %, qword [%]\nmov qword [%], %", i.mul_mr.s, i.mul_mr.d, i.mul_mr.d, i.mul_mr.s); break;
+			case mul_mr: append_format(builder, "imul %, qword %\nmov qword %, %", i.mul_mr.s, i.mul_mr.d, i.mul_mr.d, i.mul_mr.s); break;
 
-			case div_mr: append_format(builder, "mov rdx, 0\nmov rax, qword[%]\ndiv %\nmov qword[%], rax", i.div_mr.d, i.div_mr.s, i.div_mr.d); break;
+			case div_mr: append_format(builder, "mov rdx, 0\nmov rax, qword %\ndiv %\nmov qword %, rax", i.div_mr.d, i.div_mr.s, i.div_mr.d); break;
 
-			case mod_mr: append_format(builder, "mov rdx, 0\nmov rax, qword[%]\ndiv %\nmov qword[%], rdx", i.mod_mr.d, i.mod_mr.s, i.mod_mr.d); break;
+			case mod_mr: append_format(builder, "mov rdx, 0\nmov rax, qword %\ndiv %\nmov qword %, rdx", i.mod_mr.d, i.mod_mr.s, i.mod_mr.d); break;
 
-			case or_mr: append_format(builder, "or qword [%], %", i. or_mr.d, i. or_mr.s); break;
+			case or_mr: append_format(builder, "or qword %, %", i. or_mr.d, i. or_mr.s); break;
 
 			case and_rc: append_format(builder, "and %, %"        , i.and_rc.d, i.and_rc.s); break;
 			case and_mc:
 				if (~i.and_mc.s & 0xffffffff00000000) {
 					auto l = (s32)i.and_mc.s;
 					auto h = (s32)((u64)i.and_mc.s >> 32);
-					append_format(builder, "and dword [%], %\n"  , i.and_mc.d, l);
-					append_format(builder, "and dword [% + 4], %", i.and_mc.d, h);
+					append_format(builder, "and dword %, %\n"  , i.and_mc.d, l);
+					auto addr = i.and_mc.d;
+					addr.constant_offset += 4;
+					append_format(builder, "and dword %, %", addr, h);
 				} else {
-					append_format(builder, "and qword [%], %", i.and_mc.d, (s32)i.and_mc.s);
+					append_format(builder, "and qword %, %", i.and_mc.d, (s32)i.and_mc.s);
 				}
 				break;
-			case and_mr: append_format(builder, "and qword [%], %", i.and_mr.d, i.and_mr.s); break;
+			case and_mr: append_format(builder, "and qword %, %", i.and_mr.d, i.and_mr.s); break;
 
 			case xor_rr: append_format(builder, "xor %, %"        , i.xor_rr.d, i.xor_rr.s); break;
-			case xor_mr: append_format(builder, "xor qword [%], %", i.xor_mr.d, i.xor_mr.s); break;
+			case xor_mr: append_format(builder, "xor qword %, %", i.xor_mr.d, i.xor_mr.s); break;
 
 			case cmps1: append_format(builder, "xor %, %\ncmp %, %\nset% %", i.cmps1.d, i.cmps1.d, part1b(i.cmps1.a), part1b(i.cmps1.b), cmps_string(i.cmps1.c), part1b(i.cmps1.d)); break;
 			case cmps2: append_format(builder, "xor %, %\ncmp %, %\nset% %", i.cmps2.d, i.cmps2.d, part2b(i.cmps2.a), part2b(i.cmps2.b), cmps_string(i.cmps2.c), part1b(i.cmps2.d)); break;
@@ -396,15 +322,15 @@ static void append_instructions(StringBuilder &builder, List<Instruction> instru
 
 			case stdcall_m:
 				move_stdcall_registers();
-				append_format(builder, "call qword [%]", i.stdcall_m.s);
+				append_format(builder, "call qword %", i.stdcall_m.s);
 				break;
 
 			case call_m:
-				append_format(builder, "call qword [%]", i.call_m.s);
+				append_format(builder, "call qword %", i.call_m.s);
 				break;
 
 			case lea:
-				append_format(builder, "lea %, [% + %]", i.lea.d, i.lea.s, i.lea.offset);
+				append_format(builder, "lea %, %", i.lea.d, i.lea.s);
 				break;
 
 			case cvtf64s64:
@@ -422,6 +348,17 @@ static void append_instructions(StringBuilder &builder, List<Instruction> instru
 	        case sub_f64: append_format(builder, "subsd %, %", i.sub_f64.d, i.sub_f64.s); break;
 	        case mul_f64: append_format(builder, "mulsd %, %", i.mul_f64.d, i.mul_f64.s); break;
 	        case div_f64: append_format(builder, "divsd %, %", i.div_f64.d, i.div_f64.s); break;
+
+			case tobool_r: {
+				auto d = part1b(i.tobool_r.d);
+				append_format(builder, "test %, %\nsetnz %", d, d, d); break;
+				break;
+			}
+			case toboolnot_r: {
+				auto d = part1b(i.toboolnot_r.d);
+				append_format(builder, "test %, %\nsetz %", d, d, d); break;
+				break;
+			}
 
 			default:invalid_code_path();
 		}
@@ -477,7 +414,7 @@ section '.idata' import data readable writeable
 		append(builder, '\n');
 	}
 	if (bytecode.data.count) {
-		append(builder, "section '.data' data readable writeable\ndata db ");
+		append(builder, "section '.data' data readable writeable\nrwdata db ");
 		append_format(builder, "%", bytecode.data[0]);
 		bytecode.data.data += 1;
 		bytecode.data.count -= 1;
@@ -486,7 +423,7 @@ section '.idata' import data readable writeable
 			bytecode.data.count += 1;
 		};
 		for (auto byte : bytecode.data) {
-			append_format(builder, "%,", byte);
+			append_format(builder, ",%", byte);
 		}
 		append(builder, '\n');
 	}
@@ -544,38 +481,11 @@ section '.idata' import data readable writeable
 
 		write(file, as_bytes(to_string(builder)));
 	}
-#if 0
-	auto msvc_directory = locate_msvc();
-	if (!msvc_directory.data) {
-		print(Print_error, "Couldn't locate msvc");
-		return;
-	}
-
-	auto wkits_directory = locate_wkits();
-	if (!wkits_directory.data) {
-		print(Print_error, "Couldn't locate windows kits");
-		return;
-	}
-#endif
 
 	StringBuilder bat_builder;
 	append_format(bat_builder, u8R"(@echo off
 %\fasm\fasm.exe "%"
 )", executable_directory, asm_path);
-
-#if 0
-	append(bat_builder, "if %errorlevel% neq 0 exit /b %errorlevel%\n");
-	append_format(bat_builder,
-		R"("%link" "%.obj" /out:"%.exe" /nodefaultlib /entry:"main" /subsystem:console /DEBUG:FULL /LIBPATH:"%" kernel32.lib)",
-		msvc_directory,
-		output_path_base,
-		output_path_base,
-		wkits_directory
-	);
-	for_each(bytecode.extern_libraries, [&](auto library, auto) {
-		append_format(bat_builder, " %.lib", library);
-	});
-#endif
 
 	auto bat_path = to_pathchars(concatenate(executable_directory, "\\fasm_build.bat"s));
 	write_entire_file(bat_path, as_bytes(to_string(bat_builder)));

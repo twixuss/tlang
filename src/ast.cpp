@@ -75,7 +75,7 @@ void unlock(Scope *scope) {
 	}
 }
 
-HashMap<Span<utf8>, AstDefinition *> names_not_available_for_globals;
+// HashMap<Span<utf8>, AstDefinition *> names_not_available_for_globals;
 
 bool needs_semicolon(AstExpression *node) {
 	// if (node->kind == Ast_unary_operator)
@@ -88,9 +88,7 @@ bool needs_semicolon(AstExpression *node) {
 }
 
 bool can_be_global(AstStatement *statement) {
-	if (statement->kind == Ast_definition)
-		return true;
-	return false;
+	return statement->kind == Ast_definition || statement->kind == Ast_print || statement->kind == Ast_assert;
 }
 
 Optional<BigInt> get_constant_integer(AstExpression *expression) {
@@ -229,6 +227,21 @@ List<utf8> type_to_string(AstExpression *type, bool silent_error) {
 
 	StringBuilder builder;
 	append_type(builder, type, silent_error);
+	auto d = direct(type);
+	if (d != type) {
+		append(builder, " (aka "s);
+		append_type(builder, d, silent_error);
+		append(builder, ')');
+	}
+	return (List<utf8>)to_string(builder);
+}
+
+List<utf8> type_name(AstExpression *type, bool silent_error) {
+	if (!type)
+		return to_list(u8"null"s);
+
+	StringBuilder builder;
+	append_type(builder, type, silent_error);
 	return (List<utf8>)to_string(builder);
 }
 
@@ -260,6 +273,10 @@ s64 get_size(AstExpression *type) {
 		}
 		case Ast_lambda: {
 			return 8;
+		}
+		case Ast_typeof: {
+			auto typeof = (AstTypeof *)type;
+			return get_size(typeof->expression->type);
 		}
 		default: {
 			invalid_code_path();
@@ -375,6 +392,7 @@ AstExpression *direct(AstExpression *type) {
 		case Ast_unary_operator:
 		case Ast_subscript:
 		case Ast_struct:
+		case Ast_lambda:
 			break;
 		default: invalid_code_path();
 	}
@@ -460,6 +478,7 @@ AstLambda *main_lambda;
 
 Span<utf8> operator_string(u64 op) {
 	switch (op) {
+		case '!': return u8"!"s;
 		case '+': return u8"+"s;
 		case '-': return u8"-"s;
 		case '*': return u8"*"s;
@@ -526,7 +545,6 @@ Span<utf8> operator_string(BinaryOperation op) {
 	invalid_code_path();
 }
 
-// TODO: can types_match be replaced with ==   ???
 bool is_integer(AstExpression *type) {
 	return
 		types_match(type, &type_unsized_integer) ||
@@ -540,13 +558,45 @@ bool is_integer(AstExpression *type) {
 		types_match(type, &type_s64);
 }
 
-// TODO: can types_match be replaced with ==   ???
 bool is_signed(AstExpression *type) {
 	return
 		types_match(type, &type_s8) ||
 		types_match(type, &type_s16) ||
 		types_match(type, &type_s32) ||
 		types_match(type, &type_s64);
+}
+
+bool is_integer(AstStruct *type) {
+	return
+		type == &type_unsized_integer ||
+		type == &type_u8 ||
+		type == &type_u16 ||
+		type == &type_u32 ||
+		type == &type_u64 ||
+		type == &type_s8 ||
+		type == &type_s16 ||
+		type == &type_s32 ||
+		type == &type_s64;
+}
+
+bool is_signed(AstStruct *type) {
+	return
+		type == &type_s8 ||
+		type == &type_s16 ||
+		type == &type_s32 ||
+		type == &type_s64;
+}
+
+bool is_float(AstExpression *type) {
+	return
+		types_match(type, &type_f32) ||
+		types_match(type, &type_f64);
+}
+
+bool is_float(AstStruct *type) {
+	return
+		type == &type_f32 ||
+		type == &type_f64;
 }
 
 #if OVERLOAD_NEW
@@ -622,4 +672,8 @@ AstLambda *get_lambda(AstExpression *expression) {
 		}
 	}
 	return 0;
+}
+
+bool is_lambda(AstExpression *expression) {
+	return direct(expression)->kind == Ast_lambda;
 }

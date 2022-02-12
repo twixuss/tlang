@@ -58,6 +58,24 @@ static umm append(StringBuilder &builder, Register r) {
 	return append(builder, (u8)r);
 }
 
+static umm append(StringBuilder &builder, Address a) {
+	assert(!a.register_offset_scale);
+
+	umm result = 0;
+	auto append_ = [&](auto &b, auto v) {
+		result += append(b, v);
+	};
+
+	append_(builder, '[');
+	append_(builder, a.base);
+	if (a.constant_offset) {
+		append_(builder, '+');
+		append_(builder, a.constant_offset);
+	}
+	append_(builder, ']');
+	return result;
+}
+
 static Span<utf8> locate_msvc() {
 	Span<utf8> path = u8"C:\\Program Files (x86)\\Microsoft Visual Studio\\"s;
 
