@@ -76,4 +76,5 @@ a :: 999999999999999999999999999 * 123456789;
 * Optimization
 * Context
 * Extension methods
-* 
+* Metaprogramming
+* Specify build options in the source code
