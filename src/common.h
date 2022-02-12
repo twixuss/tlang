@@ -1,6 +1,6 @@
 #pragma once
 #define TL_PARENT_SOURCE_LOCATION 0
-#define TL_ENABLE_PROFILER 0
+#define TL_ENABLE_PROFILER 1
 #include <source_location>
 #include <cstring>
 inline bool operator==(std::source_location a, std::source_location b) {

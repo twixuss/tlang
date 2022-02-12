@@ -73,7 +73,7 @@ s64 allocate_zero_data(Converter &conv, s64 byte_count) {
 void push_comment(Converter &conv, Span<utf8> string) {
 	auto &back = conv.body_builder->back();
 	if (back.comment) {
-		back.comment = concatenate(as_span(back.comment), ';', string, '\0').data;
+		back.comment = (utf8 *)concatenate(as_span(back.comment), ';', string, '\0').data;
 	} else {
 		back.comment = null_terminate(string).data;
 	}
@@ -278,7 +278,7 @@ global2 ->	data
 */
 
 static void push_address_of(Converter &conv, AstExpression *expression) {
-	push_comment(conv, format(u8"push_address_of %", expression->location));
+	push_comment(conv, format(u8"push_address_of {}", expression->location));
 	switch (expression->kind) {
 		case Ast_lambda: {
 		push_address_of_lambda:
@@ -394,7 +394,7 @@ static void push_address_of(Converter &conv, AstExpression *expression) {
 // First you should push destination, then source
 // Pops the addresses
 static void append_memory_copy(Converter &conv, s64 bytes_to_copy, bool reverse, Span<utf8> from_name, Span<utf8> to_name) {
-	push_comment(conv, format(u8"copy % bytes from % into %, reverse=%"s, bytes_to_copy, from_name, to_name, reverse));
+	push_comment(conv, format(u8"copy {} bytes from {} into {}, reverse={}"s, bytes_to_copy, from_name, to_name, reverse));
 
 
 	switch (bytes_to_copy) {
@@ -486,7 +486,7 @@ static void append(Converter &conv, AstDefinition *definition) {
 	if (definition->parent_block) {
 		if (definition->parent_block->kind == Ast_lambda) {
 			auto parent_lambda = (AstLambda *)definition->parent_block;
-			push_comment(conv, format(u8"definition %", definition->name));
+			push_comment(conv, format(u8"definition {}", definition->name));
 			assert(!definition->is_parameter);
 
 			auto size = ceil(definition_size);
@@ -578,7 +578,7 @@ static void append(Converter &conv, AstReturn *ret) {
 	*/
 }
 static void append(Converter &conv, AstBinaryOperator *bin) {
-	push_comment(conv, format(u8"binary %"s, operator_string(bin->operation)));
+	push_comment(conv, format(u8"binary {}"s, operator_string(bin->operation)));
 
 	auto left = bin->left;
 	auto right = bin->right;
@@ -808,7 +808,7 @@ static void append(Converter &conv, AstBinaryOperator *bin) {
 	}
 }
 static void append(Converter &conv, AstIdentifier *identifier) {
-	push_comment(conv, format(u8"load identifer %", identifier->name));
+	push_comment(conv, format(u8"load identifer {}", identifier->name));
 
 	if (identifier->definition->expression && identifier->definition->expression->kind == Ast_lambda) {
 		push_address_of(conv, identifier);
@@ -823,7 +823,7 @@ static void append(Converter &conv, AstIdentifier *identifier) {
 	}
 }
 static void append(Converter &conv, AstCall *call) {
-	push_comment(conv, format(u8"call '%'", call->expression->location));
+	push_comment(conv, format(u8"call '{}'", call->expression->location));
 
 	assert(call->expression->type->kind == Ast_lambda);
 	auto lambda = (AstLambda *)call->expression->type;
@@ -914,7 +914,7 @@ static void append(Converter &conv, AstCall *call) {
 
 }
 static void append(Converter &conv, AstLiteral *literal) {
-	push_comment(conv, format(u8"literal %", literal->location));
+	push_comment(conv, format(u8"literal {}", literal->location));
 
 	assert(literal->type != &type_unsized_integer);
 	auto dtype = direct(literal->type);
@@ -940,7 +940,7 @@ static void append(Converter &conv, AstLiteral *literal) {
 			I(push_c, literal->character);
 			break;
 		case Float:
-			push_comment(conv, format(u8"float %", literal->Float));
+			push_comment(conv, format(u8"float {}", literal->Float));
 			I(push_c, *(s64 *)&literal->Float);
 			break;
 		case boolean:
@@ -1090,7 +1090,7 @@ static void append(Converter &conv, AstExpressionStatement *es) {
 	invalid_code_path();
 }
 static void append(Converter &conv, AstUnaryOperator *unop) {
-	push_comment(conv, format(u8"unary '%'", operator_string(unop->operation)));
+	push_comment(conv, format(u8"unary '{}'", operator_string(unop->operation)));
 	switch (unop->operation) {
 		case '-': {
 			assert(types_match(unop->expression->type, &type_u8) ||
@@ -1161,7 +1161,7 @@ static void append(Converter &conv, AstSubscript *subscript) {
 	//}
 }
 static void append(Converter &conv, AstCast *cast) {
-	push_comment(conv, format(u8"cast from '%' to '%'", type_to_string(cast->expression->type), type_to_string(cast->type)));
+	push_comment(conv, format(u8"cast from '{}' to '{}'", type_to_string(cast->expression->type), type_to_string(cast->type)));
 
 	append(conv, cast->expression);
 
@@ -1272,9 +1272,9 @@ static void append(Converter &conv, AstLambda *lambda, bool push_address) {
 
 
 		if (lambda->definition) {
-			push_comment(conv, format(u8"lambda %", lambda->definition->name));
+			push_comment(conv, format(u8"lambda {}", lambda->definition->name));
 		} else {
-			push_comment(conv, format(u8"lambda %", where(lambda->location.data)));
+			push_comment(conv, format(u8"lambda {}", where(lambda->location.data)));
 		}
 
 		auto old_lambda = conv.lambda;
@@ -1354,7 +1354,7 @@ static void append(Converter &conv, AstIfx *If) {
 
 #if 0
 static void append(Converter &conv, AstIdentifier *identifier, Optional<Register> &outreg) {
-	push_comment(conv, format(u8"load identifer %", identifier->name));
+	push_comment(conv, format(u8"load identifer {}", identifier->name));
 
 	if (identifier->definition->expression && identifier->definition->expression->kind == Ast_lambda) {
 		// append_address_of(conv, identifier, outreg);
@@ -1369,7 +1369,7 @@ static void append(Converter &conv, AstIdentifier *identifier, Optional<Register
 	}
 }
 static void append(Converter &conv, AstLiteral *literal, Optional<Register> &outreg) {
-	push_comment(conv, format(u8"literal %", literal->location));
+	push_comment(conv, format(u8"literal {}", literal->location));
 
 	assert(literal->type != &type_unsized_integer);
 	auto dtype = direct(literal->type);
@@ -1403,7 +1403,7 @@ static void append(Converter &conv, AstLiteral *literal, Optional<Register> &out
 			}
 			break;
 		case Float:
-			push_comment(conv, format(u8"float %", literal->Float));
+			push_comment(conv, format(u8"float {}", literal->Float));
 			I(push_c, *(s64 *)&literal->Float);
 			break;
 		case boolean:
@@ -1477,38 +1477,38 @@ void print_bytecode(List<Instruction> instructions) {
 	for (auto i : instructions) {
 		switch (i.kind) {
 			/*
-			case mov_rr:		                  print("mov         %, %    \n", i.mov_rr     .dst_reg , i.mov_rr     .src_reg  ); break;
-			case move_constant_to_reg:	          print("mov         %, %    \n", i.move_constant_to_reg.reg     , i.move_constant_to_reg.constant ); break;
-			case move_mem_to_reg:		          print("mov         %, [%]  \n", i.move_mem_to_reg     .dst_reg , i.move_mem_to_reg     .src_reg  ); break;
-			case mov_mr:		                  print("mov         [%], %  \n", i.mov_mr     .dst_reg , i.mov_mr     .src_reg  ); break;
-			case push_r:				          print("push        %       \n", i.push_r            .reg                                       ); break;
-			case push_constant:			          print("push        %       \n", i.push_constant       .constant                                  ); break;
-			case push_mem:				          print("push        [%]     \n", i.push_mem            .reg                                       ); break;
-			case pushcda:                         print("push        c addr %\n", i.pushcda.address                             ); break;
-			case pushda:                          print("push        d addr %\n", i.pushda.address                                      ); break;
-			case pushuda:                         print("push        z addr %\n", i.pushuda.address                        ); break;
-			case pop_reg:				          print("pop         %       \n", i.pop_reg             .reg                                       ); break;
+			case mov_rr:		                  print("mov         {}, {}    \n", i.mov_rr     .dst_reg , i.mov_rr     .src_reg  ); break;
+			case move_constant_to_reg:	          print("mov         {}, {}    \n", i.move_constant_to_reg.reg     , i.move_constant_to_reg.constant ); break;
+			case move_mem_to_reg:		          print("mov         {}, [{}]  \n", i.move_mem_to_reg     .dst_reg , i.move_mem_to_reg     .src_reg  ); break;
+			case mov_mr:		                  print("mov         [{}], {}  \n", i.mov_mr     .dst_reg , i.mov_mr     .src_reg  ); break;
+			case push_r:				          print("push        {}       \n", i.push_r            .reg                                       ); break;
+			case push_constant:			          print("push        {}       \n", i.push_constant       .constant                                  ); break;
+			case push_mem:				          print("push        [{}]     \n", i.push_mem            .reg                                       ); break;
+			case pushcda:                         print("push        c addr {}\n", i.pushcda.address                             ); break;
+			case pushda:                          print("push        d addr {}\n", i.pushda.address                                      ); break;
+			case pushuda:                         print("push        z addr {}\n", i.pushuda.address                        ); break;
+			case pop_reg:				          print("pop         {}       \n", i.pop_reg             .reg                                       ); break;
 			case ret:					          print("ret                 \n"                                                                   ); break;
-			case add_constant_to_reg:	          print("add         %, %    \n", i.add_constant_to_reg.reg      , i.add_constant_to_reg.constant  ); break;
-			case add_constant_to_mem:	          print("add         [%], %  \n", i.add_constant_to_mem.reg      , i.add_constant_to_mem.constant  ); break;
-			case add_reg_to_mem:		          print("add         [%], %  \n", i.add_reg_to_mem     .dst_reg  , i.add_reg_to_mem     .src_reg   ); break;
-			case add_reg_to_reg:		          print("add         %, %    \n", i.add_reg_to_reg     .dst_reg  , i.add_reg_to_reg     .src_reg   ); break;
-			case sub_constant_to_reg:	          print("sub         %, %    \n", i.sub_constant_to_reg.reg      , i.sub_constant_to_reg.constant  ); break;
-			case sub_reg_to_reg:		          print("sub         %, %    \n", i.sub_reg_to_reg     .dst_reg  , i.sub_reg_to_reg     .src_reg   ); break;
-			case sub_reg_to_mem:		          print("sub         [%], %  \n", i.sub_reg_to_mem     .dst_reg  , i.sub_reg_to_mem     .src_reg   ); break;
-			case mul_reg_to_mem:		          print("mul         [%], %  \n", i.mul_reg_to_mem     .dst_reg  , i.mul_reg_to_mem     .src_reg   ); break;
-			case div_reg_to_mem:		          print("div         [%], %  \n", i.div_reg_to_mem     .dst_reg  , i.div_reg_to_mem     .src_reg   ); break;
-			case mod_reg_to_mem:		          print("mod         [%], %  \n", i.mod_reg_to_mem     .dst_reg  , i.mod_reg_to_mem     .src_reg   ); break;
-			case or_reg_to_mem:			          print(" or         [%], %  \n", i.or_reg_to_mem      .dst_reg  , i.or_reg_to_mem      .src_reg   ); break;
-			case and_constant_to_reg:	          print("and         %, %    \n", i.and_constant_to_reg.reg      , i.and_constant_to_reg.constant  ); break;
-			case and_reg_to_mem:		          print("and         [%], %  \n", i.and_reg_to_mem     .dst_reg  , i.and_reg_to_mem     .src_reg   ); break;
-			case xor_reg_to_reg:		          print("xor         %, %    \n", i.xor_reg_to_reg     .dst_reg  , i.xor_reg_to_reg     .src_reg   ); break;
-			case xor_reg_to_mem:		          print("xor         [%], %  \n", i.xor_reg_to_mem     .dst_reg  , i.xor_reg_to_mem     .src_reg   ); break;
-			case cmp_r0_r1:			          print("cmp_r0_r1 %, %    \n", i.cmp_r0_r1        .dst_reg  , i.cmp_r0_r1        .comparison); break;
-			case call_constant:			          print("call        %       \n", i.call_constant      .constant                                   ); break;
-			case call_string:			          print("call        %       \n", i.call_string        .string                                     ); break;
-			case jmp:					          print("jmp         %       \n", i.jmp                .offset                                     ); break;
-			case jz:					          print("jz          %, %    \n", i.jz                 .reg      , i.jz                 .offset    ); break;
+			case add_constant_to_reg:	          print("add         {}, {}    \n", i.add_constant_to_reg.reg      , i.add_constant_to_reg.constant  ); break;
+			case add_constant_to_mem:	          print("add         [{}], {}  \n", i.add_constant_to_mem.reg      , i.add_constant_to_mem.constant  ); break;
+			case add_reg_to_mem:		          print("add         [{}], {}  \n", i.add_reg_to_mem     .dst_reg  , i.add_reg_to_mem     .src_reg   ); break;
+			case add_reg_to_reg:		          print("add         {}, {}    \n", i.add_reg_to_reg     .dst_reg  , i.add_reg_to_reg     .src_reg   ); break;
+			case sub_constant_to_reg:	          print("sub         {}, {}    \n", i.sub_constant_to_reg.reg      , i.sub_constant_to_reg.constant  ); break;
+			case sub_reg_to_reg:		          print("sub         {}, {}    \n", i.sub_reg_to_reg     .dst_reg  , i.sub_reg_to_reg     .src_reg   ); break;
+			case sub_reg_to_mem:		          print("sub         [{}], {}  \n", i.sub_reg_to_mem     .dst_reg  , i.sub_reg_to_mem     .src_reg   ); break;
+			case mul_reg_to_mem:		          print("mul         [{}], {}  \n", i.mul_reg_to_mem     .dst_reg  , i.mul_reg_to_mem     .src_reg   ); break;
+			case div_reg_to_mem:		          print("div         [{}], {}  \n", i.div_reg_to_mem     .dst_reg  , i.div_reg_to_mem     .src_reg   ); break;
+			case mod_reg_to_mem:		          print("mod         [{}], {}  \n", i.mod_reg_to_mem     .dst_reg  , i.mod_reg_to_mem     .src_reg   ); break;
+			case or_reg_to_mem:			          print(" or         [{}], {}  \n", i.or_reg_to_mem      .dst_reg  , i.or_reg_to_mem      .src_reg   ); break;
+			case and_constant_to_reg:	          print("and         {}, {}    \n", i.and_constant_to_reg.reg      , i.and_constant_to_reg.constant  ); break;
+			case and_reg_to_mem:		          print("and         [{}], {}  \n", i.and_reg_to_mem     .dst_reg  , i.and_reg_to_mem     .src_reg   ); break;
+			case xor_reg_to_reg:		          print("xor         {}, {}    \n", i.xor_reg_to_reg     .dst_reg  , i.xor_reg_to_reg     .src_reg   ); break;
+			case xor_reg_to_mem:		          print("xor         [{}], {}  \n", i.xor_reg_to_mem     .dst_reg  , i.xor_reg_to_mem     .src_reg   ); break;
+			case cmp_r0_r1:			          print("cmp_r0_r1 {}, {}    \n", i.cmp_r0_r1        .dst_reg  , i.cmp_r0_r1        .comparison); break;
+			case call_constant:			          print("call        {}       \n", i.call_constant      .constant                                   ); break;
+			case call_string:			          print("call        {}       \n", i.call_string        .string                                     ); break;
+			case jmp:					          print("jmp         {}       \n", i.jmp                .offset                                     ); break;
+			case jz:					          print("jz          {}, {}    \n", i.jz                 .reg      , i.jz                 .offset    ); break;
 			default:invalid_code_path();
 			*/
 		}

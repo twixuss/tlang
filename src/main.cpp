@@ -15,7 +15,7 @@
 #include <charconv>
 
 #define CORO_IMPL
-#define CORO_MALLOC(x) ::tl::page_allocator.allocate(x)
+#define CORO_MALLOC(x) ::tl::page_allocator.allocate_uninitialized(x)
 #define CORO_FREE(x)   ::tl::page_allocator.free(x)
 #pragma push_macro("assert")
 #include <coro.h>
@@ -48,7 +48,7 @@ AstDefinition *parse_definition(Span<utf8> name, Parser *parser);
 
 void print_help() {
     print(R"(Usage:
-    % <path>
+    {} <path>
 )", executable_name);
 }
 
@@ -161,7 +161,7 @@ void print_source_line(ReportKind kind, Span<utf8> location) {
     auto error_line_number = get_line_number(error_line_begin);
 
     auto print_line = [&](auto line) {
-        return print(Print_warning, "%|", Format{line, align_right(4, ' ')});
+        return print(Print_warning, "{}|", Format{line, align_right(4, ' ')});
     };
 
     // I don't know if this is really useful
@@ -239,7 +239,7 @@ struct Report {
 
 List<utf8> where(utf8 *location) {
     if (location) {
-        return format(u8"%:%:%", get_source_info(location).path, get_line_number(location), get_column_number(location));
+        return format(u8"{}:{}:{}", get_source_info(location).path, get_line_number(location), get_column_number(location));
     } else {
         return {};
     }
@@ -251,9 +251,9 @@ Report make_report(ReportKind kind, Span<utf8> location, Span<utf8> severity, ch
     r.location = location;
     r.kind = kind;
     if (location.data) {
-        r.message = format(u8"%: %: %", where(location.data), severity, format(format_string, args...));
+        r.message = format(u8"{}: {}: {}", where(location.data), severity, format(format_string, args...));
     } else {
-        r.message = format(u8"%: %", severity, format(format_string, args...));
+        r.message = format(u8"{}: {}", severity, format(format_string, args...));
     }
     atomic_increment(&debug_reports_made);
     return r;
@@ -400,7 +400,7 @@ bool lexer_function(Lexer *lexer) {
     auto push_token = [&] {
         lexer->add(token);
         //if (ends_with(get_source_path(token.string.data), u8"std.tl"s))
-        //	print("%\n", token.string);
+        //	print("{}\n", token.string);
         //
         //if (token.string == u8"while"s)
         //	debug_break();
@@ -812,7 +812,7 @@ struct Parser {
 
     bool expect(TokenKind expected_kind) {
         if (token->kind != expected_kind) {
-            reporter->error(token->string, "Expected '%', but got %", token_kind_to_string(expected_kind), token_kind_to_string(token->kind));
+            reporter->error(token->string, "Expected '{}', but got {}", token_kind_to_string(expected_kind), token_kind_to_string(token->kind));
             return false;
         }
         return true;
@@ -1021,7 +1021,7 @@ AstExpression *parse_sub_expression(Parser *parser) {
                 return 0;
 
             if (expr->kind != Ast_subscript) {
-                parser->reporter->error(expr->location, "Expected an array type after simd keyword, but got %", expr->kind);
+                parser->reporter->error(expr->location, "Expected an array type after simd keyword, but got {}", expr->kind);
                 return 0;
             }
 
@@ -1285,7 +1285,7 @@ AstExpression *parse_sub_expression(Parser *parser) {
 
 
             if (parser->token->kind != '{' && parser->token->kind != '=>' && parser->token->kind != ';') {
-                parser->reporter->error(parser->token->string, "Expected '{' or '=>' or ';' or '->' instead of '%'", parser->token->string);
+                parser->reporter->error(parser->token->string, "Expected '{' or '=>' or ';' or '->' instead of '{}'", parser->token->string);
                 return 0;
             }
 
@@ -1298,7 +1298,7 @@ AstExpression *parse_sub_expression(Parser *parser) {
                     parser->reporter->error(lambda->location, "Body of a lambda can not be specified after a #type directive");
                     return 0;
                 } else if (parser->token->kind != ';') {
-                    parser->reporter->error(parser->token->string, "Expected ';' or return type instead of '%'", parser->token->string);
+                    parser->reporter->error(parser->token->string, "Expected ';' or return type instead of '{}'", parser->token->string);
                     return 0;
                 }
             } else {
@@ -1309,7 +1309,7 @@ AstExpression *parse_sub_expression(Parser *parser) {
                 } else if (parser->token->kind == ';') {
                     lambda->has_body = false;
                 } else {
-                    parser->reporter->error(parser->token->string, "Expected '{' or '=>' or ';' or return type instead of '%'", parser->token->string);
+                    parser->reporter->error(parser->token->string, "Expected '{' or '=>' or ';' or return type instead of '{}'", parser->token->string);
                     return 0;
                 }
             }
@@ -1375,7 +1375,7 @@ AstExpression *parse_sub_expression(Parser *parser) {
                     /*
                     lambda->extern_language = extern_language_from_string(parser->extern_language);
                     if (lambda->extern_language == ExternLanguage::none) {
-                        parser->reporter->error(lambda->location, "Unsupported language: %", parser->extern_language);
+                        parser->reporter->error(lambda->location, "Unsupported language: {}", parser->extern_language);
                         print_example();
                         return 0;
                     }
@@ -1524,7 +1524,7 @@ AstExpression *parse_sub_expression(Parser *parser) {
 
                 return unop;
             } else {
-                parser->reporter->error(parser->token->string, "Unexpected token '%'", parser->token->string);
+                parser->reporter->error(parser->token->string, "Unexpected token '{}'", parser->token->string);
                 return 0;
             }
         }
@@ -1901,7 +1901,7 @@ parse_subscript:
             binop->right = parse_sub_expression_and_call_and_cast(parser);
         }
         if (!binop->right) {
-            parser->reporter->info("While parsing binary operator '%'", operator_string(binop->operation));
+            parser->reporter->info("While parsing binary operator '{}'", operator_string(binop->operation));
             return 0;
         }
 
@@ -2006,7 +2006,7 @@ AstDefinition *parse_definition(Span<utf8> name, Parser *parser) {
 
         {
             auto report_redefinition_error = [&] (AstDefinition *_new, AstDefinition *existing) {
-                parser->reporter->error(_new->name, "Redefinition of '%'", _new->name);
+                parser->reporter->error(_new->name, "Redefinition of '{}'", _new->name);
                 parser->reporter->info(existing->name, "Top declaration is here");
             };
 
@@ -2409,7 +2409,7 @@ void parse_file(Span<utf8> path) {
 
     context->lexer.source_buffer = read_entire_file(to_pathchars(path), {.extra_space_before=1, .extra_space_after=1});
     if (!context->lexer.source_buffer.data) {
-        print("Failed to read '%'. Exiting.\n", path);
+        print("Failed to read '{}'. Exiting.\n", path);
         return;
     }
 
@@ -2507,7 +2507,7 @@ bool parser_function(Parser *parser) {
                 return false;
             }
             auto libname = unescape_string(parser->token->string);
-            parse_file(concatenate(executable_directory, "\\libs\\", libname));
+            parse_file((Span<utf8>)concatenate(executable_directory, "\\libs\\", libname));
             parser->next();
         } else {
         _parse_global_statement:
@@ -2569,23 +2569,8 @@ struct TypecheckState {
     }
 
 List<AstDefinition *> get_definitions(TypecheckState *state, Span<utf8> name) {
+    timed_function();
     List<AstDefinition *> result;
-    //if (state->definition && state->definition->name == name)
-    //    result.add(state->definition);
-
-    // if (state->current_lambda) {
-    //     auto found_param = find_if(state->current_lambda->parameters, [&](AstDefinition *d) { return d->name == name; });
-    //     if (found_param)
-    //         result.add(*found_param);
-    //
-    //     //auto found_retparam = find_if(state->current_lambda->return_parameters, [&](AstDefinition *d) { return d->name == name; });
-    //     //if (found_retparam)
-    //     //	return *found_retparam;
-    //
-    //     if (state->current_lambda->return_parameter->name == name)
-    //         result.add(state->current_lambda->return_parameter);
-    //
-    // }
     auto scope = state->current_scope;
     while (scope) {
         auto found_local = scope->definitions.find(name);
@@ -2593,12 +2578,6 @@ List<AstDefinition *> get_definitions(TypecheckState *state, Span<utf8> name) {
             result.add(*found_local);
         scope = scope->parent;
     }
-
-    // scoped_lock(&global_scope);
-    // auto found = global_scope.definitions.find(name);
-    // if (found) {
-    //     result.add(*found);
-    // }
     return result;
 }
 
@@ -2611,7 +2590,7 @@ struct IntegerInfo {
 IntegerInfo integer_infos[8];
 
 void report_not_convertible(Reporter *reporter, AstExpression *expression, AstExpression *type) {
-    reporter->error(expression->location, "Expression of type % is not implicitly convertible to %", type_to_string(expression->type), type_to_string(type));
+    reporter->error(expression->location, "Expression of type {} is not implicitly convertible to {}", type_to_string(expression->type), type_to_string(type));
 }
 
 void harden_type(AstExpression *expression) {
@@ -2641,6 +2620,7 @@ void harden_type(AstExpression *expression) {
 
 
 AstLiteral *make_type_literal(AstExpression *type) {
+    timed_function();
     auto result = new_ast<AstLiteral>();
     result->literal_kind = LiteralKind::type;
     result->type_value = type;
@@ -2649,6 +2629,7 @@ AstLiteral *make_type_literal(AstExpression *type) {
 }
 
 AstLiteral *make_bool(bool val) {
+    timed_function();
     auto result = new_ast<AstLiteral>();
     result->literal_kind = LiteralKind::boolean;
     result->Bool = val;
@@ -2657,6 +2638,7 @@ AstLiteral *make_bool(bool val) {
 }
 
 AstLiteral *evaluate(TypecheckState *state, AstExpression *expression) {
+    timed_function();
     switch (expression->kind) {
         case Ast_literal: return (AstLiteral *)expression;
         case Ast_identifier: {
@@ -2777,6 +2759,7 @@ bool do_all_paths_return(AstLambda *lambda) {
 */
 
 AstExpression *make_pointer_type(AstExpression *type) {
+    timed_function();
     auto unop = new_ast<AstUnaryOperator>();
     unop->expression = type;
     unop->type = &type_type;
@@ -2805,12 +2788,13 @@ bool ensure_fits(Reporter *reporter, AstExpression *expression, BigInt integer, 
         return true;
     if (reporter) {
         auto type_string = type_name(info.type);
-        reporter->error(expression->location, "% does not fit into %. You can write '% as %' to discard excess bits", integer, type_string, expression->location, type_string);
+        reporter->error(expression->location, "{} does not fit into {}. You can write '{} as {}' to discard excess bits", integer, type_string, expression->location, type_string);
     }
     return false;
 }
 
 bool implicitly_cast(Reporter *reporter, AstExpression **_expression, AstExpression *type) {
+    timed_function();
     auto expression = *_expression;
     defer { *_expression = expression; };
 
@@ -2924,6 +2908,7 @@ List<AstDefinition *> wait_for_definitions(TypecheckState *state, Span<utf8> nam
 }
 
 bool ensure_addressable(Reporter *reporter, AstExpression *expression) {
+    timed_function();
     switch (expression->kind) {
         case Ast_identifier: {
             return true;
@@ -2956,11 +2941,12 @@ bool ensure_addressable(Reporter *reporter, AstExpression *expression) {
     return false;
 }
 bool ensure_assignable(Reporter *reporter, AstExpression *expression) {
+    timed_function();
     switch (expression->kind) {
         case Ast_identifier: {
             auto identifier = (AstIdentifier *)expression;
             if (identifier->definition->is_constant) {
-                reporter->error(identifier->location, "Can't assign to '%' because it is constant", identifier->location);
+                reporter->error(identifier->location, "Can't assign to '{}' because it is constant", identifier->location);
                 return false;
             }
             if (identifier->definition->is_parameter) {
@@ -2999,8 +2985,6 @@ bool ensure_subscriptable(TypecheckState *state, AstExpression *expression) {
 }
 
 void typecheck(TypecheckState *state, AstStatement *statement) {
-    timed_function();
-
     auto _statement = statement;
 
     switch (statement->kind) {
@@ -3225,15 +3209,15 @@ void typecheck(TypecheckState *state, AstStatement *statement) {
 
             switch (result->literal_kind) {
                 case LiteralKind::type: {
-                    state->reporter.info(print->expression->location, "%", type_to_string(result->type_value));
+                    state->reporter.info(print->expression->location, "{}", type_to_string(result->type_value));
                     break;
                 }
                 case LiteralKind::string: {
-                    state->reporter.info(print->expression->location, "%", result->string);
+                    state->reporter.info(print->expression->location, "{}", result->string);
                     break;
                 }
                 case LiteralKind::integer: {
-                    state->reporter.info(print->expression->location, "%", (s64)result->integer); // TODO: print the full number
+                    state->reporter.info(print->expression->location, "{}", (s64)result->integer); // TODO: print the full number
                     break;
                 }
                 default:
@@ -3263,8 +3247,6 @@ bool signedness_matches(AstStruct *a, AstStruct *b) {
 }
 
 void typecheck(TypecheckState *state, AstExpression *&expression) {
-    timed_function();
-
     assert(expression);
 
     // Skip typechecking builtin expressions
@@ -3483,7 +3465,7 @@ void typecheck(TypecheckState *state, AstExpression *&expression) {
                 for (auto ret : lambda->return_statements) {
                     if (ret->expression) {
                         if (!harden_type(state, &ret->expression, lambda->return_parameter->type)) {
-                            state->reporter.info(lambda->location, "When hardening return statement expression's type (lambda's return type is '%')", type_to_string(lambda->return_parameter->type));
+                            state->reporter.info(lambda->location, "When hardening return statement expression's type (lambda's return type is '{}')", type_to_string(lambda->return_parameter->type));
                             yield(TypecheckResult::fail);
                         }
                         if (!convertible(ret->expression, lambda->return_parameter->type)) {
@@ -3493,7 +3475,7 @@ void typecheck(TypecheckState *state, AstExpression *&expression) {
                     } else {
                         if (!types_match(lambda->return_parameter->type, &type_void)) {
                             if (!lambda->return_parameter->name.count) {
-                                state->reporter.error(ret->location, "Attempt to return nothing when lambda's return type is '%' and return parameter is unnamed", type_to_string(lambda->return_parameter->type));
+                                state->reporter.error(ret->location, "Attempt to return nothing when lambda's return type is '{}' and return parameter is unnamed", type_to_string(lambda->return_parameter->type));
                                 yield(TypecheckResult::fail);
                             }
                         }
@@ -3516,7 +3498,7 @@ void typecheck(TypecheckState *state, AstExpression *&expression) {
             typecheck(state, bin->left);
 
             auto report_type_mismatch = [&] {
-                state->reporter.error(bin->location, "Can't use binary % on types % and %", operator_string(bin->operation), type_to_string(bin->left->type), type_to_string(bin->right->type));
+                state->reporter.error(bin->location, "Can't use binary {} on types {} and {}", operator_string(bin->operation), type_to_string(bin->left->type), type_to_string(bin->right->type));
                 yield(TypecheckResult::fail);
             };
 
@@ -3536,9 +3518,9 @@ void typecheck(TypecheckState *state, AstExpression *&expression) {
                     auto found_member = find_if(left_is_type ? Struct->constants : Struct->members, [&](AstDefinition *member) { return member->name == name; });
                     if (!found_member) {
                         if (left_is_type) {
-                            state->reporter.error(bin->right->location, "Type '%' does not contain constant '%'", Struct->definition->name, bin->right->location);
+                            state->reporter.error(bin->right->location, "Type '{}' does not contain constant '{}'", Struct->definition->name, bin->right->location);
                         } else {
-                            state->reporter.error(bin->right->location, "'%' is not a member of '%'", bin->right->location, Struct->definition->name);
+                            state->reporter.error(bin->right->location, "'{}' is not a member of '{}'", bin->right->location, Struct->definition->name);
                         }
                         yield(TypecheckResult::fail);
                     }
@@ -3546,7 +3528,7 @@ void typecheck(TypecheckState *state, AstExpression *&expression) {
                     member_identifier->definition = *found_member;
                     member_identifier->type = member_identifier->definition->type;
                 } else {
-                    state->reporter.error(bin->left->location, "Dot operator can not be applied to an expression of type %", type_to_string(bin->left->type));
+                    state->reporter.error(bin->left->location, "Dot operator can not be applied to an expression of type {}", type_to_string(bin->left->type));
                     yield(TypecheckResult::fail);
                 }
                 bin->type = bin->right->type;
@@ -3781,7 +3763,7 @@ void typecheck(TypecheckState *state, AstExpression *&expression) {
 
             if (is_type(unop->expression)) {
                 if (unop->operation != '*') {
-                    state->reporter.error(unop->location, "Unary operator '%' can not be applied to a type expression", operator_string(unop->operation));
+                    state->reporter.error(unop->location, "Unary operator '{}' can not be applied to a type expression", operator_string(unop->operation));
                     yield(TypecheckResult::fail);
                 }
                 unop->type = &type_type;
@@ -3791,7 +3773,7 @@ void typecheck(TypecheckState *state, AstExpression *&expression) {
                         if (::is_integer(unop->expression->type)) {
                             unop->type = unop->expression->type;
                         } else {
-                            state->reporter.error(unop->location, "Unary minus can not be applied to expression of type %", type_to_string(unop->expression->type));
+                            state->reporter.error(unop->location, "Unary minus can not be applied to expression of type {}", type_to_string(unop->expression->type));
                             yield(TypecheckResult::fail);
                         }
                         break;
@@ -3805,7 +3787,7 @@ void typecheck(TypecheckState *state, AstExpression *&expression) {
                     }
                     case '*': {
                         if (!is_pointer(unop->expression->type)) {
-                            state->reporter.error(unop->location, "% is not a pointer type, can't dereference it", type_to_string(unop->expression->type));
+                            state->reporter.error(unop->location, "{} is not a pointer type, can't dereference it", type_to_string(unop->expression->type));
                             yield(TypecheckResult::fail);
                         }
                         unop->type = ((AstUnaryOperator *)unop->expression->type)->expression;
@@ -3814,7 +3796,7 @@ void typecheck(TypecheckState *state, AstExpression *&expression) {
                     case '!': {
                         // TODO: implicit cast from int to bool? ...
                         if (!types_match(unop->expression->type, &type_bool)/* && !::is_integer(unop->expression->type)*/) {
-                            state->reporter.error(unop->location, "% is not a boolean type, can't invert it", type_to_string(unop->expression->type));
+                            state->reporter.error(unop->location, "{} is not a boolean type, can't invert it", type_to_string(unop->expression->type));
                             yield(TypecheckResult::fail);
                         }
                         unop->type = &type_bool;
@@ -3880,7 +3862,7 @@ void typecheck(TypecheckState *state, AstExpression *&expression) {
             harden_type(subscript->index_expression);
 
             if (!::is_integer(subscript->index_expression->type)) {
-                state->reporter.error(subscript->index_expression->location, "Expression must be of type integer but is %", type_to_string(subscript->index_expression->type));
+                state->reporter.error(subscript->index_expression->location, "Expression must be of type integer but is {}", type_to_string(subscript->index_expression->type));
                 yield(TypecheckResult::fail);
             }
 
@@ -3986,7 +3968,7 @@ void typecheck(TypecheckState *state, AstExpression *&expression) {
 
                 state->reporter.error(
                     cast->location,
-                    "Conversion from % to % does not exist",
+                    "Conversion from {} to {} does not exist",
                     type_to_string(src_type),
                     type_to_string(dst_type)
                 );
@@ -4010,7 +3992,7 @@ void typecheck(TypecheckState *state, AstExpression *&expression) {
             harden_type(If->false_expression);
 
             if (!types_match(If->true_expression->type, If->false_expression->type)) {
-                state->reporter.error(If->location, "Both branches of if expression must have the same type, but provided % and %", type_to_string(If->true_expression->type), type_to_string(If->false_expression->type));
+                state->reporter.error(If->location, "Both branches of if expression must have the same type, but provided {} and {}", type_to_string(If->true_expression->type), type_to_string(If->false_expression->type));
                 yield(TypecheckResult::fail);
             }
 
@@ -4022,12 +4004,12 @@ void typecheck(TypecheckState *state, AstExpression *&expression) {
             auto typeof = (AstTypeof *)expression;
             typecheck(state, typeof->expression);
             typeof->type = &type_type;
-           //  print("typeof % is %\n", typeof->expression->location, type_to_string(typeof->expression->type));
+           //  print("typeof {} is {}\n", typeof->expression->location, type_to_string(typeof->expression->type));
             break;
         }
         default: {
             invalid_code_path();
-            state->reporter.error(expression->location, "Internal error: typecheck(AstExpression *): unhandled case '%'", expression->kind);
+            state->reporter.error(expression->location, "Internal error: typecheck(AstExpression *): unhandled case '{}'", expression->kind);
             yield(TypecheckResult::fail);
         }
     }
@@ -4035,10 +4017,8 @@ void typecheck(TypecheckState *state, AstExpression *&expression) {
 
 void *typecheck_global(coro_state *corostate, TypecheckState *state) {
     {
-        timed_function();
         push_scope(&global_scope);
         typecheck(state, state->statement);
-
     }
     yield(TypecheckResult::success);
     return 0;
@@ -4077,12 +4057,12 @@ import "windows.tl"
 standard_output_handle : HANDLE;
 global_string : string;
 
-AStruct :: struct {
+AStruct :: struct {{
     data : *void;
     count : uint;
-}
+}}
 
-main :: fn () -> s32 {
+main :: fn () -> s32 {{
     standard_output_handle = GetStdHandle(STD_OUTPUT_HANDLE);
 
     str : string = "Hello World!\n";
@@ -4092,21 +4072,21 @@ main :: fn () -> s32 {
     print("Hello World!\n");
     print(str);
 
-    if true {
+    if true {{
         dd : u64; // block-local variable
         print("true\n");
-    }
+    }}
 
-    if 0 == 0 { print("0 is 0\n"); }
-    else      { print("0 is not 0\n"); }
+    if 0 == 0 {{ print("0 is 0\n"); }}
+    else      {{ print("0 is not 0\n"); }}
 
 
     if 1 < 2 print("1 is less than 2\n");
 
     if true print("true\n");
-    else  { print("false\n"); }
+    else  {{ print("false\n"); }}
 
-    if false { print("true\n"); }
+    if false {{ print("true\n"); }}
     else       print("false\n");
 
     if 3 >= 0 print("3 is >= 0\n");
@@ -4114,15 +4094,15 @@ main :: fn () -> s32 {
 
     i := 10;
 
-    while i > 0 {
+    while i > 0 {{
         j := i;
-        while j > 0 {
+        while j > 0 {{
             print("*");
             j = j - 1;
-        }
+        }}
         print("\n");
         i = i - 1;
-    }
+    }}
 
     STR := "my file.txt\0";
     print(STR);
@@ -4149,19 +4129,19 @@ main :: fn () -> s32 {
     print(a_string);
 
     return x as s32;
-}
+}}
 
 x :: 42;
 
-print :: fn (str: string) {
+print :: fn (str: string) {{
     WriteConsoleA(standard_output_handle, str.data, str.count, null, null);
-}
+}}
 */
 
 
 import "std.tl"
 
-main% :: fn () {
+main{} :: fn () {{
     class_name := "window_class\0".data;
     window_name := "hello window\0".data;
 
@@ -4170,85 +4150,85 @@ main% :: fn () {
     wc : WNDCLASSEXA;
     wc.hInstance = hInstance;
     wc.cbSize = #sizeof WNDCLASSEXA;
-    wc.lpfnWndProc = fn #stdcall (hwnd : HWND, uMsg : UINT, wParam : WPARAM, lParam : LPARAM) -> LRESULT {
-        if uMsg == WM_DESTROY {
+    wc.lpfnWndProc = fn #stdcall (hwnd : HWND, uMsg : UINT, wParam : WPARAM, lParam : LPARAM) -> LRESULT {{
+        if uMsg == WM_DESTROY {{
             PostQuitMessage(0);
             return 0;
-        }
+        }}
         return DefWindowProcA(hwnd, uMsg, wParam, lParam);
-    };
+    }};
     //wc.lpfnWndProc = &DefWindowProcA;
     wc.lpszClassName = class_name;
     wc.hCursor = LoadCursorA(null, IDC_ARROW);
-    if RegisterClassExA(&wc) != 0 {
+    if RegisterClassExA(&wc) != 0 {{
         print_string("Class created!\n");
-    } else {
+    }} else {{
         print_string("Class Failed!\n");
-    }
+    }}
 
     window := CreateWindowExA(
         0, class_name, window_name, WS_OVERLAPPEDWINDOW | WS_VISIBLE,
         CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, null, null, hInstance, null
     );
 
-    if window != null {
+    if window != null {{
         print_string("Window Success!\n");
-    } else {
+    }} else {{
         print_string("Window Fail!\n");
-    }
+    }}
 
     msg : MSG;
 
-    while true {
-        while PeekMessageA(&msg, null, 0, 0, PM_REMOVE) != 0 {
+    while true {{
+        while PeekMessageA(&msg, null, 0, 0, PM_REMOVE) != 0 {{
             if msg.message == WM_QUIT
                 return;
             TranslateMessage(&msg);
             DispatchMessageA(&msg);
-        }
-    }
+        }}
+    }}
 
-}
+}}
 /*
-foo :: fn (x: int) -> int {
-    if x == 0 {
+foo :: fn (x: int) -> int {{
+    if x == 0 {{
         main();
         return 0;
-    }
+    }}
     return x;
-}
+}}
 
-main :: fn () -> int {
+main :: fn () -> int {{
     return foo(12);
-}
+}}
 */
 /*
-foo :: fn (x: u8) -> u8 {
+foo :: fn (x: u8) -> u8 {{
     return x;
-}
+}}
 
-main :: fn () -> int {
+main :: fn () -> int {{
     a :: "HILLO";
     return foo(a.count as u8);
-}
+}}
 */
 
 /*
 import "std.tl"
-main :: fn () {
+main :: fn () {{
     print_string("hello");
-}
+}}
 */
 
 /*
 
-foo :: fn (data : *u8, size : uint) {
-}
+foo :: fn (data : *u8, size : uint) {{
+}}
 
-main :: fn () -> int {
+main :: fn () -> int {{
     hello :: "hello";
     foo(hello.data, hello.count);
-}
+}}
 
 */
 
@@ -4257,12 +4237,12 @@ import "std.tl"
 
 x :: u8;
 
-main :: fn () {
+main :: fn () {{
     a : x;
     print_hex(&a);
     print_char('\n');
 
-    {
+    {{
         b : x;
         print_hex(&b);
         print_char('\n');
@@ -4270,24 +4250,24 @@ main :: fn () {
         print_hex(&c);
         print_char('\n');
 
-        {
+        {{
             d : x;
             print_hex(&d);
             print_char('\n');
-        }
-    }
+        }}
+    }}
 
     e : x;
     print_hex(&e);
     print_char('\n');
-}
+}}
 
 */)FOOBAR", i);
     }
 #else
-    append_format(test, u8"♥0 :: fn (☺: s32, ☻: s32) s32 { return ☺ + ☻; } /* ♦♣♠•◘○ this is a /* nested */ comment ♦♣♠•◘○ */\n");
+    append_format(test, u8"♥0 :: fn (☺: s32, ☻: s32) s32 {{ return ☺ + ☻; }} /* ♦♣♠•◘○ this is a /* nested */ comment ♦♣♠•◘○ */\n");
     for (int i = 1; i < 4096; ++i) {
-        append_format(test, u8"♥% :: fn (☺: s32, ☻: s32) s32 { return ♥%(☺, ☻); } /* ♦♣♠•◘○ this is a /* nested */ comment ♦♣♠•◘○ */\n", i, i - 1);
+        append_format(test, u8"♥{} :: fn (☺: s32, ☻: s32) s32 {{ return ♥{}(☺, ☻); }} /* ♦♣♠•◘○ this is a /* nested */ comment ♦♣♠•◘○ */\n", i, i - 1);
     }
 #endif
     write_entire_file("performance_test.tl"s, as_bytes(to_string(test)));
@@ -4323,7 +4303,7 @@ ParsedArguments parse_arguments(Span<Span<utf8>> arguments) {
     executable_path = arguments[0];
 
     if (!is_absolute_path(executable_path)) {
-        executable_path = concatenate(current_directory, '\\', executable_path);
+        executable_path = concatenate(current_directory, u8'\\', executable_path);
     }
 
     auto parsed = parse_path(executable_path);
@@ -4332,7 +4312,7 @@ ParsedArguments parse_arguments(Span<Span<utf8>> arguments) {
 
     result.output = Output::fasm_x86_64_windows;
 
-    //print("executable_path: %\nexecutable_name: %\nexecutable_directory: %\n", executable_path, executable_name, executable_directory);
+    //print("executable_path: {}\nexecutable_name: {}\nexecutable_directory: {}\n", executable_path, executable_name, executable_directory);
 
     if (arguments.count == 1) {
         print_help();
@@ -4355,7 +4335,7 @@ ParsedArguments parse_arguments(Span<Span<utf8>> arguments) {
             if (false);
             ENUMERATE_OUTPUTS(CASE)
             else {
-                print(Print_error, "Unknown output type '%'\n", arguments[i]);
+                print(Print_error, "Unknown output type '{}'\n", arguments[i]);
             }
 
 #undef CASE
@@ -4391,7 +4371,7 @@ void print_allocation_count() {
     });
 
     for (auto a : allocations) {
-        print("%: %\n", a.location, format_bytes(a.size));
+        print("{}: {}\n", a.location, format_bytes(a.size));
     }
 }
 #endif
@@ -4502,13 +4482,14 @@ auto slab_allocator_func(AllocatorMode mode, void *data, umm old_size, umm new_s
 
 s32 tl_main(Span<Span<utf8>> arguments) {
     auto global_timer = create_precise_timer();
-    defer { print("Execution finished in % ms\n", reset(global_timer) * 1000); };
+    defer { print("Execution finished in {} ms\n", reset(global_timer) * 1000); };
+    // defer { format("Execution finished in {} ms\n", reset(global_timer) * 1000); };     (print\(|format\()".*%.*"
 
     //CreateWindowExA(0, (char *)1, (char *)2, 3, 4, 5, 6, 7, (HWND)8, (HMENU)9, (HINSTANCE)10, (void *)11);
 
     set_console_encoding(Encoding_utf8);
 
-    defer { print("Peak memory usage: %\n", format_bytes(get_memory_info().peak_usage)); };
+    defer { print("Peak memory usage: {}\n", format_bytes(get_memory_info().peak_usage)); };
 
     write_test_source();
 
@@ -4809,6 +4790,7 @@ restart_main:
         print("Typechecking...                 \r");
         auto timer = create_precise_timer();
         defer { typecheck_time = reset(timer); };
+        timed_block("typecheck"s);
 
         Span<TypecheckState> typecheck_states;
         typecheck_states.count = count(global_scope.statements, [&](AstStatement *statement) { return !(statement->kind == Ast_definition && ((AstDefinition *)statement)->built_in); });
@@ -4898,7 +4880,7 @@ restart_main:
         main_lambda = get_lambda(definition->expression);
 
         if (!::is_integer(main_lambda->return_parameter->type) && !types_match(main_lambda->return_parameter->type, &type_void)) {
-            immediate_error(main_lambda->return_parameter->type->location.data ? main_lambda->return_parameter->type->location : main_lambda->location, "Main function can return any type of integer or void, but not %.", type_to_string(main_lambda->return_parameter->type));
+            immediate_error(main_lambda->return_parameter->type->location.data ? main_lambda->return_parameter->type->location : main_lambda->location, "Main function can return any type of integer or void, but not {}.", type_to_string(main_lambda->return_parameter->type));
             return 1;
         }
     } else {
@@ -4939,20 +4921,20 @@ restart_main:
     }
 
     print("                                \r");
-    //print("Lexing took % ms. Tokens processed: %. Bytes processed: %.\n", lexer_time * 1000, lexer.tokens_lexed, format_bytes(source.count));
-    print("Parsing took % ms.\n", parser_time * 1000);
-    print("Type checking took % ms.\n", typecheck_time * 1000);
-    print("Bytecode building took % ms.\n", bytecode_time * 1000);
+    //print("Lexing took {} ms. Tokens processed: {}. Bytes processed: {}.\n", lexer_time * 1000, lexer.tokens_lexed, format_bytes(source.count));
+    print("Parsing took {} ms.\n", parser_time * 1000);
+    print("Type checking took {} ms.\n", typecheck_time * 1000);
+    print("Bytecode building took {} ms.\n", bytecode_time * 1000);
     if (target_code_generation_time) {
-        print("Target code generation took % ms.\n", target_code_generation_time * 1000);
+        print("Target code generation took {} ms.\n", target_code_generation_time * 1000);
     }
-    //print("typechecked_globals_mutex_lock_count: %\n", typechecked_globals_mutex_lock_count);
+    //print("typechecked_globals_mutex_lock_count: {}\n", typechecked_globals_mutex_lock_count);
 
     extern u32 debug_allocation_blocks;
 
-    print("debug_reports_made: %\n", debug_reports_made);
-    print("debug_parser_resets: %\n", debug_parser_resets);
-    print("debug_allocation_blocks: %\n", debug_allocation_blocks);
+    print("debug_reports_made: {}\n", debug_reports_made);
+    print("debug_parser_resets: {}\n", debug_parser_resets);
+    print("debug_allocation_blocks: {}\n", debug_allocation_blocks);
 
     return 0;
 }

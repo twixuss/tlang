@@ -58,7 +58,7 @@ main :: fn () -> int {
 	SetPixelFormat(dc, index, &sp);
 
 	context := wglCreateContext(dc);
-	if wglMakeCurrent(dc, context) != 1 { // TODO FIXME right now `!func()` parses as `(!func)()`
+	if wglMakeCurrent(dc, context) != 1 {
 		print_string("wglMakeCurrent failed");
 		return 1;
 	}
