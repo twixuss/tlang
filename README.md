@@ -31,7 +31,7 @@ print_string(if true then "Hello" else "World");
 * Types are also expressions
 ```rs
 get_int_t :: fn () -> type => int;
-main :: fn () -> get_int_t() {
+main :: fn () -> get_int_t() /* get_int_t will be run at compile time */ {
     return 1;
 }
 ```
