@@ -30,8 +30,10 @@ print_string(if true then "Hello" else "World");
 ```
 * Types are also expressions
 ```rs
-my_int :: int;
-value : my_int = 42;
+get_int_t :: fn () -> type => int;
+main :: fn () -> get_int_t() {
+    return 1;
+}
 ```
 * Foreign function interface
 ```rs
