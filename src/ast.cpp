@@ -59,6 +59,7 @@ bool type_is_built_in(AstExpression *type) {
 		case Ast_subscript: return true;
 	}
 	invalid_code_path();
+	return {};
 }
 
 Scope global_scope;
@@ -88,66 +89,15 @@ bool needs_semicolon(AstExpression *node) {
 }
 
 bool can_be_global(AstStatement *statement) {
+	if (statement->kind == Ast_expression_statement) {
+		auto expression = ((AstExpressionStatement *)statement)->expression;
+		return expression->kind == Ast_import;
+	}
 	return statement->kind == Ast_definition || statement->kind == Ast_print || statement->kind == Ast_assert;
 }
 
-Optional<BigInt> get_constant_integer(AstExpression *expression) {
-	switch (expression->kind) {
-		case Ast_literal: {
-			auto literal = (AstLiteral *)expression;
-			if (literal->literal_kind == LiteralKind::integer) {
-				return literal->integer;
-			}
-			break;
-		}
-		case Ast_identifier: {
-			auto ident = (AstIdentifier *)expression;
-			if (ident->definition && ident->definition->is_constant) {
-				return get_constant_integer(ident->definition->expression);
-			}
-			break;
-		}
-		case Ast_unary_operator: {
-			auto unop = (AstUnaryOperator *)expression;
-			auto got_value = get_constant_integer(unop->expression);
-			if (!got_value)
-				return got_value;
-
-			auto value = got_value.value_unchecked();
-
-			switch (unop->operation) {
-				case '-': return -value;
-			}
-			break;
-		}
-		case Ast_binary_operator: {
-			auto binop = (AstBinaryOperator *)expression;
-			using enum BinaryOperation;
-			switch (binop->operation) {
-				case add: return get_constant_integer(binop->left) + get_constant_integer(binop->right);
-				case sub: return get_constant_integer(binop->left) - get_constant_integer(binop->right);
-				case mul: return get_constant_integer(binop->left) * get_constant_integer(binop->right);
-				case div: print("constexpr / not implemented\n"); return {};// return get_constant_integer(binop->left) / get_constant_integer(binop->right);
-				case mod: print("constexpr % not implemented\n"); return {};// return get_constant_integer(binop->left) % get_constant_integer(binop->right);
-				case bxor: return get_constant_integer(binop->left) ^ get_constant_integer(binop->right);
-				case band: return get_constant_integer(binop->left) & get_constant_integer(binop->right);
-				case bor: return get_constant_integer(binop->left) | get_constant_integer(binop->right);
-				case bsl: print("constexpr << not implemented\n"); return {};// return get_constant_integer(binop->left) << get_constant_integer(binop->right);
-				case bsr: print("constexpr >> not implemented\n"); return {};// return get_constant_integer(binop->left) >> get_constant_integer(binop->right);
-				case eq:
-				case ne:
-				case dot:
-					return {};
-				default: invalid_code_path();
-			}
-			break;
-		}
-	}
-	return {};
-}
-
 bool is_type(AstExpression *expression) {
-	if (expression->type == &type_type)
+	if (types_match(expression->type, &type_type))
 		return true;
 
 	if (expression->kind == Ast_lambda)
@@ -195,7 +145,7 @@ void append_type(StringBuilder &builder, AstExpression *type, bool silent_error)
 		case Ast_identifier: {
 			auto identifier = (AstIdentifier *)type;
 			ensure(identifier->definition);
-			ensure(identifier->definition->expression->type == &type_type);
+			ensure(types_match(identifier->definition->expression->type, &type_type));
 			append(builder, identifier->name);
 			break;
 		}
@@ -245,45 +195,6 @@ List<utf8> type_name(AstExpression *type, bool silent_error) {
 	return (List<utf8>)to_string(builder);
 }
 
-s64 get_size(AstExpression *type) {
-	assert(type);
-	switch (type->kind) {
-		case Ast_struct: {
-			auto Struct = (AstStruct *)type;
-			return Struct->size;
-		}
-		case Ast_identifier: {
-			auto identifier = (AstIdentifier *)type;
-			return get_size(identifier->definition->expression);
-		}
-		case Ast_unary_operator: {
-			auto unop = (AstUnaryOperator *)type;
-			switch (unop->operation) {
-				case '*': return 8;
-				default: invalid_code_path();
-			}
-		}
-		case Ast_subscript: {
-			auto subscript = (AstSubscript *)type;
-
-			auto count = get_constant_integer(subscript->index_expression);
-			assert(count.has_value());
-
-			return get_size(subscript->expression) * (s64)count.value();
-		}
-		case Ast_lambda: {
-			return 8;
-		}
-		case Ast_typeof: {
-			auto typeof = (AstTypeof *)type;
-			return get_size(typeof->expression->type);
-		}
-		default: {
-			invalid_code_path();
-			return 0;
-		}
-	}
-}
 
 s64 get_align(AstExpression *type) {
 	assert(type);
@@ -408,6 +319,12 @@ AstStruct *get_struct(AstExpression *type) {
 	return 0;
 }
 
+AstExpression *get_definition_expression(AstExpression *expression) {
+	while (expression->kind == Ast_identifier)
+		expression = ((AstIdentifier *)expression)->definition->expression;
+	return expression;
+}
+
 struct AllocationBlock {
 	u8 *base   = 0;
 	u8 *cursor = 0;
@@ -435,7 +352,7 @@ void new_ast_block() {
 void init_ast_allocator() {
 	ast_allocation_blocks.allocator = os_allocator;
 	ast_allocation_block_size = 1024*1024;
-	last_allocation_block_index = -1;
+	last_allocation_block_index = (u32)-1;
 	new_ast_block();
 	ast_allocation_block_size *= 2;
 }
@@ -451,7 +368,7 @@ retry:
 	auto block = &ast_allocation_blocks[last_allocation_block_index];
 
 	u8 *target = (u8 *)(((umm)block->cursor + align - 1) & ~(align - 1));
-	if ((u8 *)block->base + block->size - target < size) {
+	if ((umm)((u8 *)block->base + block->size - target) < size) {
 		ast_allocation_block_size *= 2;
 		while (ast_allocation_block_size < size + align - 1) {
 			ast_allocation_block_size *= 2;
@@ -471,10 +388,9 @@ void *my_reallocate(void *data, umm old_size, umm new_size, umm align) {
 }
 
 void my_deallocate(void *data, umm size) {
-
+	(void)data;
+	(void)size;
 }
-
-AstLambda *main_lambda;
 
 Span<utf8> operator_string(u64 op) {
 	switch (op) {
@@ -509,6 +425,7 @@ Span<utf8> operator_string(u64 op) {
 		case '<<=': return u8"<<="s;
 	}
 	invalid_code_path();
+	return {};
 }
 Span<utf8> operator_string(BinaryOperation op) {
 	using enum BinaryOperation;
@@ -543,6 +460,7 @@ Span<utf8> operator_string(BinaryOperation op) {
 		case bslass: return u8"<<="s;
 	}
 	invalid_code_path();
+	return {};
 }
 
 bool is_integer(AstExpression *type) {
@@ -657,6 +575,10 @@ bool is_constant(AstExpression *expression) {
         return true;
     }
 
+    if (expression->kind == Ast_import) {
+        return true;
+    }
+
     if (is_type(expression))
         return true;
 
@@ -678,4 +600,16 @@ AstLambda *get_lambda(AstExpression *expression) {
 
 bool is_lambda(AstExpression *expression) {
 	return direct(expression)->kind == Ast_lambda;
+}
+
+Comparison comparison_from_binary_operation(BinaryOperation operation) {
+	switch (operation) {
+		case BinaryOperation::lt: return Comparison::l;
+		case BinaryOperation::gt: return Comparison::g;
+		case BinaryOperation::le: return Comparison::le;
+		case BinaryOperation::ge: return Comparison::ge;
+		case BinaryOperation::eq: return Comparison::e;
+		case BinaryOperation::ne: return Comparison::ne;
+	}
+	invalid_code_path();
 }

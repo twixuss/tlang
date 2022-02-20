@@ -213,7 +213,7 @@ void print_ast(AstCast*cast) {
 }
 
 void print_ast() {
-	timed_function();
+	timed_function(context.profiler);
 	for (auto statement : global_scope.statements) {
 		print_ast(statement);
 	}

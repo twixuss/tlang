@@ -16,14 +16,28 @@ inline bool operator==(std::source_location a, std::source_location b) {
 #include <tl/hash_map.h>
 #include <tl/process.h>
 #include <tl/profiler.h>
+#include <tl/time.h>
 using namespace tl;
 
-extern Span<utf8> source_path;
-extern Span<utf8> source_path_without_extension;
-extern Span<utf8> executable_path;
-extern Span<utf8> executable_name;
-extern Span<utf8> executable_directory;
-extern Span<utf8> current_directory;
+struct CompilerContext {
+	Span<utf8> source_path;
+	Span<utf8> source_path_without_extension;
+	Span<utf8> executable_path;
+	Span<utf8> executable_name;
+	Span<utf8> executable_directory;
+	Span<utf8> current_directory;
+	struct AstLambda *main_lambda;
+	Profiler profiler;
+    List<PreciseTimer> phase_timers;
+	int tabs = 0;
+};
+extern CompilerContext context;
+
+#define scoped_phase(message) \
+		timed_block(context.profiler, as_utf8(as_span(message))); \
+        context.phase_timers.add(create_precise_timer()); \
+		++context.tabs; \
+        defer { --context.tabs; for (int i = 0; i < context.tabs;++i) print("  "); print("{} done in {} s.\n", message, get_time(context.phase_timers.pop())); }
 
 enum class Comparison : u8 {
 	e,

@@ -50,11 +50,17 @@ enum class InstructionKind : u8 {
 	push_c,
 	push_m,
 
-	pushcda, // constant data address
-	pushda,  // data address
-	pushuda, // uninitialized data address
-	pushta,  // text address
-	pushextern, // extern symbol address
+	push_a, // constant data address
+	push_d, // data address
+	push_u, // uninitialized data address
+	push_t, // text address
+	push_e, // extern symbol address
+
+	mov_ra,
+	mov_rd,
+	mov_ru,
+	mov_rt,
+	mov_re,
 
 	pop_r,
 	pop_m,
@@ -121,6 +127,9 @@ enum class InstructionKind : u8 {
 	xor_mc,
 	xor_mr,
 
+	neg_r,
+	neg_m,
+
 	cmpu1,
 	cmpu2,
 	cmpu4,
@@ -173,12 +182,19 @@ enum class InstructionKind : u8 {
 	tobool_r,
 	toboolnot_r,
 
+	dbgbrk,
+
+	noop,
+
 	count,
 };
 
 // Make sure instruction count does not go over 256
-static_assert((int)InstructionKind::count >= 100);
+static_assert((int)InstructionKind::count >= 127);
 
+// NOTE:
+// registers r0-r4 are scratch and are used for expression evaluation
+// registers r5-r7 are allocatable
 enum class Register : u8 {
 	r0,
 	r1,
@@ -205,9 +221,15 @@ enum InstructionFlags : u8 {
 
 struct Address {
 	Register base = {};
-	Register register_offset = {};
-	s64      register_offset_scale = {};
-	s64      constant_offset = {};
+	Register r1 = {};
+	s64      r1_scale = {};
+	Register r2 = {};
+	bool     r2_scale = {};
+	s64      c = {};
+
+	bool is(Register r) {
+		return base == r && !r1_scale && !r2_scale && !c;
+	}
 
 	Address() = default;
 	Address(Register base) : base(base) {}
@@ -216,12 +238,11 @@ struct Address {
 inline Address operator+(Register r, s64 c) {
 	Address a;
 	a.base = r;
-	a.constant_offset = c;
+	a.c = c;
 	return a;
 }
-
 inline Address operator+(Address a, s64 c) {
-	a.constant_offset += c;
+	a.c += c;
 	return a;
 }
 
@@ -264,11 +285,17 @@ struct Instruction {
 		struct { Register s; } push_r;
 		struct { Address  s; } push_m;
 
-		struct { s64 s; } pushcda;
-		struct { s64 s; } pushda;
-		struct { s64 s; } pushuda;
-		struct { s64 s; } pushta;
-		struct { Span<utf8> s; } pushextern;
+		struct { s64 s; } push_a;
+		struct { s64 s; } push_d;
+		struct { s64 s; } push_u;
+		struct { s64 s; } push_t;
+		struct { Span<utf8> s; } push_e;
+
+		struct { Register d; s64 s; } mov_ra;
+		struct { Register d; s64 s; } mov_rd;
+		struct { Register d; s64 s; } mov_ru;
+		struct { Register d; s64 s; } mov_rt;
+		struct { Register d; Span<utf8> s; } mov_re;
 
 
 		struct { Register d; } pop_r;
@@ -337,6 +364,9 @@ struct Instruction {
 		struct { Address  d; s64      s; } xor_mc;
 		struct { Address  d; Register s; } xor_mr;
 
+		struct { Register d; } neg_r;
+		struct { Address  d; } neg_m;
+
 		struct { Register d, a, b; Comparison c; } cmpu1;
 		struct { Register d, a, b; Comparison c; } cmpu2;
 		struct { Register d, a, b; Comparison c; } cmpu4;
@@ -387,6 +417,8 @@ struct Instruction {
 
 		struct { Register d; } tobool_r;
 		struct { Register d; } toboolnot_r;
+
+		struct {} dbgbrk;
 	};
 };
 
@@ -414,3 +446,6 @@ inline umm append(StringBuilder &builder, Comparison c) {
 			invalid_code_path();
 	}
 }
+
+#define DECLARE_OUTPUT_BUILDER extern "C" __declspec(dllexport) void tlang_build_output(CompilerContext &context, Bytecode &bytecode)
+using OutputBuilder = void (*)(CompilerContext &context, Bytecode &bytecode);

@@ -63,3 +63,19 @@ pow2 :: fn (x) => x * x;
 
 
 
+Why return type is after arguments?
+Because that way it can depend on input types.
+
+
+
+
+
+
+Thoughts about characters:
+'☺' - utf32 codepoint
+`☺` - 
+
+
+
+Import string as expression???
+

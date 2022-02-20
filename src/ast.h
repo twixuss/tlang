@@ -3,6 +3,42 @@
 #include <token.h>
 #include <tl/big_int.h>
 
+// TODO: maybe this can be merged into tl
+// This structure allows to store data either in-place or reference it somewhere else
+// NOTE: Copying Box may or may not copy it's contents. So don't expect changes in Box's copy to reflect in original instance.
+template <class T>
+struct Box {
+    T *pointer = 0;
+    union {
+        T value;
+    };
+
+    inline Box() : pointer(0) {}
+    inline Box(std::nullptr_t) : pointer(0) {}
+    inline Box(T *that) : pointer(that) {}
+    inline Box(T const &that) : pointer(&value), value(that) {}
+    inline Box(Box const &that) {
+		if (that.owning()) {
+			pointer = &value;
+			value = that.value;
+		} else {
+			pointer = that.pointer;
+		}
+	}
+    inline ~Box() {}
+
+	inline Box &operator=(Box const &that) {
+		return *new(this) Box(that);
+	}
+
+    inline explicit operator bool() { return pointer != 0; }
+
+	inline bool owning() const { return pointer == &value; }
+
+    inline T &operator*() { return *pointer; }
+    inline T *operator->() { return pointer; }
+};
+
 #define ENUMERATE_AST_KIND(e) \
 e(null) \
 e(definition) \
@@ -27,6 +63,7 @@ e(ifx) \
 e(assert) \
 e(typeof) \
 e(print) \
+e(import) \
 
 enum AstKind {
 #define e(name) Ast_ ## name,
@@ -51,6 +88,14 @@ struct Scope {
 	List<AstStatement *> statements;
 	HashMap<Span<utf8>, List<AstDefinition *>> definitions; // multiple definitions for a single name in case of function overloading
 	AstNode *node = 0;
+
+	void append(Scope &that) {
+		children.add(that.children);
+		statements.add(that.statements);
+		for_each(that.definitions, [&](auto &key, auto &value) {
+			definitions.get_or_insert(key).add(value);
+		});
+	}
 };
 
 extern s32 ast_node_uid_counter;
@@ -80,50 +125,8 @@ struct AstExpressionStatement : AstStatement {
 	AstExpression *expression = 0;
 };
 
-#define INVALID_MEMBER_OFFSET (-1)
-#define INVALID_DATA_OFFSET (-1)
-
-struct AstDefinition : AstStatement {
-	AstDefinition() { kind = Ast_definition; }
-
-	Span<utf8> name = {};
-	AstExpression *expression = 0;
-	AstExpression *type = 0;
-
-	AstLiteral *evaluated = 0;
-
-	AstExpression *parent_block = 0;
-	Scope *parent_scope = 0;
-
-	s64 offset_in_struct = INVALID_MEMBER_OFFSET;
-
-	bool is_constant  : 1 = false;
-	bool is_parameter : 1 = false;
-	bool built_in     : 1 = false;
-	bool is_return_parameter : 1 = false;
-
-
-	s64 bytecode_offset = INVALID_DATA_OFFSET;
-};
-
-struct AstReturn : AstStatement {
-	AstReturn() { kind = Ast_return; }
-
-	AstExpression *expression = 0;
-	AstLambda *lambda = 0;
-};
-
-/*
-enum class ExpressionContext {
-	unknown,
-	type,
-	value,
-};
-*/
-
 struct AstExpression : AstNode {
 	AstExpression *type = 0;
-	// ExpressionContext context = {};
 };
 
 enum class LiteralKind : u8 {
@@ -147,6 +150,7 @@ struct AstLiteral : AstExpression {
 		struct {
 			Span<utf8> string;
 			s64 string_data_offset;
+#pragma warning(suppress: 4201)
 		};
 		u32 character;
 		f64 Float;
@@ -160,6 +164,38 @@ struct AstLiteral : AstExpression {
 	~AstLiteral() {
 
 	}
+};
+
+#define INVALID_MEMBER_OFFSET (-1)
+#define INVALID_DATA_OFFSET (-1)
+
+struct AstDefinition : AstStatement {
+	AstDefinition() { kind = Ast_definition; }
+
+	Span<utf8> name = {};
+	AstExpression *expression = 0;
+	AstExpression *type = 0;
+
+	Box<AstLiteral> evaluated;
+
+	AstExpression *parent_block = 0;
+	Scope *parent_scope = 0;
+
+	s64 offset_in_struct = INVALID_MEMBER_OFFSET;
+
+	bool is_constant         : 1 = false;
+	bool is_parameter        : 1 = false;
+	bool built_in            : 1 = false;
+	bool is_return_parameter : 1 = false;
+
+	s64 bytecode_offset = INVALID_DATA_OFFSET;
+};
+
+struct AstReturn : AstStatement {
+	AstReturn() { kind = Ast_return; }
+
+	AstExpression *expression = 0;
+	AstLambda *lambda = 0;
 };
 
 struct AstIdentifier : AstExpression {
@@ -184,6 +220,7 @@ enum class CallingConvention {
 	stdcall,
 };
 
+// MYTYPEISME
 struct AstLambda : AstExpression {
 	AstLambda() {
 		kind = Ast_lambda;
@@ -213,6 +250,7 @@ struct AstLambda : AstExpression {
 	bool has_body                   : 1 = true;
 	bool is_type                    : 1 = false;
 	bool finished_typechecking_head : 1 = false;
+	bool is_intrinsic               : 1 = false;
 
 	ExternLanguage extern_language = {};
 	Span<utf8> extern_library;
@@ -351,10 +389,10 @@ struct AstSubscript : AstExpression {
 	AstExpression *expression = 0;
 	AstExpression *index_expression = 0;
 
-	u64 simd_size = 0;
+	// u64 simd_size = 0;
 
 	bool is_prefix : 1 = false;
-	bool is_simd   : 1 = false;
+	// bool is_simd   : 1 = false;
 };
 
 struct AstTuple : AstExpression {
@@ -368,84 +406,12 @@ struct AstPrint : AstStatement {
 	AstExpression *expression = 0;
 };
 
-enum class CastKind {
-	none,
-
-	u8_s8,
-	u8_s16,
-	u8_s32,
-	u8_s64,
-	u8_u16,
-	u8_u32,
-	u8_u64,
-
-	u16_s8,
-	u16_s16,
-	u16_s32,
-	u16_s64,
-	u16_u8,
-	u16_u32,
-	u16_u64,
-
-	u32_s8,
-	u32_s16,
-	u32_s32,
-	u32_s64,
-	u32_u8,
-	u32_u16,
-	u32_u64,
-
-	u64_s8,
-	u64_s16,
-	u64_s32,
-	u64_s64,
-	u64_u8,
-	u64_u16,
-	u64_u32,
-
-	s8_s16,
-	s8_s32,
-	s8_s64,
-	s8_u8,
-	s8_u16,
-	s8_u32,
-	s8_u64,
-
-	s16_s8,
-	s16_s32,
-	s16_s64,
-	s16_u8,
-	s16_u16,
-	s16_u32,
-	s16_u64,
-
-	s32_s8,
-	s32_s16,
-	s32_s64,
-	s32_u8,
-	s32_u16,
-	s32_u32,
-	s32_u64,
-
-	s64_s8,
-	s64_s16,
-	s64_s32,
-	s64_u8,
-	s64_u16,
-	s64_u32,
-	s64_u64,
-
-	f64_s64,
-
-	no_op,
-};
-
 struct AstCast : AstExpression {
 	AstCast() { kind = Ast_cast; }
 
 	AstExpression * expression = 0;
-
-	CastKind cast_kind = {};
+	// TODO: user defined casts
+	// AstLambda *lambda = 0; // non null for user defined casts
 };
 
 struct AstSizeof : AstExpression {
@@ -487,7 +453,17 @@ struct AstAssert : AstStatement {
 	AstExpression *condition = 0;
 };
 
-extern AstStruct type_type;
+// MYTYPEISME
+struct AstImport : AstExpression {
+	AstImport() {
+		kind = Ast_import;
+	}
+
+	Span<utf8> path;
+	Scope *scope = 0;
+};
+
+extern AstStruct type_type; // These can be referenced by user programmer
 extern AstStruct type_void;
 extern AstStruct type_bool;
 extern AstStruct type_u8;
@@ -501,10 +477,10 @@ extern AstStruct type_s64;
 extern AstStruct type_f32;
 extern AstStruct type_f64;
 extern AstStruct type_string;
-extern AstStruct type_noinit;
+extern AstStruct type_noinit; // These are special, user can't use them directly. typeof'ing them should do what? i don't know. TODO
 extern AstStruct type_unsized_integer;
 extern AstStruct type_unsized_float;
-inline constexpr u32 built_in_struct_count = 14;
+// inline constexpr u32 built_in_struct_count = 14;
 
 extern AstUnaryOperator type_pointer_to_void;
 extern AstStruct *type_default_integer;
@@ -533,7 +509,60 @@ T *new_ast(TL_LPC) {
 	return default_allocator.allocate<T>(TL_LAC);
 }
 
-Optional<BigInt> get_constant_integer(AstExpression *expression);
+inline Optional<BigInt> get_constant_integer(AstExpression *expression) {
+	switch (expression->kind) {
+		case Ast_literal: {
+			auto literal = (AstLiteral *)expression;
+			if (literal->literal_kind == LiteralKind::integer) {
+				return literal->integer;
+			}
+			break;
+		}
+		case Ast_identifier: {
+			auto ident = (AstIdentifier *)expression;
+			if (ident->definition && ident->definition->is_constant) {
+				return get_constant_integer(ident->definition->expression);
+			}
+			break;
+		}
+		case Ast_unary_operator: {
+			auto unop = (AstUnaryOperator *)expression;
+			auto got_value = get_constant_integer(unop->expression);
+			if (!got_value)
+				return got_value;
+
+			auto value = got_value.value_unchecked();
+
+			switch (unop->operation) {
+				case '-': return -value;
+			}
+			break;
+		}
+		case Ast_binary_operator: {
+			auto binop = (AstBinaryOperator *)expression;
+			using enum BinaryOperation;
+			switch (binop->operation) {
+				case add: return get_constant_integer(binop->left) + get_constant_integer(binop->right);
+				case sub: return get_constant_integer(binop->left) - get_constant_integer(binop->right);
+				case mul: return get_constant_integer(binop->left) * get_constant_integer(binop->right);
+				case div: print("constexpr / not implemented\n"); return {};// return get_constant_integer(binop->left) / get_constant_integer(binop->right);
+				case mod: print("constexpr % not implemented\n"); return {};// return get_constant_integer(binop->left) % get_constant_integer(binop->right);
+				case bxor: return get_constant_integer(binop->left) ^ get_constant_integer(binop->right);
+				case band: return get_constant_integer(binop->left) & get_constant_integer(binop->right);
+				case bor: return get_constant_integer(binop->left) | get_constant_integer(binop->right);
+				case bsl: print("constexpr << not implemented\n"); return {};// return get_constant_integer(binop->left) << get_constant_integer(binop->right);
+				case bsr: print("constexpr >> not implemented\n"); return {};// return get_constant_integer(binop->left) >> get_constant_integer(binop->right);
+				case eq:
+				case ne:
+				case dot:
+					return {};
+				default: invalid_code_path();
+			}
+			break;
+		}
+	}
+	return {};
+}
 
 // Returns a human readable string.
 // For example for type `int` it will return "int (aka s64)"
@@ -542,7 +571,50 @@ List<utf8> type_to_string(AstExpression *type, bool silent_error = false);
 // Returns just the name of the type without synonyms
 List<utf8> type_name     (AstExpression *type, bool silent_error = false);
 
-s64 get_size(AstExpression *type);
+inline s64 get_size(AstExpression *type) {
+	assert(type);
+	switch (type->kind) {
+		case Ast_struct: {
+			auto Struct = (AstStruct *)type;
+			return Struct->size;
+		}
+		case Ast_identifier: {
+			auto identifier = (AstIdentifier *)type;
+			return get_size(identifier->definition->expression);
+		}
+		case Ast_unary_operator: {
+			auto unop = (AstUnaryOperator *)type;
+			switch (unop->operation) {
+				case '*': return 8;
+				default: invalid_code_path();
+			}
+		}
+		case Ast_subscript: {
+			auto subscript = (AstSubscript *)type;
+
+			auto count = get_constant_integer(subscript->index_expression);
+			assert(count.has_value());
+
+			return get_size(subscript->expression) * (s64)count.value();
+		}
+		case Ast_lambda: {
+			return 8;
+		}
+		case Ast_typeof: {
+			auto typeof = (AstTypeof *)type;
+			return get_size(typeof->expression->type);
+		}
+		case Ast_call: {
+			auto call = (AstCall *)type;
+			return get_size(call->type);
+		}
+		default: {
+			invalid_code_path();
+			return 0;
+		}
+	}
+}
+
 s64 get_align(AstExpression *type);
 
 bool types_match(AstExpression *type_a, AstExpression *type_b);
@@ -551,10 +623,9 @@ bool is_type(AstExpression *expression);
 
 AstStruct *get_struct(AstExpression *type);
 AstExpression *direct(AstExpression *type);
+AstExpression *get_definition_expression(AstExpression *expression);
 
 void init_ast_allocator();
-
-extern AstLambda *main_lambda;
 
 Span<utf8> operator_string(u64 op);
 Span<utf8> operator_string(BinaryOperation op);
@@ -584,3 +655,5 @@ bool is_lambda(AstExpression *expression);
 
 bool struct_is_built_in(AstStruct *type);
 bool type_is_built_in(AstExpression *type);
+
+Comparison comparison_from_binary_operation(BinaryOperation operation);

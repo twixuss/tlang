@@ -27,19 +27,9 @@ Project("{911E67C6-3D85-4FCE-B560-20A9C3E3FF48}") = "a", "bin\a.exe", "{72B146B8
 		IORedirection = Auto
 	EndProjectSection
 EndProject
-Project("{911E67C6-3D85-4FCE-B560-20A9C3E3FF48}") = "fibonacci", "bin\fibonacci.exe", "{58501B36-4231-4506-B2A2-FB3EE6AE2E0F}"
-	ProjectSection(DebuggerProjectSystem) = preProject
-		PortSupplier = 00000000-0000-0000-0000-000000000000
-		Executable = F:\tlang\bin\fibonacci.exe
-		RemoteMachine = DESKTOP-2HA4U8E
-		StartingDirectory = F:\tlang\bin
-		Environment = По умолчанию
-		LaunchingEngine = 00000000-0000-0000-0000-000000000000
-		UseLegacyDebugEngines = No
-		LaunchSQLEngine = No
-		AttachLaunchAction = No
-		IORedirection = Auto
-	EndProjectSection
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "nasm_x86_64_windows", "nasm_x86_64_windows.vcxproj", "{1AF0BD2E-16B1-4C3D-AB7E-17A7C29E1787}"
+EndProject
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "fasm_x86_64_windows", "fasm_x86_64_windows.vcxproj", "{98A1BC8C-C1F5-4832-B3BD-60F7B63BA55F}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
@@ -69,10 +59,22 @@ Global
 		{72B146B8-867E-42A2-83C6-150271C80750}.Debug|x86.ActiveCfg = Release
 		{72B146B8-867E-42A2-83C6-150271C80750}.Release|x64.ActiveCfg = Release
 		{72B146B8-867E-42A2-83C6-150271C80750}.Release|x86.ActiveCfg = Release
-		{58501B36-4231-4506-B2A2-FB3EE6AE2E0F}.Debug|x64.ActiveCfg = Release|x64
-		{58501B36-4231-4506-B2A2-FB3EE6AE2E0F}.Debug|x86.ActiveCfg = Release|x64
-		{58501B36-4231-4506-B2A2-FB3EE6AE2E0F}.Release|x64.ActiveCfg = Release|x64
-		{58501B36-4231-4506-B2A2-FB3EE6AE2E0F}.Release|x86.ActiveCfg = Release|x64
+		{1AF0BD2E-16B1-4C3D-AB7E-17A7C29E1787}.Debug|x64.ActiveCfg = Debug|x64
+		{1AF0BD2E-16B1-4C3D-AB7E-17A7C29E1787}.Debug|x64.Build.0 = Debug|x64
+		{1AF0BD2E-16B1-4C3D-AB7E-17A7C29E1787}.Debug|x86.ActiveCfg = Debug|Win32
+		{1AF0BD2E-16B1-4C3D-AB7E-17A7C29E1787}.Debug|x86.Build.0 = Debug|Win32
+		{1AF0BD2E-16B1-4C3D-AB7E-17A7C29E1787}.Release|x64.ActiveCfg = Release|x64
+		{1AF0BD2E-16B1-4C3D-AB7E-17A7C29E1787}.Release|x64.Build.0 = Release|x64
+		{1AF0BD2E-16B1-4C3D-AB7E-17A7C29E1787}.Release|x86.ActiveCfg = Release|Win32
+		{1AF0BD2E-16B1-4C3D-AB7E-17A7C29E1787}.Release|x86.Build.0 = Release|Win32
+		{98A1BC8C-C1F5-4832-B3BD-60F7B63BA55F}.Debug|x64.ActiveCfg = Debug|x64
+		{98A1BC8C-C1F5-4832-B3BD-60F7B63BA55F}.Debug|x64.Build.0 = Debug|x64
+		{98A1BC8C-C1F5-4832-B3BD-60F7B63BA55F}.Debug|x86.ActiveCfg = Debug|Win32
+		{98A1BC8C-C1F5-4832-B3BD-60F7B63BA55F}.Debug|x86.Build.0 = Debug|Win32
+		{98A1BC8C-C1F5-4832-B3BD-60F7B63BA55F}.Release|x64.ActiveCfg = Release|x64
+		{98A1BC8C-C1F5-4832-B3BD-60F7B63BA55F}.Release|x64.Build.0 = Release|x64
+		{98A1BC8C-C1F5-4832-B3BD-60F7B63BA55F}.Release|x86.ActiveCfg = Release|Win32
+		{98A1BC8C-C1F5-4832-B3BD-60F7B63BA55F}.Release|x86.Build.0 = Release|Win32
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

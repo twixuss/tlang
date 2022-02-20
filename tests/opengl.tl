@@ -22,8 +22,6 @@ main :: fn () -> int {
     
     print_string(if RegisterClassExA(&wc) != 0 then "Class created!\n" else "Class Failed!\n");
 	
-	test := wc;
-	
 	window := CreateWindowExA(
 		0, class_name, window_name, WS_OVERLAPPEDWINDOW | WS_VISIBLE, 
 		CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, null, null, hInstance, null

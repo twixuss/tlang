@@ -2,7 +2,7 @@
 
 Span<utf8> token_kind_to_string(TokenKind kind) {
 	static constexpr Array<utf8, 256> single_char_tokens = []{
-		Array<utf8, 256> result;
+		Array<utf8, 256> result = {};
 		for (u32 i = 0; i < 256; ++i) {
 			result.data[i] = i;
 		}
