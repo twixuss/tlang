@@ -30,8 +30,10 @@ print_string(if true then "Hello" else "World");
 ```
 * Types are also expressions
 ```rs
-my_int :: int;
-value : my_int = 42;
+get_int_t :: fn () -> type => int;
+main :: fn () -> get_int_t() /* get_int_t will be run at compile time */ {
+    return 1;
+}
 ```
 * Foreign function interface
 ```rs
@@ -76,4 +78,8 @@ a :: 999999999999999999999999999 * 123456789;
 * Optimization
 * Context
 * Extension methods
-* 
+* Metaprogramming
+* Specify build options in the source code
+* Default arguments
+* Ability to specify the time at which an expression will be evaluated (compile time / runtime)
+* Caller argument expression string
