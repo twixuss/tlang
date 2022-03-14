@@ -99,7 +99,7 @@ s64 ceil(s64 value) {
 }
 
 using enum Register;
-using enum XRegister;
+using enum FRegister;
 
 s64 allocate_data(StringBuilder &conv, Span<u8> string) {
 	auto result = conv.count();
@@ -131,7 +131,7 @@ void push_comment(Converter &conv, Span<utf8> string) {
 }
 
 #define MI(_kind, ...) \
-	{.kind = InstructionKind::_kind, .line=(u64)__LINE__, ._kind={__VA_ARGS__}}
+	{._kind={__VA_ARGS__}, .kind = InstructionKind::_kind, .line=(u64)__LINE__,}
 
 #else
 
@@ -143,10 +143,12 @@ void push_comment(Converter &conv, Span<utf8> string) {
 #endif
 
 
-#define I(kind, ...) \
-	add_instruction(conv, MI(kind, __VA_ARGS__))
+#define II(kind, ...) add_instruction(conv, MI(kind, __VA_ARGS__))
+#define I(kind, ...) (&add_instruction(conv, MI(kind, __VA_ARGS__))->kind)
 
 Instruction *add_instruction(Converter &conv, Instruction i) {
+	// some optimizations
+	// TODO: make this a separate pass
 #if 0
 	using enum InstructionKind;
 	switch (i.kind) {
@@ -345,21 +347,21 @@ Instruction *add_instruction(Converter &conv, Instruction i) {
 	return &conv.body_builder->add(i);
 }
 
-static void append(Converter &, AstCall*);
-static void append(Converter &, AstDefinition*);
-static void append(Converter &, AstIdentifier*);
-static void append(Converter &, AstLiteral*);
-static void append(Converter &, AstReturn*);
-static void append(Converter &, AstBinaryOperator*);
-static void append(Converter &, AstIf*);
-static void append(Converter &, AstExpressionStatement*);
-static void append(Converter &, AstUnaryOperator*);
-static void append(Converter &, AstWhile*);
-static void append(Converter &, AstSubscript*);
-static void append(Converter &, AstBlock*);
-static void append(Converter &, AstCast*);
-static void append(Converter &, AstLambda*, bool push_address = true);
-static void append(Converter &, AstIfx*);
+static void append(Converter &, AstCall *);
+static void append(Converter &, AstDefinition *);
+static void append(Converter &, AstIdentifier *);
+static void append(Converter &, AstLiteral *);
+static void append(Converter &, AstReturn *);
+static void append(Converter &, AstBinaryOperator *);
+static void append(Converter &, AstIf *);
+static void append(Converter &, AstExpressionStatement *);
+static void append(Converter &, AstUnaryOperator *);
+static void append(Converter &, AstWhile *);
+static void append(Converter &, AstSubscript *);
+static void append(Converter &, AstBlock *);
+static void append(Converter &, AstCast *);
+static void append(Converter &, AstLambda *, bool push_address);
+static void append(Converter &, AstIfx *);
 
 static void append(Converter &conv, AstNode *node) {
 	switch (node->kind) {
@@ -568,9 +570,18 @@ static Optional<Register> load_address_of(Converter &conv, AstExpression *expres
 				}
 				return destination;
 			}
+			break;
 		}
+		case Ast_unary_operator: {
+			auto unop = (AstUnaryOperator *)expression;
+			assert(unop->operation == '*');
+			append(conv, unop->expression);
+			return {}; // right now result is always on the stack
+		}
+		default:
+			invalid_code_path("loading address of that type of expression is not implemented");
 	}
-	invalid_code_path();
+	invalid_code_path("value was not returned");
 }
 
 static void push_address_of(Converter &conv, AstExpression *expression) {
@@ -874,7 +885,7 @@ static void append(Converter &conv, AstReturn *ret) {
 	}
 
 	auto jump_index = (s64)count_of(*conv.body_builder);
-	auto return_jump = I(jmp, 0);
+	auto return_jump = II(jmp, 0);
 
 	lambda->return_jumps.add({return_jump, jump_index});
 
@@ -901,56 +912,59 @@ static void append(Converter &conv, AstBinaryOperator *bin) {
 		switch (right->kind) {
 			case Ast_identifier: {
 				auto Struct = get_struct(left->type);
-				assert(Struct);
-				auto struct_size = get_size(left->type);
+				if (Struct) {
+					auto struct_size = get_size(left->type);
 
 
-				assert(right->kind == Ast_identifier);
-				auto ident = (AstIdentifier *)right;
-				auto member = ident->definition;;
-				assert(member);
-				auto member_size = get_size(member->type);
+					assert(right->kind == Ast_identifier);
+					auto ident = (AstIdentifier *)right;
+					auto member = ident->definition;;
+					assert(member);
+					auto member_size = get_size(member->type);
 
-				// assert(struct_size % stack_word_size == 0);
-				// assert(member_size % stack_word_size == 0);
+					// assert(struct_size % stack_word_size == 0);
+					// assert(member_size % stack_word_size == 0);
 
-				if (member->is_constant) {
-					invalid_code_path("not implemented");
-					I(push_c, member->bytecode_offset);
-				} else {
-					assert(member->offset_in_struct != INVALID_MEMBER_OFFSET);
+					if (member->is_constant) {
+						invalid_code_path("not implemented");
+						I(push_c, member->bytecode_offset);
+					} else {
+						assert(member->offset_in_struct != INVALID_MEMBER_OFFSET);
 
-					I(sub_rc, rs, ceil(member_size));
+						I(sub_rc, rs, ceil(member_size));
 
-					append(conv, left);
+						append(conv, left);
 
-					//if (member == Struct->members.back()) {
-					//	I(add_rc, rs, struct_size - member_size); // just throw away rest of the struct
-					//} else
-					{
-						/*
+						//if (member == Struct->members.back()) {
+						//	I(add_rc, rs, struct_size - member_size); // just throw away rest of the struct
+						//} else
+						{
+							/*
 
-						a :: struct {
-							data: *void;
-							count: uint;
+							a :: struct {
+								data: *void;
+								count: uint;
+							}
+																		rs
+								20      28      30      38      40      48      50
+							  0 |------||------||------||------||------||------||------| ffff
+										38      48      data    count   data    ????????
+
+							*/
+
+							I(push_r, rs); // destination
+							I(add_mc, rs, ceil(struct_size));
+
+							I(push_r, rs); // source
+							I(add_mc, rs, stack_word_size + member->offset_in_struct);
+
+							append_memory_copy(conv, member_size, true, bin->location, u8"stack"s);
+
+							I(add_rc, rs, ceil(struct_size));
 						}
-						                                            rs
-						    20      28      30      38      40      48      50
-						  0 |------||------||------||------||------||------||------| ffff
-							        38      48      data    count   data    ????????
-
-						*/
-
-						I(push_r, rs); // destination
-						I(add_mc, rs, ceil(struct_size));
-
-						I(push_r, rs); // source
-						I(add_mc, rs, stack_word_size + member->offset_in_struct);
-
-						append_memory_copy(conv, member_size, true, bin->location, u8"stack"s);
-
-						I(add_rc, rs, ceil(struct_size));
 					}
+				} else {
+					assert(is_sized_array(left->type));
 				}
 
 				break;
@@ -976,16 +990,13 @@ static void append(Converter &conv, AstBinaryOperator *bin) {
 				append(conv, right);
 				// TODO: types_match here is too much, figure out a simpler way
 				if (types_match(bin->left->type, &type_f64)) {
-					// TODO: this is crappy
-					I(pop_r, r1);
-					I(pop_r, r0);
-					I(mov_f64r, x0, r0);
-					I(mov_f64r, x1, r1);
+					I(pop_f, f1);
+					I(pop_f, f0);
 					switch (bin->operation) {
-						case add:  I(add_f64, x0, x1); break;
-						case sub:  I(sub_f64, x0, x1); break;
-						case mul:  I(mul_f64, x0, x1); break;
-						case div:  I(div_f64, x0, x1); break;
+						case add:  I(add_f64_f64, f0, f1); break;
+						case sub:  I(sub_f64_f64, f0, f1); break;
+						case mul:  I(mul_f64_f64, f0, f1); break;
+						case div:  I(div_f64_f64, f0, f1); break;
 						// case mod:  I(mod_f64, x0, x1); break;
 						// case bor:  I(bor_f64, x0, x1); break;
 						// case band: I(band_f64, x0, x1); break;
@@ -994,9 +1005,9 @@ static void append(Converter &conv, AstBinaryOperator *bin) {
 						// case bsl:  I(bsl_f64, x0, x1); break;
 						default: invalid_code_path();
 					}
-					I(mov_rf64, r0, x0);
-					I(push_r, r0);
+					I(push_f, f0);
 				} else {
+					assert(::is_integer(bin->type));
 					I(pop_r, r0);
 					switch (bin->operation) {
 						case add:  I(add_mr, rs, r0); break;
@@ -1151,11 +1162,12 @@ static void append(Converter &conv, AstIdentifier *identifier) {
 		}
 	}
 }
-static void append(Converter &conv, AstCall *call) {
-	push_comment(conv, format(u8"call '{}'", call->expression->location));
 
-	assert(call->expression->type->kind == Ast_lambda);
-	auto lambda = (AstLambda *)call->expression->type;
+static void append(Converter &conv, AstCall *call) {
+	push_comment(conv, format(u8"call '{}'", call->callable->location));
+
+	assert(call->callable->type->kind == Ast_lambda);
+	auto lambda = (AstLambda *)call->callable->type;
 
 	if (lambda->is_intrinsic) {
 		auto name = lambda->definition->name;
@@ -1172,23 +1184,26 @@ static void append(Converter &conv, AstCall *call) {
 			s64 return_parameters_size_on_stack = ceil(get_size(call->type));
 			I(sub_rc, rs, return_parameters_size_on_stack); // Reserve space for return value
 
-			bool lambda_is_constant = is_constant(call->expression);
+			bool lambda_is_constant = is_constant(call->callable);
 
 			if (!lambda_is_constant) {
-				append(conv, call->expression);
+				append(conv, call->callable);
 			}
 
 			s64 arguments_size_on_stack = 0;
-			for (auto argument : call->arguments) {
+			for (auto argument : get_arguments(call)) {
 				arguments_size_on_stack += ceil(get_size(argument->type));
 				append(conv, argument);
 			}
 
 			if (lambda_is_constant) {
-				// auto lambda = get_lambda(call->expression);
+				// auto lambda = get_lambda(call->callable);
 				// assert(lambda);
-				assert(lambda == get_lambda(call->expression));
+				assert(lambda == get_lambda(call->callable));
 
+				if (lambda->location_in_bytecode == -1) {
+					append(conv, lambda, false);
+				}
 				assert(lambda->location_in_bytecode != -1);
 				I(call_constant, lambda->location_in_bytecode);
 				I(add_rc, rs, arguments_size_on_stack);
@@ -1206,16 +1221,18 @@ static void append(Converter &conv, AstCall *call) {
 		case CallingConvention::stdcall: {
 			s64 const shadow_space_size = 32;
 			s64 arguments_size_on_stack = 0;
-			for (auto argument : call->arguments) {
+
+			auto arguments = get_arguments(call);
+			for (auto argument : arguments) {
 				auto size = get_size(argument->type);
 				assert(size <= stack_word_size);
 				arguments_size_on_stack += stack_word_size;
 			}
 
-			if (call->arguments.count >= 1) { arguments_size_on_stack -= stack_word_size; }
-			if (call->arguments.count >= 2) { arguments_size_on_stack -= stack_word_size; }
-			if (call->arguments.count >= 3) { arguments_size_on_stack -= stack_word_size; }
-			if (call->arguments.count >= 4) { arguments_size_on_stack -= stack_word_size; }
+			if (arguments.count >= 1) { arguments_size_on_stack -= stack_word_size; }
+			if (arguments.count >= 2) { arguments_size_on_stack -= stack_word_size; }
+			if (arguments.count >= 3) { arguments_size_on_stack -= stack_word_size; }
+			if (arguments.count >= 4) { arguments_size_on_stack -= stack_word_size; }
 
 			I(mov_rr, r0, rs);
 			I(and_rc, rs, -16);
@@ -1225,16 +1242,16 @@ static void append(Converter &conv, AstCall *call) {
 			I(push_r, r0);
 
 
-			append(conv, call->expression);
+			append(conv, call->callable);
 			// TODO: argument evaluation should not be in reverse order
-			for (auto argument : reverse(call->arguments)) {
+			for (auto argument : reverse(arguments)) {
 				append(conv, argument);
 			}
 
-			if (call->arguments.count >= 1) { I(pop_r, r0); }
-			if (call->arguments.count >= 2) { I(pop_r, r1); }
-			if (call->arguments.count >= 3) { I(pop_r, r2); }
-			if (call->arguments.count >= 4) { I(pop_r, r3); }
+			if (arguments.count >= 1) { I(pop_r, r0); }
+			if (arguments.count >= 2) { I(pop_r, r1); }
+			if (arguments.count >= 3) { I(pop_r, r2); }
+			if (arguments.count >= 4) { I(pop_r, r3); }
 
 			// Shadow space
 			// Only for microsoft 64bit
@@ -1321,7 +1338,7 @@ static void append(Converter &conv, AstIf *If) {
 	append(conv, If->condition);
 
 	I(pop_r, r0);
-	auto jz = I(jz, .reg=r0, .offset=0);
+	auto jz = I(jz_cr, 0, r0);
 
 	auto true_start = count_of(*conv.body_builder);
 	for (auto statement : If->true_scope.statements) {
@@ -1349,8 +1366,16 @@ static void append(Converter &conv, AstIf *If) {
 	I(add_rc, rs, allocated_size_false);
 	auto false_end = count_of(*conv.body_builder);
 
-	jz->jz.offset = false_start - true_start + 1;
-	jmp->jmp.offset = false_end - false_start + 1;
+
+	(*conv.body_builder)[false_start].flags |= InstructionFlags::labeled;
+
+	// :DUMMYNOOP:
+	// Next instruction after else block must be labeled,
+	// but we don't have it yet. So we add a noop so we can label it.
+	II(noop)->flags |= InstructionFlags::labeled;
+
+	jz->offset = false_start - true_start + 1;
+	jmp->offset = false_end - false_start + 1;
 }
 static void append(Converter &conv, AstWhile *While) {
 	auto start_offset = conv.lambda->offset_accumulator;
@@ -1359,7 +1384,7 @@ static void append(Converter &conv, AstWhile *While) {
 	append(conv, While->condition);
 
 	I(pop_r, r0);
-	auto jz = I(jz, .reg=r0, .offset=0);
+	auto jz = I(jz_cr, 0, r0);
 	auto count_after_condition = count_of(*conv.body_builder);
 
 
@@ -1373,10 +1398,17 @@ static void append(Converter &conv, AstWhile *While) {
 
 	I(add_rc, rs, allocated_size);
 	auto count_after_body = count_of(*conv.body_builder);
-	auto jmp = I(jmp, .offset=0);
+	I(jmp, .offset=0)->offset = (s64)count_before_condition - (s64)count_after_body;
 
-	jmp->jmp.offset = (s64)count_before_condition - (s64)count_after_body;
-	jz->jz.offset = (s64)count_after_body - (s64)count_after_condition + 2;
+	(*conv.body_builder)[count_before_condition].flags |= InstructionFlags::labeled;
+
+	// :DUMMYNOOP:
+	// Next instruction after else block must be labeled,
+	// but we don't have it yet. So we add a noop so we can label it.
+	II(noop)->flags |= InstructionFlags::labeled;
+
+
+	jz->offset = (s64)count_after_body - (s64)count_after_condition + 2;
 }
 static void append(Converter &conv, AstBlock *block) {
 	push_comment(conv, u8"block"s);
@@ -1437,20 +1469,38 @@ static void append(Converter &conv, AstUnaryOperator *unop) {
 	push_comment(conv, format(u8"unary '{}'", operator_string(unop->operation)));
 	switch (unop->operation) {
 		case '-': {
-			assert(types_match(unop->expression->type, &type_u8) ||
-			       types_match(unop->expression->type, &type_u16) ||
-			       types_match(unop->expression->type, &type_u32) ||
-			       types_match(unop->expression->type, &type_u64) ||
-			       types_match(unop->expression->type, &type_s8) ||
-			       types_match(unop->expression->type, &type_s16) ||
-			       types_match(unop->expression->type, &type_s32) ||
-			       types_match(unop->expression->type, &type_s64));
-
 			append(conv, unop->expression);
-			I(pop_r, r1);
-			I(xor_rr, r0, r0);
-			I(sub_rr, r0, r1);
-			I(push_r, r0);
+			auto size = get_size(unop->type);
+			if (::is_integer(unop->type)) {
+				switch (size) {
+					case 1: I(negi8_m,  rs); break;
+					case 2: I(negi16_m, rs); break;
+					case 4: I(negi32_m, rs); break;
+					case 8: I(negi64_m, rs); break;
+					default: invalid_code_path();
+				}
+			} else if (::is_float(unop->type)) {
+				switch (size) {
+					case 4:
+						I(pop_f, f0);
+						I(mov_rc, r0, (s64)0x8000'0000);
+						I(mov_fr, f1, r0);
+						I(xor_ff, f0, f1);
+						I(push_f, f0);
+						break;
+					case 8:
+						I(pop_f, f0);
+						I(mov_rc, r0, (s64)0x8000'0000'0000'0000);
+						I(mov_fr, f1, r0);
+						I(xor_ff, f0, f1);
+						I(push_f, f0);
+						break;
+					default: invalid_code_path();
+				}
+			} else {
+				invalid_code_path();
+			}
+
 			break;
 		}
 		case '&': {
@@ -1522,6 +1572,10 @@ static void append(Converter &conv, AstCast *cast) {
 	push_comment(conv, format(u8"cast from '{}' to '{}'", type_to_string(cast->expression->type), type_to_string(cast->type)));
 
 	append(conv, cast->expression);
+
+	if (is_pointer_internally(cast->expression->type) && is_pointer_internally(cast->type)) {
+		return;
+	}
 
 	auto from = get_struct(cast->expression->type);
 	auto to = get_struct(cast->type);
@@ -1632,7 +1686,7 @@ static void append(Converter &conv, AstCast *cast) {
 		else invalid_code_path();
 	} else if (from == &type_s64) {
 		if (false) {}
-		else if (to == &type_f64) { I(cvtf64s64); }
+		else if (to == &type_f64) { I(cvt_f64_s64); }
 		else invalid_code_path();
 	}
 	else invalid_code_path();
@@ -1668,8 +1722,8 @@ static void append(Converter &conv, AstLambda *lambda, bool push_address) {
 		conv.stack_state = {};
 		defer { free(conv.stack_state.data); conv.stack_state = old_stack_state; };
 
-		lambda->first_instruction = &
-		conv.body_builder->add(MI(push_r, rb));
+		lambda->first_instruction = &conv.body_builder->add(MI(push_r, rb));
+		lambda->first_instruction->flags |= InstructionFlags::labeled;
 		conv.body_builder->add(MI(mov_rr, rb, rs));
 
 		s64 parameter_size_accumulator = 0;
@@ -1708,7 +1762,7 @@ static void append(Converter &conv, AstLambda *lambda, bool push_address) {
 				}
 			}
 
-			conv.body_builder->add(MI(mov_rr, rs, rb));
+			conv.body_builder->add(MI(mov_rr, rs, rb)).flags |= InstructionFlags::labeled;
 			conv.body_builder->add(MI(pop_r, rb));
 		};
 
@@ -1753,7 +1807,7 @@ static void append(Converter &conv, AstLambda *lambda, bool push_address) {
 static void append(Converter &conv, AstIfx *If) {
 	append(conv, If->condition);
 	I(pop_r, r0);
-	auto jz = I(jz, r0, 0);
+	auto jz = I(jz_cr, 0, r0);
 
 	auto count_before_true = count_of(*conv.body_builder);
 	append(conv, If->true_expression);
@@ -1764,8 +1818,15 @@ static void append(Converter &conv, AstIfx *If) {
 
 	auto count_after_false = count_of(*conv.body_builder);
 
-	jz->jz.offset = count_after_true - count_before_true + 1;
-	jmp->jmp.offset = count_after_false - count_after_true + 1;
+	(*conv.body_builder)[count_after_true].flags |= InstructionFlags::labeled;
+
+	// :DUMMYNOOP:
+	// Next instruction after else block must be labeled,
+	// but we don't have it yet. So we add a noop so we can label it.
+	II(noop)->flags |= InstructionFlags::labeled;
+
+	jz->offset = count_after_true - count_before_true + 1;
+	jmp->offset = count_after_false - count_after_true + 1;
 }
 
 #if 0

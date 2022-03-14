@@ -15,6 +15,7 @@ E(null,     0x200000a) \
 E(as,       0x200000b) \
 E(then,     0x200000c) \
 E(simd,     0x200000d) \
+E(autocast, 0x200000e) \
 
 #define ENUMERATE_TOKEN_KINDS(E) \
 E(identifier,        0x1000000) \

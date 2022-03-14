@@ -1,4 +1,5 @@
 #define TL_IMPL
+#pragma warning(disable: 4702) // unreachable
 #include <bytecode.h>
 #include <ast.h>
 #include "x86_64.h"

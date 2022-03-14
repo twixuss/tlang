@@ -30,6 +30,7 @@ AstStruct type_unsized_float;
 AstStruct type_void;
 AstStruct *type_default_integer;
 AstStruct *type_default_float;
+AstStruct type_autocast;
 AstUnaryOperator type_pointer_to_void;
 
 bool struct_is_built_in(AstStruct *type) {
@@ -539,6 +540,12 @@ bool is_pointer(AstExpression *type) {
 	}
 	return type->kind == Ast_unary_operator && ((AstUnaryOperator *)type)->operation == '*';
 }
+bool is_pointer_internally(AstExpression *type) {
+	if (type->kind == Ast_identifier) {
+		return is_pointer(((AstIdentifier *)type)->definition->expression);
+	}
+	return type->kind == Ast_lambda || (type->kind == Ast_unary_operator && ((AstUnaryOperator *)type)->operation == '*');
+}
 
 AstLiteral *get_literal(AstExpression *expression) {
     switch (expression->kind) {
@@ -612,4 +619,22 @@ Comparison comparison_from_binary_operation(BinaryOperation operation) {
 		case BinaryOperation::ne: return Comparison::ne;
 	}
 	invalid_code_path();
+}
+
+List<AstExpression **> get_arguments_addresses(AstCall *call) {
+	switch (call->argument->kind) {
+		case Ast_tuple: return map(((AstTuple *)call->argument)->expressions, [](auto &e) { return &e; });
+		default: invalid_code_path();
+	}
+}
+
+List<AstExpression *> get_arguments(AstCall *call) {
+	switch (call->argument->kind) {
+		case Ast_tuple: return ((AstTuple *)call->argument)->expressions;
+		default: invalid_code_path();
+	}
+}
+
+bool is_sized_array(AstExpression *type) {
+	return type->kind == Ast_subscript;
 }

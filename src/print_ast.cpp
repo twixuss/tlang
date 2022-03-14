@@ -78,15 +78,13 @@ void print_ast(AstIdentifier *node) {
 void print_ast(AstCall *node) {
 	print_info("call - type: {}, uid: {}\n", type_to_string(node->type, true), node->uid);
 	tab_count += 1;
-		print_label("expression:\n");
+		print_label("callable:\n");
 		tab_count += 1;
-			print_ast(node->expression);
+			print_ast(node->callable);
 		tab_count -= 1;
 		print_label("arguments:\n");
 		tab_count += 1;
-			for (auto argument : node->arguments) {
-				print_ast(argument);
-			}
+			print_ast(node->argument);
 		tab_count -= 1;
 	tab_count -= 1;
 }
@@ -122,16 +120,20 @@ void print_ast(AstLiteral *node) {
 		else if (types_match(node->type, &type_s16 )) print_info("s16 literal - value: {}, uid: {}\n", (s16)node->integer, node->uid);
 		else if (types_match(node->type, &type_s32 )) print_info("s32 literal - value: {}, uid: {}\n", (s32)node->integer, node->uid);
 		else if (types_match(node->type, &type_s64 )) print_info("s64 literal - value: {}, uid: {}\n", (s64)node->integer, node->uid);
-		else if (types_match(node->type, &type_unsized_integer)) print_info("unsized integer literal - value: {}, uid: {}\n", (u64)node->integer, node->uid);
+		else if (types_match(node->type, &type_f32 )) print_info("f32 literal - value: {}, uid: {}\n", (f32)node->Float, node->uid);
+		else if (types_match(node->type, &type_f64 )) print_info("f64 literal - value: {}, uid: {}\n", (f64)node->Float, node->uid);
 		else if (types_match(node->type, &type_bool)) print_info("bool literal - value: {}, uid: {}\n", node->Bool, node->uid);
 		else if (types_match(node->type, &type_string)) print_info("string literal - value: {}, uid: {}\n", node->location, node->uid);
+		else if (types_match(node->type, &type_unsized_integer)) print_info("unsized integer literal - value: {}, uid: {}\n", (u64)node->integer, node->uid);
+		else if (types_match(node->type, &type_unsized_float)) print_info("unsized float literal - value: {}, uid: {}\n", (f64)node->Float, node->uid);
 		else if (node->type->kind == Ast_unary_operator) print_info("pointer literal - value: {}, uid: {}\n", (s64)node->integer, node->uid);
 		else invalid_code_path();
 	} else {
 		switch (node->literal_kind) {
 			case LiteralKind::integer: print_info("integer literal - value: {}, uid: {}\n", (s64)node->integer, node->uid); break;
 			case LiteralKind::boolean: print_info("boolean literal - value: {}, uid: {}\n", node->Bool, node->uid); break;
-			case LiteralKind::string : print_info( "string literal - value: {}, uid: {}\n", node->location, node->uid); break;
+			case LiteralKind::string:  print_info( "string literal - value: {}, uid: {}\n", node->location, node->uid); break;
+			case LiteralKind::Float:   print_info(  "float literal - value: {}, uid: {}\n", node->Float, node->uid); break;
 			default: invalid_code_path();
 		}
 	}

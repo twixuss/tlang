@@ -44,10 +44,18 @@ enum class InstructionKind : u8 {
 	movsx82_rm,
 	movsx84_rm,
 
+	movzx21_rm,
+	movzx41_rm,
+	movzx81_rm,
+	movzx42_rm,
+	movzx82_rm,
+	movzx84_rm,
+
 	lea,
 
-	push_r,
 	push_c,
+	push_r,
+	push_f,
 	push_m,
 
 	push_a, // constant data address
@@ -63,6 +71,7 @@ enum class InstructionKind : u8 {
 	mov_re,
 
 	pop_r,
+	pop_f,
 	pop_m,
 
 	ret,
@@ -127,8 +136,11 @@ enum class InstructionKind : u8 {
 	xor_mc,
 	xor_mr,
 
-	neg_r,
-	neg_m,
+	negi_r,
+	negi8_m,
+	negi16_m,
+	negi32_m,
+	negi64_m,
 
 	cmpu1,
 	cmpu2,
@@ -152,7 +164,7 @@ enum class InstructionKind : u8 {
 	call_string,
 
 	jmp,
-	jz,
+	jz_cr, // jump to constant offset if boolean in register is zero
 
 	copyf_mmc,
 	copyb_mmc,
@@ -169,15 +181,24 @@ enum class InstructionKind : u8 {
 
 	push_stdcall_result,
 
-	cvtf64s64,
+	cvt_f64_s64,
 
-	mov_f64r,
-	mov_rf64,
+	mov_fr,
+	mov_rf,
 
-	add_f64,
-	sub_f64,
-	mul_f64,
-	div_f64,
+	add_f32_f32,
+	add_f64_f64,
+
+	mul_f32_f32,
+	mul_f64_f64,
+
+	sub_f32_f32,
+	sub_f64_f64,
+
+	div_f32_f32,
+	div_f64_f64,
+
+	xor_ff,
 
 	tobool_r,
 	toboolnot_r,
@@ -195,6 +216,7 @@ static_assert((int)InstructionKind::count >= 127);
 // NOTE:
 // registers r0-r4 are scratch and are used for expression evaluation
 // registers r5-r7 are allocatable
+// Also registers r0-r3 are used as stdcall arguments
 enum class Register : u8 {
 	r0,
 	r1,
@@ -208,15 +230,15 @@ enum class Register : u8 {
 	rb,
 };
 
-enum class XRegister : u8 {
-	x0,
-	x1,
-	x2,
-	x3,
+enum class FRegister : u8 {
+	f0,
+	f1,
+	f2,
+	f3,
 };
 
 enum InstructionFlags : u8 {
-	InstructionFlags_jump_destination = 0x1,
+	labeled = 0x1,
 };
 
 struct Address {
@@ -247,12 +269,6 @@ inline Address operator+(Address a, s64 c) {
 }
 
 struct Instruction {
-	InstructionKind kind;
-	InstructionFlags flags;
-#if BYTECODE_DEBUG
-	utf8 *comment;
-	u64 line;
-#endif
 	union {
 		struct { Register d; s64      s; } mov_rc;
 		struct { Register d; Register s; } mov_rr;
@@ -279,11 +295,19 @@ struct Instruction {
 		struct { Register d; Address s; } movsx82_rm;
 		struct { Register d; Address s; } movsx84_rm;
 
+		struct { Register d; Address s; } movzx21_rm;
+		struct { Register d; Address s; } movzx41_rm;
+		struct { Register d; Address s; } movzx81_rm;
+		struct { Register d; Address s; } movzx42_rm;
+		struct { Register d; Address s; } movzx82_rm;
+		struct { Register d; Address s; } movzx84_rm;
+
 		struct { Register d; Address s; } lea;
 
-		struct { s64      s; } push_c;
-		struct { Register s; } push_r;
-		struct { Address  s; } push_m;
+		struct { s64       s; } push_c;
+		struct { Register  s; } push_r;
+		struct { FRegister s; } push_f;
+		struct { Address   s; } push_m;
 
 		struct { s64 s; } push_a;
 		struct { s64 s; } push_d;
@@ -298,8 +322,9 @@ struct Instruction {
 		struct { Register d; Span<utf8> s; } mov_re;
 
 
-		struct { Register d; } pop_r;
-		struct { Address d; } pop_m;
+		struct { Register  d; } pop_r;
+		struct { FRegister d; } pop_f;
+		struct { Address   d; } pop_m;
 
 
 		struct {} ret;
@@ -364,8 +389,11 @@ struct Instruction {
 		struct { Address  d; s64      s; } xor_mc;
 		struct { Address  d; Register s; } xor_mr;
 
-		struct { Register d; } neg_r;
-		struct { Address  d; } neg_m;
+		struct { Register d; } negi_r;
+		struct { Address d; } negi8_m;
+		struct { Address d; } negi16_m;
+		struct { Address d; } negi32_m;
+		struct { Address d; } negi64_m;
 
 		struct { Register d, a, b; Comparison c; } cmpu1;
 		struct { Register d, a, b; Comparison c; } cmpu2;
@@ -388,7 +416,7 @@ struct Instruction {
 		struct { Span<utf8> string; } call_string;
 
 		struct { s64 offset; } jmp;
-		struct { Register reg; s64 offset; } jz;
+		struct { s64 offset; Register reg; } jz_cr;
 
 		struct { Register d, s; s64 size; } copyf_mmc;
 		struct { Register d, s; s64 size; } copyb_mmc;
@@ -405,21 +433,38 @@ struct Instruction {
 
 		struct {} push_stdcall_result;
 
-		struct {} cvtf64s64;
+		struct {} cvt_f64_s64;
 
-		struct { XRegister d; Register s; } mov_f64r;
-		struct { Register d; XRegister s; } mov_rf64;
+		struct { FRegister d; Register s; } mov_fr;
+		struct { Register d; FRegister s; } mov_rf;
 
-		struct { XRegister d; XRegister s; } add_f64;
-		struct { XRegister d; XRegister s; } sub_f64;
-		struct { XRegister d; XRegister s; } mul_f64;
-		struct { XRegister d; XRegister s; } div_f64;
+		struct { FRegister d; FRegister s; } add_f32_f32;
+		struct { FRegister d; FRegister s; } add_f64_f64;
+
+		struct { FRegister d; FRegister s; } mul_f32_f32;
+		struct { FRegister d; FRegister s; } mul_f64_f64;
+
+		struct { FRegister d; FRegister s; } sub_f32_f32;
+		struct { FRegister d; FRegister s; } sub_f64_f64;
+
+		struct { FRegister d; FRegister s; } div_f32_f32;
+		struct { FRegister d; FRegister s; } div_f64_f64;
+
+		struct { FRegister d; FRegister s; } xor_ff;
 
 		struct { Register d; } tobool_r;
 		struct { Register d; } toboolnot_r;
 
+		struct {} noop;
+
 		struct {} dbgbrk;
 	};
+	InstructionKind kind;
+	std::underlying_type_t<InstructionFlags> flags;
+#if BYTECODE_DEBUG
+	utf8 *comment;
+	u64 line;
+#endif
 };
 
 using ExternLibraries = HashMap<Span<utf8>, List<Span<utf8>>>;

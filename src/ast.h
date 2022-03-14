@@ -64,6 +64,7 @@ e(assert) \
 e(typeof) \
 e(print) \
 e(import) \
+e(autocast) \
 
 enum AstKind {
 #define e(name) Ast_ ## name,
@@ -104,8 +105,6 @@ struct AstNode {
 	AstKind kind = Ast_null;
 	s32 uid = atomic_increment(&ast_node_uid_counter);
 	Span<utf8> location;
-
-	void *user_data = 0;
 };
 
 struct AstStatement : AstNode {
@@ -273,11 +272,17 @@ struct AstLambda : AstExpression {
 	List<ReturnInfo> return_jumps;
 };
 
+struct AstTuple : AstExpression {
+	AstTuple() { kind = Ast_tuple; }
+
+	List<AstExpression *> expressions;
+};
+
 struct AstCall : AstExpression {
 	AstCall() { kind = Ast_call; }
 
-	AstExpression *expression = 0;
-	List<AstExpression *> arguments;
+	AstExpression *callable = 0;
+	AstExpression *argument = 0;
 
 };
 
@@ -395,12 +400,6 @@ struct AstSubscript : AstExpression {
 	// bool is_simd   : 1 = false;
 };
 
-struct AstTuple : AstExpression {
-	AstTuple() { kind = Ast_tuple; }
-
-	List<AstExpression *> expressions;
-};
-
 struct AstPrint : AstStatement {
 	AstPrint() {kind = Ast_print;}
 	AstExpression *expression = 0;
@@ -409,9 +408,14 @@ struct AstPrint : AstStatement {
 struct AstCast : AstExpression {
 	AstCast() { kind = Ast_cast; }
 
-	AstExpression * expression = 0;
+	AstExpression *expression = 0;
 	// TODO: user defined casts
 	// AstLambda *lambda = 0; // non null for user defined casts
+};
+
+struct AstAutocast : AstExpression {
+	AstAutocast() { kind = Ast_autocast; }
+	AstExpression *expression = 0;
 };
 
 struct AstSizeof : AstExpression {
@@ -480,6 +484,7 @@ extern AstStruct type_string;
 extern AstStruct type_noinit; // These are special, user can't use them directly. typeof'ing them should do what? i don't know. TODO
 extern AstStruct type_unsized_integer;
 extern AstStruct type_unsized_float;
+extern AstStruct type_autocast;
 // inline constexpr u32 built_in_struct_count = 14;
 
 extern AstUnaryOperator type_pointer_to_void;
@@ -647,6 +652,7 @@ void operator delete(void *, umm size);
 #endif
 
 bool is_pointer(AstExpression *type);
+bool is_pointer_internally(AstExpression *type);
 
 AstLiteral *get_literal(AstExpression *expression);
 bool is_constant(AstExpression *expression);
@@ -657,3 +663,8 @@ bool struct_is_built_in(AstStruct *type);
 bool type_is_built_in(AstExpression *type);
 
 Comparison comparison_from_binary_operation(BinaryOperation operation);
+
+List<AstExpression **> get_arguments_addresses(AstCall *call);
+List<AstExpression *> get_arguments(AstCall *call);
+
+bool is_sized_array(AstExpression *type);

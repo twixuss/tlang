@@ -69,7 +69,7 @@ static umm append(StringBuilder&builder,Register8  r){return append(builder,as_s
 // | reg | volatile | used in bytecode |
 // -------------------------------------
 // | rax |    +     |                  |
-// | rbx |          |                  | used to save rdx in div/idiv
+// | rbx |          |                  | used for bunch of bytecode instructions, for example to save rdx in div/idiv, or for pushing/popping floats
 // | rcx |    +     | +                |
 // | rdx |    +     | +                |
 // | rsi |          |                  |
@@ -153,13 +153,13 @@ static umm append(StringBuilder &builder, Address a) {
 	return result;
 }
 
-static umm append(StringBuilder &builder, XRegister r) {
-	using enum XRegister;
+static umm append(StringBuilder &builder, FRegister r) {
+	using enum FRegister;
 	switch (r) {
-		case x0: return append(builder, "xmm0");
-		case x1: return append(builder, "xmm1");
-		case x2: return append(builder, "xmm2");
-		case x3: return append(builder, "xmm3");
+		case f0: return append(builder, "xmm0");
+		case f1: return append(builder, "xmm1");
+		case f2: return append(builder, "xmm2");
+		case f3: return append(builder, "xmm3");
 	}
 	invalid_code_path();
 	return {};
@@ -193,7 +193,6 @@ inline void append_instruction(StringBuilder &builder, s64 idx, Instruction i) {
 		case mov4_mr: append_format(builder, "mov dword {}, {}", i.mov4_mr.d, part4b(i.mov4_mr.s)); break;
 		case mov8_mr: append_format(builder, "mov qword {}, {}", i.mov8_mr.d, part8b(i.mov8_mr.s)); break;
 
-		case push_r: append_format(builder, "push {}", i.push_r.s); break;
 		case push_c: {
 			if (min_value<s32> <= i.push_c.s && i.push_c.s <= max_value<s32>) {
 				append_format(builder, "push qword {}", (s32)i.push_c.s);
@@ -214,7 +213,9 @@ inline void append_instruction(StringBuilder &builder, s64 idx, Instruction i) {
 			}
 			break;
 		}
-		case push_m: append_format(builder, "push        qword {}"           , i.push_m.s); break;
+		case push_r: append_format(builder, "push {}", i.push_r.s); break;
+		case push_f: append_format(builder, "movq rbx, {}\npush rbx", i.push_f.s); break;
+		case push_m: append_format(builder, "push qword {}", i.push_m.s); break;
 
 		case push_a: append_format(builder, "mov rax, constants + {}\npush rax", i.push_a.s); break;
 		case push_d: append_format(builder, "mov rax, data + {}\npush rax"     , i.push_d.s); break;
@@ -227,6 +228,7 @@ inline void append_instruction(StringBuilder &builder, s64 idx, Instruction i) {
 		case mov_rt: append_format(builder, "mov {}, .{}"           , i.mov_rt.d, instruction_address(i.mov_rt.s)); break;
 
 		case pop_r: append_format(builder, "pop {}", i.pop_r.d); break;
+		case pop_f: append_format(builder, "pop rbx\nmovq {}, rbx", i.pop_f.d); break;
 
 		case ret: append_format(builder, "ret"); break;
 
@@ -290,6 +292,12 @@ inline void append_instruction(StringBuilder &builder, s64 idx, Instruction i) {
 			}
 			break;
 
+		case negi_r: append_format(builder, "neg {}", i.negi_r.d); break;
+		case negi8_m:  append_format(builder, "neg byte {}",  i.negi8_m.d); break;
+		case negi16_m: append_format(builder, "neg word {}",  i.negi16_m.d); break;
+		case negi32_m: append_format(builder, "neg dword {}", i.negi32_m.d); break;
+		case negi64_m: append_format(builder, "neg qword {}", i.negi64_m.d); break;
+
 		case or_mr: append_format(builder, "or qword {}, {}", i. or_mr.d, i. or_mr.s); break;
 
 		case and_rc: append_format(builder, "and {}, {}"        , i.and_rc.d, i.and_rc.s); break;
@@ -326,7 +334,7 @@ inline void append_instruction(StringBuilder &builder, s64 idx, Instruction i) {
 
 		case jmp: append_format(builder, "jmp .{}", instruction_address(idx + i.jmp.offset)); break;
 
-		case jz: append_format(builder, "test {}, {}\njz .{}", i.jz.reg, i.jz.reg, instruction_address(idx + i.jz.offset)); break;
+		case jz_cr: { auto reg = part1b(i.jz_cr.reg); append_format(builder, "test {}, {}\njz .{}", reg, reg, instruction_address(idx + i.jz_cr.offset)); break; }
 
 			// Here move into rcx must be last, because it can be source for rdi or rsi
 		case copyf_mmc: append_format(builder, "mov rsi, {}\nmov rdi, {}\nmov rcx, {}\ncld\nrep movsb", i.copyf_mmc.s, i.copyf_mmc.d, i.copyf_mmc.size); break;
@@ -388,22 +396,44 @@ inline void append_instruction(StringBuilder &builder, s64 idx, Instruction i) {
 			append_format(builder, "lea {}, {}", i.lea.d, i.lea.s);
 			break;
 
-		case cvtf64s64:
+		case cvt_f64_s64:
 			append(builder, "cvtsd2si rax, [rsp]\nmov [rsp], rax");
 			break;
 
-		case mov_f64r: append_format(builder, "movq {}, {}", i.mov_f64r.d, i.mov_f64r.s); break;
-	    case mov_rf64: append_format(builder, "movq {}, {}", i.mov_rf64.d, i.mov_rf64.s); break;
+		case mov_fr: append_format(builder, "movq {}, {}", i.mov_fr.d, i.mov_fr.s); break;
+	    case mov_rf: append_format(builder, "movq {}, {}", i.mov_rf.d, i.mov_rf.s); break;
 
-	    case add_f64: append_format(builder, "addsd {}, {}", i.add_f64.d, i.add_f64.s); break;
-	    case sub_f64: append_format(builder, "subsd {}, {}", i.sub_f64.d, i.sub_f64.s); break;
-	    case mul_f64: append_format(builder, "mulsd {}, {}", i.mul_f64.d, i.mul_f64.s); break;
-	    case div_f64: append_format(builder, "divsd {}, {}", i.div_f64.d, i.div_f64.s); break;
+	    case add_f32_f32: append_format(builder, "addss {}, {}", i.add_f32_f32.d, i.add_f32_f32.s); break;
+	    case sub_f32_f32: append_format(builder, "subss {}, {}", i.sub_f32_f32.d, i.sub_f32_f32.s); break;
+	    case mul_f32_f32: append_format(builder, "mulss {}, {}", i.mul_f32_f32.d, i.mul_f32_f32.s); break;
+	    case div_f32_f32: append_format(builder, "divss {}, {}", i.div_f32_f32.d, i.div_f32_f32.s); break;
+
+	    case add_f64_f64: append_format(builder, "addsd {}, {}", i.add_f64_f64.d, i.add_f64_f64.s); break;
+	    case sub_f64_f64: append_format(builder, "subsd {}, {}", i.sub_f64_f64.d, i.sub_f64_f64.s); break;
+	    case mul_f64_f64: append_format(builder, "mulsd {}, {}", i.mul_f64_f64.d, i.mul_f64_f64.s); break;
+	    case div_f64_f64: append_format(builder, "divsd {}, {}", i.div_f64_f64.d, i.div_f64_f64.s); break;
+
+	    case xor_ff: append_format(builder, "xorps {}, {}", i.xor_ff.d, i.xor_ff.s); break;
+
 		case tobool_r:    { auto d = part1b(i.tobool_r.d);    append_format(builder, "test {}, {}\nsetnz {}", d, d, d); break; }
 		case toboolnot_r: { auto d = part1b(i.toboolnot_r.d); append_format(builder, "test {}, {}\nsetz {}" , d, d, d); break; }
 		case noop: break;
 
 		case dbgbrk: append(builder, "int3"s); break;
+
+		case movsx21_rm: append_format(builder, "movsx {}, byte {}"s,  part2b(i.movsx21_rm.d), i.movsx21_rm.s); break;
+		case movsx41_rm: append_format(builder, "movsx {}, byte {}"s,  part4b(i.movsx41_rm.d), i.movsx41_rm.s); break;
+		case movsx81_rm: append_format(builder, "movsx {}, byte {}"s,  part8b(i.movsx81_rm.d), i.movsx81_rm.s); break;
+		case movsx42_rm: append_format(builder, "movsx {}, word {}"s,  part4b(i.movsx42_rm.d), i.movsx42_rm.s); break;
+		case movsx82_rm: append_format(builder, "movsx {}, word {}"s,  part8b(i.movsx82_rm.d), i.movsx82_rm.s); break;
+		case movsx84_rm: append_format(builder, "movsx {}, dword {}"s, part8b(i.movsx84_rm.d), i.movsx84_rm.s); break;
+
+		case movzx21_rm: append_format(builder, "movzx {}, byte {}"s,  part2b(i.movsx21_rm.d), i.movsx21_rm.s); break;
+		case movzx41_rm: append_format(builder, "movzx {}, byte {}"s,  part4b(i.movsx41_rm.d), i.movsx41_rm.s); break;
+		case movzx81_rm: append_format(builder, "movzx {}, byte {}"s,  part8b(i.movsx81_rm.d), i.movsx81_rm.s); break;
+		case movzx42_rm: append_format(builder, "movzx {}, word {}"s,  part4b(i.movsx42_rm.d), i.movsx42_rm.s); break;
+		case movzx82_rm: append_format(builder, "movzx {}, word {}"s,  part8b(i.movsx82_rm.d), i.movsx82_rm.s); break;
+		case movzx84_rm: append_format(builder, "movzx {}, dword {}"s, part8b(i.movsx84_rm.d), i.movsx84_rm.s); break;
 
 		default:invalid_code_path();
 	}

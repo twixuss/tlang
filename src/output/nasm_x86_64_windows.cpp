@@ -1,4 +1,5 @@
 #define TL_IMPL
+#pragma warning(disable: 4702) // unreachable
 #include <bytecode.h>
 #include <ast.h>
 #include "x86_64.h"
@@ -107,7 +108,8 @@ static void append_instructions(CompilerContext &context, StringBuilder &builder
 
 	s64 idx = 0;
 	for (auto i : instructions) {
-		append_format(builder, ".{}: ", instruction_address(idx));
+		if (i.flags & InstructionFlags::labeled)
+			append_format(builder, ".{}: ", instruction_address(idx));
 		switch (i.kind) {
 			using enum InstructionKind;
 			case push_e: append_format(builder, "mov rax, {}\npush rax"            , i.push_e.s); break;

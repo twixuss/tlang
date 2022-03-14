@@ -1,3 +1,4 @@
+/*
 Member access operator (dot) parsing right now is implemented as a special case binary operator.
 Maybe it makes more sense to do it in `parse_sub_expression_no_cast`?
 
@@ -51,13 +52,13 @@ saved rbp <- rbp
 idea for templated functions:
 To make a template, just don't specify the type of a parameter.
 The type then can be obtained using typeof directive:
-
+*/
 pow2 :: fn (x) -> #typeof x => x * x;
-
+/*
 Also it would be nice to add return type deduction. Like this:
-
+*/
 pow2 :: fn (x) => x * x;
-
+/*
 
 
 
@@ -79,3 +80,70 @@ Thoughts about characters:
 
 Import string as expression???
 
+
+
+// c.baz(11, a.foo(42).bar(16));
+// 
+// (c, 11, ((a, 42)foo, 16)bar)baz;
+// 
+// baz(c, 11, bar(foo(a, 42), 16));
+
+
+How arrays should be passed as arguments? How anything relatively big should be passed? Copy or constant reference?
+Copy may be too expensive.
+Constant arguments may not be modified, so there should be no way to do this: 
+
+
+///////////////////////////////////////////
+idea:
+`is` from c#, but better.
+
+*/
+
+is_cat :: fn (a: *Animal): *Cat {
+    return if a.is_cat then a as *Cat else null;
+}
+
+b: *Animal;
+
+if b is cat a {
+    meow(a);
+}
+
+/*
+prepending 'is_' to an identifier? seems very unusual. Also it enforces this specific naming style, which is bad.
+The style issue may be solved by putting `is` keyword somewhere in function definition
+*/
+is cat :: fn (a: *Animal): *Cat {
+    return if a.is_cat then a as *Cat else null;
+}
+
+animal: *Animal;
+
+if animal is cat kitty { // prepending 'is_' to an identifier? seems very unusual. Also it enforces this specific naming style, which is bad.
+    meow(kitty);
+}
+/*
+But can null be a valid value for this? When 'something' is 'something else'. I think no.
+
+Also this can be combined with function overloading.
+
+But there may be some problems with parsing when not `binding` an identifier to the result:
+*/
+if b is cat print("meow"); // `print` identifier is ambiguous - either it is a cat name, or a function name.
+/*
+I see three solutions:
+Use then:
+*/
+if b is cat then print("meow");
+/*
+Or use parens:
+*/
+if (b is cat) print("meow");
+/*
+Or always `bind` the result:
+*/
+if b is cat _ print("meow");
+/*
+*/
+///////////////////////////////////////////
