@@ -1,7 +1,66 @@
 #pragma once
 #include "ast.h"
 
-#define BYTECODE_DEBUG 1
+#define BYTECODE_DEBUG TL_DEBUG
+
+// General purpose registers
+// NOTE:
+// registers r0-r4 are scratch and are used for expression evaluation
+// registers r5-r7 are allocatable
+// register rs is a stack pointer, and it must be aligned to 16 bytes before executing a call instruction
+enum class Register : u8 {
+	r0,
+	r1,
+	r2,
+	r3,
+	r4,
+	r5,
+	r6,
+	r7,
+	r8, // rax
+	rs,
+	rb,
+	count,
+};
+
+// XMM registers
+enum class XRegister : u8 {
+	x0,
+	x1,
+	x2,
+	x3,
+};
+
+enum InstructionFlags : u8 {
+	labeled = 0x1,
+};
+
+struct Address {
+	Register base = {};
+	Register r1 = {};
+	s64      r1_scale = {};
+	Register r2 = {};
+	bool     r2_scale = {};
+	s64      c = {};
+
+	bool is(Register r) {
+		return base == r && !r1_scale && !r2_scale && !c;
+	}
+
+	Address() = default;
+	Address(Register base) : base(base) {}
+};
+
+inline Address operator+(Register r, s64 c) {
+	Address a;
+	a.base = r;
+	a.c = c;
+	return a;
+}
+inline Address operator+(Address a, s64 c) {
+	a.c += c;
+	return a;
+}
 
 /*
 
@@ -62,13 +121,12 @@ enum class InstructionKind : u8 {
 	push_d, // data address
 	push_u, // uninitialized data address
 	push_t, // text address
-	push_e, // extern symbol address
 
 	mov_ra,
 	mov_rd,
 	mov_ru,
 	mov_rt,
-	mov_re,
+	mov_re, // extern symbol address
 
 	pop_r,
 	pop_f,
@@ -152,16 +210,9 @@ enum class InstructionKind : u8 {
 	cmps4,
 	cmps8,
 
+	call_c,
 	call_r,
 	call_m,
-
-	stdcall_r,
-	stdcall_m,
-
-	popcall,
-	popstdcall,
-	call_constant,
-	call_string,
 
 	jmp,
 	jz_cr, // jump to constant offset if boolean in register is zero
@@ -173,18 +224,19 @@ enum class InstructionKind : u8 {
 
 	set_mcc,
 
-	stdcall_begin_lambda,
-	stdcall_end_lambda,
-
-	stdcall_constant,
-	stdcall_string,
-
-	push_stdcall_result,
+	begin_lambda,
+	end_lambda,
 
 	cvt_f64_s64,
+	cvt_s64_f64,
 
 	mov_fr,
 	mov_rf,
+
+	mov1_xm,
+	mov2_xm,
+	mov4_xm,
+	mov8_xm,
 
 	add_f32_f32,
 	add_f64_f64,
@@ -203,9 +255,11 @@ enum class InstructionKind : u8 {
 	tobool_r,
 	toboolnot_r,
 
-	dbgbrk,
+	debug_break,
 
 	noop,
+
+	align_stack_before_call,
 
 	count,
 };
@@ -213,62 +267,8 @@ enum class InstructionKind : u8 {
 // Make sure instruction count does not go over 256
 static_assert((int)InstructionKind::count >= 127);
 
-// NOTE:
-// registers r0-r4 are scratch and are used for expression evaluation
-// registers r5-r7 are allocatable
-// Also registers r0-r3 are used as stdcall arguments
-enum class Register : u8 {
-	r0,
-	r1,
-	r2,
-	r3,
-	r4,
-	r5,
-	r6,
-	r7,
-	rs,
-	rb,
-};
-
-enum class FRegister : u8 {
-	f0,
-	f1,
-	f2,
-	f3,
-};
-
-enum InstructionFlags : u8 {
-	labeled = 0x1,
-};
-
-struct Address {
-	Register base = {};
-	Register r1 = {};
-	s64      r1_scale = {};
-	Register r2 = {};
-	bool     r2_scale = {};
-	s64      c = {};
-
-	bool is(Register r) {
-		return base == r && !r1_scale && !r2_scale && !c;
-	}
-
-	Address() = default;
-	Address(Register base) : base(base) {}
-};
-
-inline Address operator+(Register r, s64 c) {
-	Address a;
-	a.base = r;
-	a.c = c;
-	return a;
-}
-inline Address operator+(Address a, s64 c) {
-	a.c += c;
-	return a;
-}
-
 struct Instruction {
+	// put all the variants first to allow type punning from a variant back to `Instruction`
 	union {
 		struct { Register d; s64      s; } mov_rc;
 		struct { Register d; Register s; } mov_rr;
@@ -306,14 +306,13 @@ struct Instruction {
 
 		struct { s64       s; } push_c;
 		struct { Register  s; } push_r;
-		struct { FRegister s; } push_f;
+		struct { XRegister s; } push_f;
 		struct { Address   s; } push_m;
 
 		struct { s64 s; } push_a;
 		struct { s64 s; } push_d;
 		struct { s64 s; } push_u;
 		struct { s64 s; } push_t;
-		struct { Span<utf8> s; } push_e;
 
 		struct { Register d; s64 s; } mov_ra;
 		struct { Register d; s64 s; } mov_rd;
@@ -323,7 +322,7 @@ struct Instruction {
 
 
 		struct { Register  d; } pop_r;
-		struct { FRegister d; } pop_f;
+		struct { XRegister d; } pop_f;
 		struct { Address   d; } pop_m;
 
 
@@ -404,16 +403,10 @@ struct Instruction {
 		struct { Register d, a, b; Comparison c; } cmps4;
 		struct { Register d, a, b; Comparison c; } cmps8;
 
-		struct { Register s; } call_r;
-		struct { Address  s; } call_m;
-
-		struct { Register s; } stdcall_r;
-		struct { Address  s; } stdcall_m;
-
-		struct {} popcall;
-		struct {} popstdcall;
-		struct { s64 constant; } call_constant;
-		struct { Span<utf8> string; } call_string;
+		// Call instructions. Equivalent to x86 call instruction - pushes rip and jumps to the destination and nothing else
+		struct { s64 constant; AstLambda *lambda; } call_c;
+		struct { Register   s; AstLambda *lambda; } call_r;
+		struct { Address    s; AstLambda *lambda; } call_m;
 
 		struct { s64 offset; } jmp;
 		struct { s64 offset; Register reg; } jz_cr;
@@ -425,39 +418,42 @@ struct Instruction {
 
 		struct { Register d; s64 s, size; } set_mcc;
 
-		struct { AstLambda *lambda; } stdcall_begin_lambda;
-		struct { AstLambda *lambda; } stdcall_end_lambda;
-
-		struct { s64 constant; } stdcall_constant;
-		struct { Span<utf8> string; } stdcall_string;
-
-		struct {} push_stdcall_result;
+		struct { AstLambda *lambda; CallingConvention convention; } begin_lambda;
+		struct { AstLambda *lambda; CallingConvention convention; } end_lambda;
 
 		struct {} cvt_f64_s64;
+		struct {} cvt_s64_f64;
 
-		struct { FRegister d; Register s; } mov_fr;
-		struct { Register d; FRegister s; } mov_rf;
+		struct { XRegister d; Register s; } mov_fr;
+		struct { Register d; XRegister s; } mov_rf;
 
-		struct { FRegister d; FRegister s; } add_f32_f32;
-		struct { FRegister d; FRegister s; } add_f64_f64;
+		struct { XRegister d; Address s; } mov1_xm;
+		struct { XRegister d; Address s; } mov2_xm;
+		struct { XRegister d; Address s; } mov4_xm;
+		struct { XRegister d; Address s; } mov8_xm;
 
-		struct { FRegister d; FRegister s; } mul_f32_f32;
-		struct { FRegister d; FRegister s; } mul_f64_f64;
+		struct { XRegister d; XRegister s; } add_f32_f32;
+		struct { XRegister d; XRegister s; } add_f64_f64;
 
-		struct { FRegister d; FRegister s; } sub_f32_f32;
-		struct { FRegister d; FRegister s; } sub_f64_f64;
+		struct { XRegister d; XRegister s; } mul_f32_f32;
+		struct { XRegister d; XRegister s; } mul_f64_f64;
 
-		struct { FRegister d; FRegister s; } div_f32_f32;
-		struct { FRegister d; FRegister s; } div_f64_f64;
+		struct { XRegister d; XRegister s; } sub_f32_f32;
+		struct { XRegister d; XRegister s; } sub_f64_f64;
 
-		struct { FRegister d; FRegister s; } xor_ff;
+		struct { XRegister d; XRegister s; } div_f32_f32;
+		struct { XRegister d; XRegister s; } div_f64_f64;
+
+		struct { XRegister d; XRegister s; } xor_ff;
 
 		struct { Register d; } tobool_r;
 		struct { Register d; } toboolnot_r;
 
 		struct {} noop;
 
-		struct {} dbgbrk;
+		// struct { AstLambda *lambda; } align_stack_before_call;
+
+		struct {} debug_break;
 	};
 	InstructionKind kind;
 	std::underlying_type_t<InstructionFlags> flags;
@@ -494,3 +490,6 @@ inline umm append(StringBuilder &builder, Comparison c) {
 
 #define DECLARE_OUTPUT_BUILDER extern "C" __declspec(dllexport) void tlang_build_output(CompilerContext &context, Bytecode &bytecode)
 using OutputBuilder = void (*)(CompilerContext &context, Bytecode &bytecode);
+
+#define DECLARE_TARGET_INFORMATION_GETTER extern "C" __declspec(dllexport) void tlang_get_target_information(CompilerContext &context)
+using TargetInformationGetter = void (*)(CompilerContext &context);

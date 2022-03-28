@@ -29,6 +29,7 @@ void print_ast(AstExpressionStatement *node);
 void print_ast(AstUnaryOperator *node);
 void print_ast(AstSubscript *node);
 void print_ast(AstCast*node);
+void print_ast(AstTuple*node);
 void print_ast(AstNode *node) {
 	print_tabs();
 	print("'{}'\n", node->location);
@@ -47,6 +48,7 @@ void print_ast(AstNode *node) {
 		case Ast_unary_operator: return print_ast((AstUnaryOperator *)node);
 		case Ast_subscript: return print_ast((AstSubscript *)node);
 		case Ast_cast : return print_ast((AstCast*)node);
+		case Ast_tuple: return print_ast((AstTuple*)node);
 		default:
 			print_info("unknown - uid: {}\n", node->uid);
 			break;
@@ -212,6 +214,14 @@ void print_ast(AstWhile *node) {
 void print_ast(AstCast*cast) {
 	print_info("cast - type: {}, uid: {}\n", type_to_string(cast->type), cast->uid);
 	print_ast(cast->expression);
+}
+void print_ast(AstTuple*tuple) {
+	print_info("tuple - type: {}, uid: {}\n", type_to_string(tuple->type), tuple->uid);
+	tab_count += 1;
+	for (auto experssion : tuple->expressions) {
+		print_ast(experssion);
+	}
+	tab_count -= 1;
 }
 
 void print_ast() {

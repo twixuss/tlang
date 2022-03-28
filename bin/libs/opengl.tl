@@ -461,22 +461,30 @@ ERROR_INVALID_PROFILE_ARB               :: 0x2096;
 
 GL_TRIANGLES :: 0x0004;
 
+GL_COLOR_BUFFER_BIT :: 0x00004000;
+
 
 wglCreateContext :: fn (
   unnamedParam1: HDC
-) -> HGLRC;
+): HGLRC;
 
 wglMakeCurrent :: fn (
   unnamedParam1: HDC,
   unnamedParam2: HGLRC
-) -> BOOL;
+): BOOL;
 
-wglGetProcAddress :: fn (name: *u8) -> *void;
+wglGetProcAddress :: fn (name: *u8): *void;
 
-glVertex2f :: fn (
-    x: f32,
-    y: f32
-);
+glClearColor :: fn (r: f32, g: f32, b: f32, a: f32);
+glClear :: fn (flags: u32);
+glVertex2f :: fn (x: f32, y: f32);
+glColor3f :: fn (r: f32, g: f32, b: f32);
+glColor4f :: fn (r: f32, g: f32, b: f32, a: f32);
+    
+glOrtho :: fn (_: f32, _: f32, _: f32, _: f32, _: f32, _: f32);
+    
+glViewport :: fn (x: GLint, y: GLint, width: GLsizei, height: GLsizei);
     
 glBegin :: fn (mode: u32);
 glEnd   :: fn ();
+glFlush :: fn ();

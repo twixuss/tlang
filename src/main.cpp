@@ -30,273 +30,14 @@ struct SourceFileContext;
 
 static List<Span<utf8>> import_paths;
 
-struct SourceFileInfo {
-	Span<utf8> path;
-	Span<utf8> source;
-	List<Span<utf8>> lines;
-};
-
-SourceFileInfo &get_source_info(utf8 *location);
-bool ensure_addressable(Reporter *reporter, AstExpression *expression);
-AstExpression *make_pointer_type(AstExpression *type);
 AstDefinition *parse_definition(Span<utf8> name, Parser *parser);
-SourceFileContext *parse_file(Span<utf8> path);
+AstDefinition *parse_definition(Parser *parser);
+AstExpression *make_pointer_type(AstExpression *type);
 
 void print_help() {
 	print(R"(Usage:
 	{} <path>
 )", context.executable_name);
-}
-
-u32 get_line_number(utf8 *from) {
-	auto lines = get_source_info(from).lines;
-
-	// lines will be empty at lexing time.
-	// So if an error occurs at lexing time,
-	// slower algorithm is executed.
-	if (lines.count) {
-#if 1
-		// binary search
-		auto begin = lines.data;
-		auto end = lines.data + lines.count;
-		while (1) {
-			auto line = begin + (end - begin) / 2;
-			if (line->data <= from && from < line->data + line->count) {
-				return line - lines.data + 1;
-			}
-			if (from < line->data) {
-				end = line;
-			} else {
-				begin = line + 1;
-			}
-		}
-		invalid_code_path();
-#else
-		for (auto &line : lines) {
-			if (line.begin() <= from && from < line.end()) {
-				return &line - lines.data;
-			}
-		}
-		invalid_code_path();
-#endif
-	} else {
-		u32 result = 1;
-		while (*--from != 0)
-			result += (*from == '\n');
-		return result;
-	}
-}
-
-u32 get_column_number(utf8 *from) {
-	u32 result = 0;
-	while (1) {
-		if (*from == '\n' || *from == '\0')
-			break;
-
-		if (*from == '\t')
-			result += 4;
-		else
-			result += 1;
-
-		from -= 1;
-	}
-	return result;
-}
-
-void print_replacing_tabs_with_4_spaces(PrintKind kind, Span<utf8> string) {
-	for (auto c : string) {
-		if (c == '\t') {
-			print(kind, "    ");
-		} else {
-			print(kind, c);
-		}
-	}
-}
-
-enum class ReportKind {
-	info,
-	warning,
-	error,
-};
-
-PrintKind get_print_kind(ReportKind kind) {
-	switch (kind) {
-		using enum ReportKind;
-		case info: return Print_info;
-		case warning: return Print_warning;
-		case error: return Print_error;
-	}
-	invalid_code_path();
-}
-
-void print_source_line(ReportKind kind, Span<utf8> location) {
-
-	if (location.data == nullptr) {
-		// print("(null location)\n\n");
-		return;
-	}
-
-
-	auto error_line_begin = location.begin();
-	if (*error_line_begin != 0) {
-		while (1) {
-			error_line_begin--;
-			if (*error_line_begin == 0 || *error_line_begin == '\n') {
-				error_line_begin++;
-				break;
-			}
-		}
-	}
-
-	auto error_line_end = location.end();
-	while (1) {
-		if (*error_line_end == 0 || *error_line_end == '\n') {
-			break;
-		}
-		error_line_end++;
-	}
-
-
-	auto error_line = Span(error_line_begin, error_line_end);
-	auto error_line_number = get_line_number(error_line_begin);
-
-	auto print_line = [&](auto line) {
-		return print(Print_warning, "{}|", Format{line, align_right(4, ' ')});
-	};
-
-	// I don't know if this is really useful
-#if 0
-	if (error_line.data[-1] != 0) {
-		auto prev_line_end = error_line.data - 1;
-		auto prev_line_begin = prev_line_end - 1;
-
-		while (1) {
-			if (*prev_line_begin == 0) {
-				prev_line_begin += 1;
-				break;
-			}
-
-			if (*prev_line_begin == '\n') {
-				++prev_line_begin;
-				break;
-			}
-
-			--prev_line_begin;
-		}
-		auto prev_line = Span(prev_line_begin, prev_line_end);
-		auto prev_line_number = get_line_number(prev_line_begin);
-
-		print_line(prev_line_number);
-		print_replacing_tabs_with_4_spaces(Print_info, prev_line);
-		print('\n');
-	}
-#endif
-
-	auto line_start = Span(error_line.begin(), location.begin());
-	auto line_end   = Span(location.end(), error_line.end());
-	auto offset = print_line(error_line_number);
-	print_replacing_tabs_with_4_spaces(Print_info,  line_start);
-	print_replacing_tabs_with_4_spaces(get_print_kind(kind), location);
-	print_replacing_tabs_with_4_spaces(Print_info,  line_end);
-	print('\n');
-
-	for (u32 i = 0; i < offset; ++i) {
-		print(' ');
-	}
-	for (auto c : line_start) {
-		if (c == '\t') {
-			print("    ");
-		} else {
-			print(' ');
-		}
-	}
-	for (auto c : location) {
-		if (c == '\t') {
-			print("^^^^");
-		} else {
-			print('^');
-		}
-	}
-	print("\n");
-}
-
-List<SourceFileInfo> sources;
-
-SourceFileInfo &get_source_info(utf8 *location) {
-	for (auto &source : sources) {
-		if (source.source.begin() <= location && location < source.source.end()) {
-			return source;
-		}
-	}
-	invalid_code_path();
-}
-
-struct Report {
-	Span<utf8> location;
-	Span<utf8> message;
-	ReportKind kind;
-};
-
-List<utf8> where(utf8 *location) {
-	if (location) {
-		return format(u8"{}:{}:{}", get_source_info(location).path, get_line_number(location), get_column_number(location));
-	} else {
-		return {};
-	}
-}
-
-template <class ...Args>
-Report make_report(ReportKind kind, Span<utf8> location, Span<utf8> severity, char const *format_string, Args const &...args) {
-	Report r;
-	r.location = location;
-	r.kind = kind;
-	if (location.data) {
-		r.message = format(u8"{}: {}: {}", where(location.data), severity, format(format_string, args...));
-	} else {
-		r.message = format(u8"{}: {}", severity, format(format_string, args...));
-	}
-	return r;
-}
-
-template <class ...Args>
-Report make_info_report(Span<utf8> location, char const *format_string, Args const &...args) {
-	return make_report(ReportKind::info, location, u8"Info"s, format_string, args...);
-}
-template <class ...Args>
-Report make_info_report(char const *format_string, Args const &...args) {
-	return make_info_report(Span<utf8>{}, format_string, args...);
-}
-template <class ...Args>
-Report make_error_report(Span<utf8> location, char const *format_string, Args const &...args) {
-	return make_report(ReportKind::error, location, u8"Error"s, format_string, args...);
-}
-
-template <class ...Args>
-Report make_error_report(char const *format_string, Args const &...args) {
-	return make_error_report(Span<utf8>{}, format_string, args...);
-}
-
-void print_report(Report r) {
-	print(r.message);
-	print('\n');
-	print_source_line(r.kind, r.location);
-}
-
-template <class ...Args>
-void immediate_info(Span<utf8> location, char const *format_string, Args const &...args) {
-	print_report(make_info_report(location, format_string, args...));
-}
-template <class ...Args>
-void immediate_info(char const *format_string, Args const &...args) {
-	immediate_info(Span<utf8>{}, format_string, args...);
-}
-template <class ...Args>
-void immediate_error(Span<utf8> location, char const *format_string, Args const &...args) {
-	print_report(make_error_report(location, format_string, args...));
-}
-template <class ...Args>
-void immediate_error(char const *format_string, Args const &...args) {
-	immediate_error(Span<utf8>{}, format_string, args...);
 }
 
 struct Reporter {
@@ -307,21 +48,32 @@ struct Reporter {
 			print_report(report);
 		}
 	}
+
 	template <class ...Args>
 	void info(Span<utf8> location, char const *format_string, Args const &...args) {
-		reports.add(make_info_report(location, format_string, args...));
+		reports.add(make_report(ReportKind::info, location, format_string, args...));
 	}
 	template <class ...Args>
 	void info(char const *format_string, Args const &...args) {
-		reports.add(make_info_report(format_string, args...));
+		info(Span<utf8>{}, format_string, args...);
 	}
+
+	template <class ...Args>
+	void warning(char const *format_string, Args const &...args) {
+		warning(Span<utf8>{}, format_string, args...);
+	}
+	template <class ...Args>
+	void warning(Span<utf8> location, char const *format_string, Args const &...args) {
+		reports.add(make_report(ReportKind::warning, location, format_string, args...));
+	}
+
 	template <class ...Args>
 	void error(char const *format_string, Args const &...args) {
 		error(Span<utf8>{}, format_string, args...);
 	}
 	template <class ...Args>
 	void error(Span<utf8> location, char const *format_string, Args const &...args) {
-		reports.add(make_error_report(location, format_string, args...));
+		reports.add(make_report(ReportKind::error, location, format_string, args...));
 	}
 };
 
@@ -852,6 +604,14 @@ AstLiteral *make_boolean(bool value) {
 	return i;
 }
 
+AstLiteral *make_float(f64 value, AstExpression *type = &type_unsized_float) {
+	auto i = new_ast<AstLiteral>();
+	i->literal_kind = LiteralKind::Float;
+	i->Float = value;
+	i->type = type;
+	return i;
+}
+
 bool is_unary_operator(TokenKind kind) {
 	switch (kind) {
 		case '+':
@@ -1109,7 +869,7 @@ AstExpression *parse_sub_expression(Parser *parser) {
 				for (auto character : parser->token->string) {
 					u64 digit = (u64)character - '0';
 					if (digit >= 10) {
-						parser->reporter->error(parser->token->string, "Failed to parse integer.");
+						parser->reporter->error(parser->token->string, "Failed to parse integer");
 						return 0;
 					}
 					value = value * 10_ib + make_big_int(digit);
@@ -1756,12 +1516,12 @@ void simplify(AstExpression **_expression) {
 							case add: expression = make_integer(left + right, binop->type); return;
 							case sub: expression = make_integer(left - right, binop->type); return;
 							case mul: expression = make_integer(left * right, binop->type); return;
-							case div: invalid_code_path("not implemented"); // expression = make_integer(left / right, binop->type); return;
+							case div: return; invalid_code_path("not implemented"); // expression = make_integer(left / right, binop->type); return;
 							case band: expression = make_integer(left & right, binop->type); return;
 							case bor: expression = make_integer(left | right, binop->type); return;
 							case bxor: expression = make_integer(left ^ right, binop->type); return;
-							case bsl: invalid_code_path("not implemented"); // expression = make_integer(left << right, binop->type); return;
-							case bsr: invalid_code_path("not implemented"); // expression = make_integer(left >> right, binop->type); return;
+							case bsl: expression = make_integer(left << right, binop->type); return;
+							case bsr: return; invalid_code_path("not implemented"); // expression = make_integer(left >> right, binop->type); return;
 							case lt:  expression = make_boolean(left < right); return;
 							case gt:  expression = make_boolean(left > right); return;
 							case le: expression = make_boolean(left <= right); return;
@@ -1779,15 +1539,24 @@ void simplify(AstExpression **_expression) {
 
 				simplify(&unop->expression);
 
-				if (unop->expression->kind == Ast_literal && (((AstLiteral *)unop->expression)->literal_kind == LiteralKind::integer) &&
-					(unop->operation == '+' ||
-					 unop->operation == '-')
-				) {
-					auto left  = ((AstLiteral *)unop->expression)->integer;
-					switch (unop->operation) {
-						case '+': return;
-						case '-': expression = make_integer(-left); return;
-						default: invalid_code_path(); break;
+				if (unop->expression->kind == Ast_literal) {
+					auto literal = (AstLiteral *)unop->expression;
+					switch (literal->literal_kind) {
+						case LiteralKind::integer: {
+							auto integer = literal->integer;
+							switch (unop->operation) {
+								case '+': return;
+								case '-': expression = make_integer(-integer); return;
+							}
+							break;
+						}
+						case LiteralKind::Float: {
+							auto Float = literal->Float;
+							switch (unop->operation) {
+								case '+': return;
+								case '-': expression = make_float(-Float); return;
+							}
+						}
 					}
 				}
 
@@ -1957,7 +1726,7 @@ parse_subscript:
 
 		if (binop->operation == dot) {
 			if (binop->right->kind != Ast_identifier && binop->right->kind != Ast_call) {
-				parser->reporter->error(binop->right->location, "This expression can not follow a dot. Only identifiers are allowed here.");
+				parser->reporter->error(binop->right->location, "This expression can not follow a dot. Only identifiers are allowed here");
 				return 0;
 			}
 		}
@@ -2340,6 +2109,17 @@ void parse_statement(Parser *parser, AstStatement *&result) {
 			}
 			break;
 		}
+		case Token_defer: {
+			auto Defer = new_ast<AstDefer>();
+			Defer->location = parser->token->string;
+			if (!parser->next_not_end())
+				return;
+			if (!parse_block_or_single_statement(parser, &Defer->scope)) {
+				return;
+			}
+			result = Defer;
+			return;
+		}
 		case '{': {
 			auto block = new_ast<AstBlock>();
 
@@ -2362,7 +2142,7 @@ void parse_statement(Parser *parser, AstStatement *&result) {
 	if (expression) {
 		if (parser->token->kind == ';') {
 			if (!is_statement(expression)) {
-				parser->reporter->error(expression->location, "This expression is not a statement.");
+				parser->reporter->error(expression->location, "This expression is not a statement");
 				return;
 			}
 			parser->next();
@@ -2404,7 +2184,7 @@ void parse_statement(Parser *parser, AstStatement *&result) {
 		}
 	}
 
-	parser->reporter->error(parser->token->string, "Failed to parse statement or expression.");
+	parser->reporter->error(parser->token->string, "Failed to parse statement or expression");
 }
 AstStatement *parse_statement(Parser *parser) {
 	AstStatement *result;
@@ -2419,7 +2199,7 @@ AstStatement *parse_global_statement(Parser *parser) {
 		return 0;
 	}
 	if (!can_be_global(statement)) {
-		parser->reporter->error(statement->location, "This statement can not be global.");
+		parser->reporter->error(statement->location, "This statement can not be global");
 		return 0;
 	}
 
@@ -2475,7 +2255,7 @@ SourceFileContext *parse_file(Span<utf8> path) {
 	context->parser.reporter = context->lexer.reporter = &context->reporter;
 	// context->parser.current_scope = &context->scope;
 
-	auto source_info = &sources.add({path, source});
+	auto source_info = &::context.sources.add({path, source});
 
 	context->lexer.source_info = source_info;
 
@@ -2516,18 +2296,18 @@ ParseResult parser_function(Parser *parser) {
 		if (parser->token->kind == Token_directive) {
 			if (parser->token->string == u8"#extern_language"s) {
 				if (!parser->next_expect(Token_string_literal)) {
-					parser->reporter->error("Expected language name. Currently only \"C\" is available.");
+					parser->reporter->error("Expected language name. Currently only \"C\" is available");
 					return ParseResult::syntax_error;
 				}
 				parser->extern_language = unescape_string(parser->token->string);
 				if (parser->extern_language != u8"C"s) {
-					parser->reporter->error(parser->token->string, "Only \"C\" is supported.");
+					parser->reporter->error(parser->token->string, "Only \"C\" is supported");
 					return ParseResult::syntax_error;
 				}
 				parser->next();
 			} else if (parser->token->string == u8"#extern_library"s) {
 				if (!parser->next_expect(Token_string_literal)) {
-					parser->reporter->error("Expected library name.");
+					parser->reporter->error("Expected library name");
 					return ParseResult::syntax_error;
 				}
 				parser->extern_library = unescape_string(parser->token->string);
@@ -2546,7 +2326,7 @@ ParseResult parser_function(Parser *parser) {
 			}
 		} else if (parser->token->kind == Token_import) {
 			if (!parser->next_expect(Token_string_literal)) {
-				parser->reporter->error("Expected library path.");
+				parser->reporter->error("Expected library path");
 				return ParseResult::syntax_error;
 			}
 			auto libname = unescape_string(parser->token->string);
@@ -2633,16 +2413,15 @@ struct IntegerInfo {
 
 IntegerInfo integer_infos[8];
 
-void report_not_convertible(Reporter *reporter, AstExpression *expression, AstExpression *type) {
-	reporter->error(expression->location, "Expression of type {} is not implicitly convertible to {}", type_to_string(expression->type), type_to_string(type));
-}
-
 void harden_type(AstExpression *expression) {
 	switch (expression->kind) {
 		case Ast_literal: {
 			auto literal = (AstLiteral *)expression;
-			if (literal->type == &type_unsized_integer) { // Literals may already have their type set by, for example, cast expressions
-				expression->type = &type_s64;
+			 // Literals may already have their type set by, for example, cast expressions
+			if (literal->type == &type_unsized_integer) {
+				literal->type = type_default_integer;
+			} else if (literal->type == &type_unsized_float) {
+				literal->type = type_default_float;
 			}
 			break;
 		}
@@ -2910,6 +2689,7 @@ bool implicitly_cast(Reporter *reporter, AstExpression **_expression, AstExpress
 			}
 		} else if (literal->literal_kind == LiteralKind::Float) {
 			if (types_match(type, &type_f32) || types_match(type, &type_f64)) {
+				expression->type = type;
 				return true;
 			}
 		} else if (literal->literal_kind == LiteralKind::noinit) {
@@ -2917,22 +2697,26 @@ bool implicitly_cast(Reporter *reporter, AstExpression **_expression, AstExpress
 			return true;
 		}
 	} else if (expression->kind == Ast_autocast) {
-		//
-		// TODO: check for casts that should not happen
-		//
-		auto cast = new_ast<AstCast>();
-		cast->type = type;
-		cast->expression = ((AstAutocast *)expression)->expression;
-		expression = cast;
-		return true;
-	} else if (expression->type->kind == Ast_unary_operator) {
-		auto unop = (AstUnaryOperator *)expression->type;
-		assert(unop->operation == '*');
+		auto autocast = (AstAutocast *)expression;
 
-		if (types_match(unop->expression, &type_void)) {
-			if (is_pointer(type)) {
-				return true;
-			}
+		CastType request = {get_struct(expression->type), get_struct(type)};
+		auto found_built_in = find(built_in_casts, request);
+
+		if (found_built_in) {
+			auto cast = new_ast<AstCast>();
+			cast->expression = expression;
+			cast->type = type;
+			expression = cast;
+			return true;
+		}
+
+		if (reporter) {
+			reporter->error(expression->location, "Expression of type {} is not convertible to {}", type_to_string(expression->type), type_to_string(type));
+		}
+		return false;
+	} else if (types_match(type, &type_pointer_to_void)) {
+		if (is_pointer(expression->type)) {
+			return true;
 		}
 	} else if (expression->type == &type_unsized_integer) {
 		auto found_info = find_if(integer_infos, [&](auto &i) { return types_match(i.type, type); });
@@ -2957,6 +2741,19 @@ bool implicitly_cast(Reporter *reporter, AstExpression **_expression, AstExpress
 			expression->type = type;
 			return true;
 		}
+	} else if (expression->kind == Ast_lambda) {
+		// Lambda literals can be implicitly casted when calling convention does not match
+		// That just means that calling convention can be deduced when assigning (or smth else) a lambda literal.
+		// This will not work for named lambdas.
+
+		auto src_lambda = (AstLambda *)expression;
+		auto dst_lambda = get_lambda(type);
+		if (dst_lambda) {
+			if (same_argument_and_return_types(src_lambda, dst_lambda)) {
+				src_lambda->convention = dst_lambda->convention;
+				return true;
+			}
+		}
 	} else {
 		CastType request = {get_struct(expression->type), get_struct(type)};
 		auto found_built_in = find(built_in_casts, request);
@@ -2972,7 +2769,7 @@ bool implicitly_cast(Reporter *reporter, AstExpression **_expression, AstExpress
 	}
 
 	if (reporter) {
-		report_not_convertible(reporter, expression, type);
+		reporter->error(expression->location, "Expression of type {} is not implicitly convertible to {}", type_to_string(expression->type), type_to_string(type));
 	}
 	return false;
 }
@@ -3097,6 +2894,10 @@ void typecheck(TypecheckState *state, AstStatement *statement) {
 
 				if (!implicitly_cast(&state->reporter, &expression, lambda->return_parameter->type))
 					yield(TypecheckResult::fail);
+			} else {
+				if (!types_match(lambda->return_parameter->type, &type_void)) {
+					state->reporter.warning(ret->location, "No return expression provided. If you did't assign a value to the return parameter, this will return the default value");
+				}
 			}
 			state->current_lambda->return_statements.add(ret);
 			break;
@@ -3150,10 +2951,10 @@ void typecheck(TypecheckState *state, AstStatement *statement) {
 
 					typecheck(state, definition->type);
 
-					auto evaluated_type = evaluate(state, definition->type);
-					assert(evaluated_type);
-					assert(evaluated_type->literal_kind == LiteralKind::type);
-					definition->type = evaluated_type->type_value;
+					// auto evaluated_type = evaluate(state, definition->type);
+					// assert(evaluated_type);
+					// assert(evaluated_type->literal_kind == LiteralKind::type);
+					// definition->type = evaluated_type->type_value;
 
 					if (definition->expression) {
 						if (!implicitly_cast(&state->reporter, &definition->expression, definition->type)) {
@@ -3163,6 +2964,11 @@ void typecheck(TypecheckState *state, AstStatement *statement) {
 				}
 			} else {
 				if (!definition->is_constant) {
+					if (definition->expression->kind == Ast_autocast) {
+						auto autocast = (AstAutocast *)definition->expression;
+						state->reporter.error(definition->location, "Can't deduce a type from autocast. You need to explicitly specify the resulting type");
+						yield(TypecheckResult::fail);
+					}
 					harden_type(definition->expression);
 				}
 				definition->type = definition->expression->type;
@@ -3332,6 +3138,13 @@ void typecheck(TypecheckState *state, AstStatement *statement) {
 
 			break;
 		}
+		case Ast_defer: {
+			auto Defer = (AstDefer *)statement;
+
+			typecheck_scope(&Defer->scope);
+
+			break;
+		}
 		default: {
 			invalid_code_path("invalid statement kind in typecheck");
 		}
@@ -3340,8 +3153,6 @@ void typecheck(TypecheckState *state, AstStatement *statement) {
 
 // Array<Array<Array<bool, built_in_struct_count>, built_in_struct_count>, (u32)BinaryOperation::count> builtin_binary_operator_table;
 
-
-#define REDECLARE(name, expr) auto _##name = expr; auto name = _##name;
 
 bool signedness_matches(AstStruct *a, AstStruct *b) {
 	assert(::is_integer(a));
@@ -3392,6 +3203,9 @@ void typecheck(TypecheckState *state, AstExpression *&expression) {
 		case Ast_identifier: {
 			auto identifier = (AstIdentifier *)expression;
 
+			// if (identifier->location == u8"HDC"s)
+			// 	debug_break();
+
 			if (identifier->definition)
 				break;
 
@@ -3430,15 +3244,14 @@ void typecheck(TypecheckState *state, AstExpression *&expression) {
 				Match match;
 				// TODO: These branches have similar code
 				if (identifier->definition) {
-					// TODO: This looks strange
 					if (identifier->definition->expression)
 						match = {identifier->definition, get_lambda(identifier->definition->expression)};
 					else
 						match = {identifier->definition, get_lambda(identifier->definition->type)};
 
 					if (!match.lambda) {
-						state->reporter.error(call->location, "No lambda with that name was found.");
-						state->reporter.info (match.definition->location, "Found a definition.");
+						state->reporter.error(call->location, "No lambda with that name was found");
+						state->reporter.info (match.definition->location, "Found a definition");
 						yield(TypecheckResult::fail);
 					}
 
@@ -3485,7 +3298,7 @@ void typecheck(TypecheckState *state, AstExpression *&expression) {
 					}
 					if (matches.count == 0) {
 						if (identifier->possible_definitions.count) {
-							state->reporter.error(call->location, "No matching lambda was found.");
+							state->reporter.error(call->location, "No matching lambda was found");
 							state->reporter.info("Here is the list of definitions with that name:");
 							for (auto definition : identifier->possible_definitions) {
 								auto e = direct(definition->expression);
@@ -3513,12 +3326,12 @@ void typecheck(TypecheckState *state, AstExpression *&expression) {
 							_continue_definition1:;
 							}
 						} else {
-							state->reporter.error(call->location, "Lambda with that name was not defined.");
+							state->reporter.error(call->location, "Lambda with that name was not defined");
 						}
 						yield(TypecheckResult::fail);
 					}
 					if (matches.count != 1) {
-						state->reporter.error(call->location, "Ambiguous overloads were found.");
+						state->reporter.error(call->location, "Ambiguous overloads were found");
 						for (auto match : matches) {
 							state->reporter.info(match.definition->location, "Here");
 						}
@@ -3696,7 +3509,7 @@ void typecheck(TypecheckState *state, AstExpression *&expression) {
 							}
 							expression = make_integer(size->integer); // unsized
 						} else {
-							state->reporter.error(bin->left->location, "The only members of any array type are identifiers 'data' and 'count'. You asked for '{}', which does not exist.", identifier->name);
+							state->reporter.error(bin->left->location, "The only members of any array type are identifiers 'data' and 'count'. You asked for '{}', which does not exist", identifier->name);
 							yield(TypecheckResult::fail);
 						}
 					} else {
@@ -3711,6 +3524,7 @@ void typecheck(TypecheckState *state, AstExpression *&expression) {
 				}
 
 				typecheck(state, bin->right);
+
 				if (!implicitly_cast(&state->reporter, &bin->right, bin->left->type)) {
 					yield(TypecheckResult::fail);
 				}
@@ -3749,8 +3563,8 @@ void typecheck(TypecheckState *state, AstExpression *&expression) {
 				}
 
 				if (l->kind == Ast_struct && r->kind == Ast_struct) {
-					REDECLARE(l, (AstStruct *)l);
-					REDECLARE(r, (AstStruct *)r);
+					REDECLARE_VAL(l, (AstStruct *)l);
+					REDECLARE_VAL(r, (AstStruct *)r);
 
 					// BEGIN UNSIZED INTEGER DEAL
 					switch (bin->operation) {
@@ -3906,8 +3720,8 @@ void typecheck(TypecheckState *state, AstExpression *&expression) {
 					}
 				} else if (lp && rp) {
 					// Both are pointers
-					REDECLARE(l, (AstUnaryOperator *)l);
-					REDECLARE(r, (AstUnaryOperator *)r);
+					REDECLARE_VAL(l, (AstUnaryOperator *)l);
+					REDECLARE_VAL(r, (AstUnaryOperator *)r);
 					switch (bin->operation) {
 						case ne: {
 							bin->type = &type_bool;
@@ -3918,7 +3732,13 @@ void typecheck(TypecheckState *state, AstExpression *&expression) {
 					}
 				} else if ((lp && ri) || (li && rp)) {
 					// One is pointer and other is integer
-					bin->type = lp ? l : r;
+					if (lp) {
+						bin->type = l;
+						harden_type(bin->right);
+					} else {
+						bin->type = r;
+						harden_type(bin->left);
+					}
 					return;
 				}
 
@@ -4160,7 +3980,7 @@ void typecheck(TypecheckState *state, AstExpression *&expression) {
 
 			typecheck(state, cast->expression);
 
-			cast->type = &type_autocast;
+			cast->type = cast->expression->type;
 
 			break;
 		}
@@ -4266,103 +4086,33 @@ void add_member(AstStruct &destination, AstExpression *type, Span<utf8> name, As
 static void write_test_source() {
 	StringBuilder test;
 	append(test, R"(
-main :: fn () {
-	main15();
+/*
+draw :: fn #stdcall (_: int, _: int, _: int, _: int, _: int, _: int, _: int, _: int, _: int, _: int, _: int, _: int, _: int, _: int, _: int, _: int) {
 }
-)");
-#if 1
-	for (u32 i = 0; i < 256; ++i) {
-		append_format(test, R"FOOBAR(/*
-import "windows.tl"
 
-standard_output_handle : HANDLE;
-global_string : string;
-
-AStruct :: struct {{
-	data : *void;
-	count : uint;
-}}
-
-main :: fn () -> s32 {{
-	standard_output_handle = GetStdHandle(STD_OUTPUT_HANDLE);
-
-	str : string = "Hello World!\n";
-
-	WriteConsoleA(standard_output_handle, str.data, str.count, null, null);
-	WriteConsoleA(standard_output_handle, "Hello World!\n".data, 13, null, null);
-	print("Hello World!\n");
-	print(str);
-
-	if true {{
-		dd : u64; // block-local variable
-		print("true\n");
-	}}
-
-	if 0 == 0 {{ print("0 is 0\n"); }}
-	else      {{ print("0 is not 0\n"); }}
-
-
-	if 1 < 2 print("1 is less than 2\n");
-
-	if true print("true\n");
-	else  {{ print("false\n"); }}
-
-	if false {{ print("true\n"); }}
-	else       print("false\n");
-
-	if 3 >= 0 print("3 is >= 0\n");
-	else      print("3 is not >= 0\n");
-
-	i := 10;
-
-	while i > 0 {{
-		j := i;
-		while j > 0 {{
-			print("*");
-			j = j - 1;
-		}}
-		print("\n");
-		i = i - 1;
-	}}
-
-	STR := "my file.txt\0";
-	print(STR);
-	file := CreateFileA(STR.data, GENERIC_WRITE, 0, null, CREATE_ALWAYS, /*FILE_ATTRIBUTE_NORMAL*/ 0, null);
-
-	content := "Hello World!";
-	WriteFile(file, content.data, content.count, null, null);
-
-	global_string = "A global string";
-	print(global_string);
-
-	local_string : string;
-	local_string = "a local string";
-	print(local_string);
-
-	a_struct : AStruct;
-	a_struct.count = 7;
-	a_struct.data = "AStruct".data;
-	WriteConsoleA(standard_output_handle, a_struct.data, a_struct.count, null, null);
-
-	a_string : string;
-	a_string.count = 7;
-	a_string.data = "A STRING".data;
-	print(a_string);
-
-	return x as s32;
-}}
-
-x :: 42;
-
-print :: fn (str: string) {{
-	WriteConsoleA(standard_output_handle, str.data, str.count, null, null);
-}}
+main :: fn () {
+    draw(0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15);
+}
 */
-
-
 import "std.tl"
+import "opengl.tl"
 
-main{} :: fn () {{
+dc: HDC;
+
+draw :: fn () {
+    glColor3f(1, 1, 1);
+    glBegin(GL_TRIANGLES);
+
+    glVertex2f(-0.5, -0.5);
+    glVertex2f( 0.0,  0.5);
+    glVertex2f( 0.5, -0.5);
+
+    glEnd();
+
+    SwapBuffers(dc);
+}
+
+main :: fn (): int {
 	class_name := "window_class\0".data;
 	window_name := "hello window\0".data;
 
@@ -4371,119 +4121,182 @@ main{} :: fn () {{
 	wc : WNDCLASSEXA;
 	wc.hInstance = hInstance;
 	wc.cbSize = #sizeof WNDCLASSEXA;
-	wc.lpfnWndProc = fn #stdcall (hwnd : HWND, uMsg : UINT, wParam : WPARAM, lParam : LPARAM) -> LRESULT {{
-		if uMsg == WM_DESTROY {{
+	wc.lpfnWndProc = fn (hwnd: HWND, uMsg: UINT, wParam: WPARAM, lParam: LPARAM): LRESULT {
+		if uMsg == WM_DESTROY {
 			PostQuitMessage(0);
-			return 0;
-		}}
-		return DefWindowProcA(hwnd, uMsg, wParam, lParam);
-	}};
-	//wc.lpfnWndProc = &DefWindowProcA;
+		} else if uMsg == WM_SIZE {
+            glViewport(0, 0, (lParam & 0xffff) as s32, ((lParam >> 16) & 0xffff) as s32);
+            draw();
+        } else {
+            return DefWindowProcA(hwnd, uMsg, wParam, lParam);
+        }
+        return 0;
+	};
 	wc.lpszClassName = class_name;
 	wc.hCursor = LoadCursorA(null, IDC_ARROW);
-	if RegisterClassExA(&wc) != 0 {{
-		print_string("Class created!\n");
-	}} else {{
-		print_string("Class Failed!\n");
-	}}
+
+    print(if RegisterClassExA(&wc) != 0 then "Class created!\n" else "Class Failed!\n");
 
 	window := CreateWindowExA(
 		0, class_name, window_name, WS_OVERLAPPEDWINDOW | WS_VISIBLE,
 		CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, null, null, hInstance, null
 	);
 
-	if window != null {{
-		print_string("Window Success!\n");
-	}} else {{
-		print_string("Window Fail!\n");
+	print(if window != null then "Window Success!\n" else "Window Fail!\n");
+
+	dp : PIXELFORMATDESCRIPTOR;
+	dp.nSize = #sizeof PIXELFORMATDESCRIPTOR;
+	dp.nVersion = 1;
+	dp.dwFlags = PFD_SUPPORT_OPENGL | PFD_DRAW_TO_WINDOW | PFD_DOUBLEBUFFER;
+	dp.cColorBits = 32;
+	dp.cAlphaBits = 8;
+	dp.cDepthBits = 24;
+	dp.cStencilBits = 8;
+	dp.iPixelType = PFD_TYPE_RGBA;
+	dp.iLayerType = PFD_MAIN_PLANE;
+
+    dc = GetDC(window);
+
+    index := ChoosePixelFormat(dc, &dp);
+	if index == 0 {
+		error := GetLastError();
+		print("ChoosePixelFormat failed with code ");
+		print(error);
+		return 1;
+	}
+
+	sp : PIXELFORMATDESCRIPTOR;
+	DescribePixelFormat(dc, index, #sizeof #typeof sp, &sp);
+
+	SetPixelFormat(dc, index, &sp);
+
+	context := wglCreateContext(dc);
+	if wglMakeCurrent(dc, context) != 1 {
+		print("wglMakeCurrent failed");
+		return 1;
+	}
+
+	while true {
+        msg : MSG;
+		while PeekMessageA(&msg, null, 0, 0, PM_REMOVE) != 0 {
+			if msg.message == WM_QUIT
+				return 0;
+			TranslateMessage(&msg);
+			DispatchMessageA(&msg);
+		}
+
+        draw();
+	}
+}
+)");
+#if 1
+	for (u32 i = 0; i < 4096; ++i) {
+		append_format(test, R"FOOBAR(
+/*
+draw :: fn #stdcall (_: int, _: int, _: int, _: int, _: int, _: int, _: int, _: int, _: int, _: int, _: int, _: int, _: int, _: int, _: int, _: int) {{
+}}
+
+main :: fn () {{
+    draw(0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15);
+}}
+*/
+import "std.tl"
+import "opengl.tl"
+
+dc{}: HDC;
+
+draw{} :: fn () {{
+    glColor3f(1, 1, 1);
+    glBegin(GL_TRIANGLES);
+
+    glVertex2f(-0.5, -0.5);
+    glVertex2f( 0.0,  0.5);
+    glVertex2f( 0.5, -0.5);
+
+    glEnd();
+
+    SwapBuffers(dc{});
+}}
+
+main{} :: fn (): int {{
+	class_name := "window_class\0".data;
+	window_name := "hello window\0".data;
+
+	hInstance := GetModuleHandleA(null);
+
+	wc : WNDCLASSEXA;
+	wc.hInstance = hInstance;
+	wc.cbSize = #sizeof WNDCLASSEXA;
+	wc.lpfnWndProc = fn (hwnd: HWND, uMsg: UINT, wParam: WPARAM, lParam: LPARAM): LRESULT {{
+		if uMsg == WM_DESTROY {{
+			PostQuitMessage(0);
+		}} else if uMsg == WM_SIZE {{
+            glViewport(0, 0, (lParam & 0xffff) as s32, ((lParam >> 16) & 0xffff) as s32);
+            draw{}();
+        }} else {{
+            return DefWindowProcA(hwnd, uMsg, wParam, lParam);
+        }}
+        return 0;
+	}};
+	wc.lpszClassName = class_name;
+	wc.hCursor = LoadCursorA(null, IDC_ARROW);
+
+    print(if RegisterClassExA(&wc) != 0 then "Class created!\n" else "Class Failed!\n");
+
+	window := CreateWindowExA(
+		0, class_name, window_name, WS_OVERLAPPEDWINDOW | WS_VISIBLE,
+		CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, null, null, hInstance, null
+	);
+
+	print(if window != null then "Window Success!\n" else "Window Fail!\n");
+
+	dp : PIXELFORMATDESCRIPTOR;
+	dp.nSize = #sizeof PIXELFORMATDESCRIPTOR;
+	dp.nVersion = 1;
+	dp.dwFlags = PFD_SUPPORT_OPENGL | PFD_DRAW_TO_WINDOW | PFD_DOUBLEBUFFER;
+	dp.cColorBits = 32;
+	dp.cAlphaBits = 8;
+	dp.cDepthBits = 24;
+	dp.cStencilBits = 8;
+	dp.iPixelType = PFD_TYPE_RGBA;
+	dp.iLayerType = PFD_MAIN_PLANE;
+
+    dc{} = GetDC(window);
+
+    index := ChoosePixelFormat(dc{}, &dp);
+	if index == 0 {{
+		error := GetLastError();
+		print("ChoosePixelFormat failed with code ");
+		print(error);
+		return 1;
 	}}
 
-	msg : MSG;
+	sp : PIXELFORMATDESCRIPTOR;
+	DescribePixelFormat(dc{}, index, #sizeof #typeof sp, &sp);
+
+	SetPixelFormat(dc{}, index, &sp);
+
+	context := wglCreateContext(dc{});
+	if wglMakeCurrent(dc{}, context) != 1 {{
+		print("wglMakeCurrent failed");
+		return 1;
+	}}
 
 	while true {{
+        msg : MSG;
 		while PeekMessageA(&msg, null, 0, 0, PM_REMOVE) != 0 {{
 			if msg.message == WM_QUIT
-				return;
+				return 0;
 			TranslateMessage(&msg);
 			DispatchMessageA(&msg);
 		}}
+
+        draw{}();
 	}}
-
-}}
-/*
-foo :: fn (x: int) -> int {{
-	if x == 0 {{
-		main();
-		return 0;
-	}}
-	return x;
 }}
 
-main :: fn () -> int {{
-	return foo(12);
-}}
-*/
-/*
-foo :: fn (x: u8) -> u8 {{
-	return x;
-}}
 
-main :: fn () -> int {{
-	a :: "HILLO";
-	return foo(a.count as u8);
-}}
-*/
-
-/*
-import "std.tl"
-main :: fn () {{
-	print_string("hello");
-}}
-*/
-
-/*
-
-foo :: fn (data : *u8, size : uint) {{
-}}
-
-main :: fn () -> int {{
-	hello :: "hello";
-	foo(hello.data, hello.count);
-}}
-
-*/
-
-/*
-import "std.tl"
-
-x :: u8;
-
-main :: fn () {{
-	a : x;
-	print_hex(&a);
-	print_char('\n');
-
-	{{
-		b : x;
-		print_hex(&b);
-		print_char('\n');
-		c : x;
-		print_hex(&c);
-		print_char('\n');
-
-		{{
-			d : x;
-			print_hex(&d);
-			print_char('\n');
-		}}
-	}}
-
-	e : x;
-	print_hex(&e);
-	print_char('\n');
-}}
-
-*/)FOOBAR", i);
+)FOOBAR", i, i, i, i, i, i, i, i, i, i, i, i);
 	}
 #else
 	append_format(test, u8"♥0 :: fn (☺: s32, ☻: s32) s32 {{ return ☺ + ☻; }} /* ♦♣♠•◘○ this is a /* nested */ comment ♦♣♠•◘○ */\n");
@@ -4694,7 +4507,7 @@ s32 tl_main(Span<Span<utf8>> arguments) {
 
 	defer { print("Peak memory usage: {}\n", format_bytes(get_memory_info().peak_usage)); };
 
-	write_test_source();
+	// write_test_source();
 
 	init_ast_allocator();
 
@@ -4785,7 +4598,6 @@ restart_main:
 	context.source_path_without_extension = parse_path(context.source_path).path_without_extension();
 
 	construct(parsed_files);
-	construct(sources);
 	construct(global_scope);
 	//construct(typechecked_globals);
 	//construct(names_not_available_for_globals);
@@ -4794,6 +4606,30 @@ restart_main:
 	construct(double_char_tokens);
 	construct(triple_char_tokens);
 	construct(import_paths);
+
+
+
+	HMODULE lib = 0;
+	if (args.output != u8"none"s) {
+		scoped_phase("Collecting target information");
+
+		lib = LoadLibraryW((wchar *)to_utf16(concatenate(context.executable_directory, u8"\\outputs\\"s, args.output), true).data);
+		if (!lib) {
+			print("Failed to load output generator '{}'. Check 'tlang\\bin\\outputs' directory\n", args.output);
+			return 1;
+		}
+
+		auto get_target_information = (TargetInformationGetter)GetProcAddress(lib, "tlang_get_target_information");
+		if (!get_target_information) {
+			print("Failed to load output generator '{}'. There is no `tlang_get_target_information` function\n", args.output);
+			return 1;
+		}
+
+		get_target_information(context);
+	}
+
+
+
 
 	import_paths.add(context.current_directory);
 	import_paths.add(concatenate(context.executable_directory, u8"\\libs"s));
@@ -4833,6 +4669,7 @@ restart_main:
 		s.size = size;
 		s.alignment = align;
 		s.type = &type_type;
+		s.location = name;
 
 		auto definition = new_ast<AstDefinition>();
 		definition->is_constant = true;
@@ -4862,17 +4699,26 @@ restart_main:
 	init_type(type_s64,    u8"s64"s,  8, 8);
 	init_type(type_f32,    u8"f32"s,  4, 4);
 	init_type(type_f64,    u8"f64"s,  8, 8);
-	init_type(type_string, u8"string"s, 16, 8);
-	init_type(type_unsized_integer,  u8"integer"s, 0, 0);
-	init_type(type_unsized_float,  u8"float"s, 0, 0);
-	init_type(type_noinit, u8"noinit"s, 0, 0);
-	init_type(type_autocast, u8"autocast"s, 0, 0);
+	init_type(type_string, u8"string"s, context.register_size * 2, 8);
+	init_type(type_unsized_integer,  u8"unsized integer"s, 0, 0);
+	init_type(type_unsized_float,  u8"unsized float"s, 0, 0);
+	init_type(type_noinit, u8"(noinit)"s, 0, 0);
 
 	type_pointer_to_void.expression = &type_void;
 	type_pointer_to_void.operation = '*';
 	type_pointer_to_void.type = &type_type;
 
-	type_default_integer = &type_s64;
+	switch (context.register_size) {
+		case 4:
+			type_default_signed_integer = &type_s32;
+			type_default_unsigned_integer = &type_u32;
+			break;
+		case 8:
+			type_default_signed_integer = &type_s64;
+			type_default_unsigned_integer = &type_u64;
+			break;
+	}
+	type_default_integer = type_default_signed_integer;
 	type_default_float = &type_f64;
 
 	add_member(type_u8,  &type_u8,  u8"min"s, make_integer(0), true, INVALID_MEMBER_OFFSET);
@@ -4891,8 +4737,23 @@ restart_main:
 	add_member(type_s16, &type_s16, u8"max"s, make_integer(0x7fff), true, INVALID_MEMBER_OFFSET);
 	add_member(type_s32, &type_s32, u8"max"s, make_integer(0x7fffffff), true, INVALID_MEMBER_OFFSET);
 	add_member(type_s64, &type_s64, u8"max"s, make_integer(0x7fffffffffffffff), true, INVALID_MEMBER_OFFSET);
-	add_member(type_string, make_pointer_type(&type_void), u8"data"s, 0, false, 0);
-	add_member(type_string, &type_u64, u8"count"s, 0, false, 8);
+	add_member(type_string, make_pointer_type(&type_u8), u8"data"s, 0, false, 0);
+	add_member(type_string, type_default_unsigned_integer, u8"count"s, 0, false, 8);
+
+	auto add_global_alias = [&](Span<utf8> name, AstExpression *expression) {
+		auto defn = new_ast<AstDefinition>();
+		defn->location = defn->name = name;
+		defn->is_constant = true;
+		defn->built_in = true;
+		defn->parent_scope = &global_scope;
+		defn->type = expression->type;
+		defn->expression = expression;
+		defn->parent_scope->definitions.get_or_insert(defn->name).add(defn);
+		defn->parent_scope->statements.add(defn);
+	};
+	add_global_alias(u8"sint"s, type_default_integer);
+	add_global_alias(u8"uint"s, type_default_unsigned_integer);
+	add_global_alias(u8"int"s, type_default_signed_integer);
 
 	built_in_casts.insert({&type_u8 , &type_s8 , /*CastKind::u8_s8  , */false});
 	built_in_casts.insert({&type_u8 , &type_s16, /*CastKind::u8_s16 , */true});
@@ -4952,12 +4813,11 @@ restart_main:
 	built_in_casts.insert({&type_s64, &type_u64, /*CastKind::s64_u64, */false});
 
 	built_in_casts.insert({&type_f64, &type_s64, /*CastKind::f64_s64, */false});
+	built_in_casts.insert({&type_s64, &type_f64, /*CastKind::f64_s64, */false});
 
 	current_printer = standard_output_printer;
 
 	timed_end("setup"s);
-
-
 
 	{
 		scoped_phase("Parsing");
@@ -5068,29 +4928,48 @@ restart_main:
 		return 1;
 	}
 
-	auto found_definitions = global_scope.definitions.find(u8"main"s);
-	if (found_definitions) {
-		auto definitions = *found_definitions;
-		if (definitions.count != 1) {
-			immediate_error("Found multiple `main` definitions");
-			for (auto definition : definitions) {
+	auto found_build_definitions = global_scope.definitions.find(u8"build"s);
+	if (found_build_definitions) {
+		auto build_definitions = *found_build_definitions;
+		if (build_definitions.count != 1) {
+			immediate_error("Found multiple `build` definitions");
+			for (auto definition : build_definitions) {
 				immediate_info(definition->location, "Here");
 			}
 			return 1;
 		}
-		auto definition = definitions[0];
-		if (!is_lambda(definition->expression)) {
-			immediate_error(definition->location, "`main` is not a lambda");
+		auto build_definition = build_definitions[0];
+		if (is_lambda(build_definition->expression)) {
+			context.build_lambda = get_lambda(build_definition->expression);
+			s64 test = 69;
+			// invoke(build_lambda, &test);
+			print("test is {}\n", test);
+		}
+	}
+
+	auto found_main_definitions = global_scope.definitions.find(u8"main"s);
+	if (found_main_definitions) {
+		auto main_definitions = *found_main_definitions;
+		if (main_definitions.count != 1) {
+			immediate_error("Found multiple `main` definitions");
+			for (auto definition : main_definitions) {
+				immediate_info(definition->location, "Here");
+			}
 			return 1;
 		}
-		context.main_lambda = get_lambda(definition->expression);
+		auto main_definition = main_definitions[0];
+		if (!is_lambda(main_definition->expression)) {
+			immediate_error(main_definition->location, "`main` is not a lambda");
+			return 1;
+		}
+		context.main_lambda = get_lambda(main_definition->expression);
 
 		if (!::is_integer(context.main_lambda->return_parameter->type) && !types_match(context.main_lambda->return_parameter->type, &type_void)) {
-			immediate_error(context.main_lambda->return_parameter->type->location.data ? context.main_lambda->return_parameter->type->location : context.main_lambda->location, "Main function can return any type of integer or void, but not {}.", type_to_string(context.main_lambda->return_parameter->type));
+			immediate_error(context.main_lambda->return_parameter->type->location.data ? context.main_lambda->return_parameter->type->location : context.main_lambda->location, "Main function can return any type of integer or void, but not {}", type_to_string(context.main_lambda->return_parameter->type));
 			return 1;
 		}
 	} else {
-		print("Main function was not defined. Exiting.\n");
+		print("Entry function was not defined. Exiting.\n");
 		return 1;
 	}
 
@@ -5102,12 +4981,6 @@ restart_main:
 
 	if (args.output != u8"none"s) {
 		scoped_phase("Generating executable");
-
-		auto lib = LoadLibraryW((wchar *)to_utf16(concatenate(context.executable_directory, u8"\\outputs\\"s, args.output), true).data);
-		if (!lib) {
-			print("Failed to load output generator '{}'. Check 'tlang\\bin\\outputs' directory\n", args.output);
-			return 1;
-		}
 
 		auto build = (OutputBuilder)GetProcAddress(lib, "tlang_build_output");
 		if (!build) {

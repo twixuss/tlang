@@ -1,10 +1,4 @@
-sint :: s64;
-uint :: u64;
-
-int :: s64;
-
-smm :: s64;
-umm :: u64;
+float :: f64;
 
 /*
 
@@ -27,4 +21,4 @@ allocate :: fn (size: umm) -> *void {
 
 */
 
-dbgbrk :: fn #intrinsic ();
+debug_break :: fn #intrinsic ();

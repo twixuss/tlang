@@ -82,11 +82,13 @@ Import string as expression???
 
 
 
-// c.baz(11, a.foo(42).bar(16));
-// 
-// (c, 11, ((a, 42)foo, 16)bar)baz;
-// 
-// baz(c, 11, bar(foo(a, 42), 16));
+// Member functions: c.baz(11, a.foo(42).bar(16));
+//
+//             Lisp: (baz, c, 11, (bar, (foo, a, 42), 16));
+//
+//                C: baz(c, 11, bar(foo(a, 42), 16));
+//
+//             C^-1: (c, 11, ((a, 42)foo, 16)bar)baz;
 
 
 How arrays should be passed as arguments? How anything relatively big should be passed? Copy or constant reference?
@@ -94,25 +96,11 @@ Copy may be too expensive.
 Constant arguments may not be modified, so there should be no way to do this: 
 
 
-///////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
 idea:
 `is` from c#, but better.
-
-*/
-
-is_cat :: fn (a: *Animal): *Cat {
-    return if a.is_cat then a as *Cat else null;
-}
-
-b: *Animal;
-
-if b is cat a {
-    meow(a);
-}
-
-/*
-prepending 'is_' to an identifier? seems very unusual. Also it enforces this specific naming style, which is bad.
-The style issue may be solved by putting `is` keyword somewhere in function definition
 */
 is cat :: fn (a: *Animal): *Cat {
     return if a.is_cat then a as *Cat else null;
@@ -120,9 +108,10 @@ is cat :: fn (a: *Animal): *Cat {
 
 animal: *Animal;
 
-if animal is cat kitty { // prepending 'is_' to an identifier? seems very unusual. Also it enforces this specific naming style, which is bad.
+if animal is cat kitty {
     meow(kitty);
 }
+
 /*
 But can null be a valid value for this? When 'something' is 'something else'. I think no.
 
@@ -145,5 +134,35 @@ Or always `bind` the result:
 */
 if b is cat _ print("meow");
 /*
+
+Maybe the language should allow definitions to be expressions?
 */
-///////////////////////////////////////////
+if kitty := cat(animal) print("meyow");
+/*
+That way we'll have things like this
+*/
+while (k := get_value()) != 0 {
+    // do something with `k` ...
+}
+/*
+*/
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+/////////////////////////////////
+// Inline array in a structure //
+/////////////////////////////////
+
+InlineString :: struct {
+    count : u64;
+    data : [? count]u8;
+}
+
+// Because the size is unknown at compile time, length of the array is calculated by evaluating user-provided expression.
+
+// Also this thing can only be passed by pointer.
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+

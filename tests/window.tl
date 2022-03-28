@@ -1,6 +1,6 @@
 import "std.tl"
 
-main :: fn () -> int {
+main :: fn (): int {
 	class_name := "window_class\0".data;
 	window_name := "hello window\0".data;
 
@@ -9,7 +9,7 @@ main :: fn () -> int {
 	wc : WNDCLASSEXA;
 	wc.hInstance = hInstance;
 	wc.cbSize = #sizeof WNDCLASSEXA;
-	wc.lpfnWndProc = fn #stdcall (hwnd : HWND, uMsg : UINT, wParam : WPARAM, lParam : LPARAM) -> LRESULT {
+	wc.lpfnWndProc = fn #stdcall (hwnd : HWND, uMsg : UINT, wParam : WPARAM, lParam : LPARAM): LRESULT {
 		if uMsg == WM_DESTROY {
 			PostQuitMessage(0);
 			return 0;

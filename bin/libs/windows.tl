@@ -47,7 +47,7 @@ PCSTR  :: PSTR;
 LPSTR  :: PSTR;
 LPCSTR :: PSTR;
 
-WNDPROC :: #type fn #stdcall (hwnd : HWND, uMsg : UINT, wParam : WPARAM, lParam : LPARAM) -> LRESULT;
+WNDPROC :: #type fn #stdcall (hwnd : HWND, uMsg : UINT, wParam : WPARAM, lParam : LPARAM): LRESULT;
 
 #layout_c
 
@@ -232,9 +232,9 @@ IDC_WAIT        :: 32514 as *u8;
 #stdcall
 #extern_library "kernel32"
 
-GetStdHandle :: fn (nStdHandle: DWORD) -> HANDLE;
+GetStdHandle :: fn (nStdHandle: DWORD): HANDLE;
 
-WriteConsoleA :: fn (hConsoleOutput: HANDLE, lpBuffer: LPCVOID, nNumberOfCharsToWrite: DWORD, lpNumberOfCharsWritten: LPDWORD, lpReserved: LPVOID) -> BOOL;
+WriteConsoleA :: fn (hConsoleOutput: HANDLE, lpBuffer: LPCVOID, nNumberOfCharsToWrite: DWORD, lpNumberOfCharsWritten: LPDWORD, lpReserved: LPVOID): BOOL;
 
 CreateFileA :: fn (
 	lpFileName: LPCSTR,
@@ -244,7 +244,7 @@ CreateFileA :: fn (
 	dwCreationDisposition: DWORD,
 	dwFlagsAndAttributes: DWORD,
 	hTemplateFile: HANDLE
-) -> HANDLE;
+): HANDLE;
 
 WriteFile :: fn (
 	hFile:                  HANDLE,
@@ -252,20 +252,20 @@ WriteFile :: fn (
 	nNumberOfBytesToWrite:  DWORD,
 	lpNumberOfBytesWritten: LPDWORD,
 	lpOverlapped:           *OVERLAPPED
-) -> BOOL;
+): BOOL;
 
-GetLastError :: fn () -> DWORD;
+GetLastError :: fn (): DWORD;
 
 VirtualAlloc :: fn (
 	lpAddress        : LPVOID,
 	dwSize           : SIZE_T,
 	flAllocationType : DWORD,
 	flProtect        : DWORD
-) -> LPVOID;
+): LPVOID;
 
 GetModuleHandleA :: fn (
 	lpModuleName : LPCSTR
-) -> HMODULE;
+): HMODULE;
 
 ExitProcess :: fn (ret: u32);
 
@@ -273,14 +273,14 @@ ExitProcess :: fn (ret: u32);
 
 RegisterClassExA :: fn (
 	unnamedParam1 : *WNDCLASSEXA
-) -> ATOM;
+): ATOM;
 
 DefWindowProcA :: fn (
 	hWnd   : HWND,
 	Msg    : UINT,
 	wParam : WPARAM,
 	lParam : LPARAM 
-) -> LRESULT ;
+): LRESULT ;
 
 CreateWindowExA :: fn (
 	dwExStyle    : DWORD,
@@ -295,7 +295,7 @@ CreateWindowExA :: fn (
 	hMenu        : HMENU,
 	hInstance    : HINSTANCE,
 	lpParam      : LPVOID
-) -> HWND;
+): HWND;
 
 PeekMessageA :: fn (
 	lpMsg         : LPMSG,
@@ -303,15 +303,15 @@ PeekMessageA :: fn (
 	wMsgFilterMin : UINT, 
 	wMsgFilterMax : UINT, 
 	wRemoveMsg    : UINT 
-) -> BOOL;
+): BOOL;
 
 TranslateMessage :: fn (
 	lpMsg : *MSG
-) -> BOOL;
+): BOOL;
 
 DispatchMessageA :: fn (
 	lpMsg : *MSG
-) -> LRESULT;
+): LRESULT;
 
 PostQuitMessage :: fn (
   nExitCode : s32
@@ -320,8 +320,8 @@ PostQuitMessage :: fn (
 LoadCursorA :: fn (
   hInstance    : HINSTANCE,
   lpCursorName : LPCSTR
-) -> HCURSOR;
+): HCURSOR;
 
 GetDC :: fn (
   hWnd : HWND
-) -> HDC;
+): HDC;

@@ -65,6 +65,7 @@ e(typeof) \
 e(print) \
 e(import) \
 e(autocast) \
+e(defer) \
 
 enum AstKind {
 #define e(name) Ast_ ## name,
@@ -81,14 +82,16 @@ struct AstDefinition;
 struct AstLambda;
 struct AstStruct;
 struct AstLiteral;
+struct AstDefer;
 
 struct Scope {
+	AstNode *node = 0;
 	Scope *parent = 0;
 	u32 level = 0;
 	List<Scope *> children;
 	List<AstStatement *> statements;
 	HashMap<Span<utf8>, List<AstDefinition *>> definitions; // multiple definitions for a single name in case of function overloading
-	AstNode *node = 0;
+	List<AstDefer *> bytecode_defers;
 
 	void append(Scope &that) {
 		children.add(that.children);
@@ -264,7 +267,7 @@ struct AstLambda : AstExpression {
 	// For bytecode generation
 
 	s64 offset_accumulator = 0;
-	s64 parameters_size = 0; // Sum of (parameters' size ceiled to 8 byte boundary)
+	s64 parameters_size = 0; // Sum of (parameters' size ceiled to context.stack_word_size)
 	struct ReturnInfo {
 		Instruction *jmp;
 		s64 index;
@@ -467,6 +470,15 @@ struct AstImport : AstExpression {
 	Scope *scope = 0;
 };
 
+struct AstDefer : AstStatement {
+	AstDefer() {
+		kind = Ast_defer;
+		scope.node = this;
+	}
+
+	Scope scope;
+};
+
 extern AstStruct type_type; // These can be referenced by user programmer
 extern AstStruct type_void;
 extern AstStruct type_bool;
@@ -484,10 +496,11 @@ extern AstStruct type_string;
 extern AstStruct type_noinit; // These are special, user can't use them directly. typeof'ing them should do what? i don't know. TODO
 extern AstStruct type_unsized_integer;
 extern AstStruct type_unsized_float;
-extern AstStruct type_autocast;
 // inline constexpr u32 built_in_struct_count = 14;
 
 extern AstUnaryOperator type_pointer_to_void;
+extern AstStruct *type_default_signed_integer;
+extern AstStruct *type_default_unsigned_integer;
 extern AstStruct *type_default_integer;
 extern AstStruct *type_default_float;
 
@@ -590,7 +603,7 @@ inline s64 get_size(AstExpression *type) {
 		case Ast_unary_operator: {
 			auto unop = (AstUnaryOperator *)type;
 			switch (unop->operation) {
-				case '*': return 8;
+				case '*': return context.stack_word_size;
 				default: invalid_code_path();
 			}
 		}
@@ -603,7 +616,7 @@ inline s64 get_size(AstExpression *type) {
 			return get_size(subscript->expression) * (s64)count.value();
 		}
 		case Ast_lambda: {
-			return 8;
+			return context.stack_word_size;
 		}
 		case Ast_typeof: {
 			auto typeof = (AstTypeof *)type;
@@ -668,3 +681,4 @@ List<AstExpression **> get_arguments_addresses(AstCall *call);
 List<AstExpression *> get_arguments(AstCall *call);
 
 bool is_sized_array(AstExpression *type);
+bool same_argument_and_return_types(AstLambda *a, AstLambda *b);

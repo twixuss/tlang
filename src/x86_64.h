@@ -2,7 +2,48 @@
 #include <ast.h>
 #include <bytecode.h>
 
-namespace x86 {
+namespace x86_64 {
+
+enum class Register64{rax,rbx,rcx,rdx,rsi,rdi,rsp,rbp, r8, r9, r10, r11, r12, r13, r14, r15 };
+enum class Register32{eax,ebx,ecx,edx,esi,edi,esp,ebp, r8d,r9d,r10d,r11d,r12d,r13d,r14d,r15d};
+enum class Register16{ ax, bx, cx, dx, si, di, sp, bp, r8w,r9w,r10w,r11w,r12w,r13w,r14w,r15w};
+enum class Register8 { al, bl, cl, dl, sil,dil,spl,bpl,r8b,r9b,r10b,r11b,r12b,r13b,r14b,r15b};
+
+// Microsoft 64 bit calling convention - saved registers
+// -------------------------------------
+// | reg | volatile | used in bytecode |
+// -------------------------------------
+// | rax |    +     |                  |
+// | rbx |          |                  | used for bunch of bytecode instructions, for example to save rdx in div/idiv, or for pushing/popping floats
+// | rcx |    +     | +                |
+// | rdx |    +     | +                |
+// | rsi |          |                  |
+// | rdi |          |                  |
+// | rsp |          | +                |
+// | rbp |          | +                |
+// | r8  |    +     | +                |
+// | r9  |    +     | +                |
+// | r10 |    +     |                  |
+// | r11 |    +     |                  |
+// | r12 |          | +                |
+// | r13 |          | +                |
+// | r14 |          | +                |
+// | r15 |          | +                |
+// -------------------------------------
+
+inline static constexpr Register64 stdcall_int_registers[] {
+	Register64::rcx,
+	Register64::rdx,
+	Register64::r8,
+	Register64::r9,
+};
+
+inline static constexpr XRegister stdcall_float_registers[] {
+	XRegister::x0,
+	XRegister::x1,
+	XRegister::x2,
+	XRegister::x3,
+};
 
 static Span<utf8> cmov_string(Comparison c) {
 	using enum Comparison;
@@ -46,11 +87,6 @@ static Span<utf8> cmpu_string(Comparison c) {
 	return {};
 }
 
-enum class Register64{rax,rbx,rcx,rdx,rsi,rdi,rsp,rbp, r8, r9, r10, r11, r12, r13, r14, r15 };
-enum class Register32{eax,ebx,ecx,edx,esi,edi,esp,ebp, r8d,r9d,r10d,r11d,r12d,r13d,r14d,r15d};
-enum class Register16{ ax, bx, cx, dx, si, di, sp, bp, r8w,r9w,r10w,r11w,r12w,r13w,r14w,r15w};
-enum class Register8 { al, bl, cl, dl, sil,dil,spl,bpl,r8b,r9b,r10b,r11b,r12b,r13b,r14b,r15b};
-
 #define C(x) case x: return u8#x##s
 
 static Span<utf8> as_string(Register64 r){using enum Register64;switch(r){C(rax);C(rbx);C(rcx);C(rdx);C(rsi );C(rdi );C(rsp );C(rbp );C(r8 );C(r9 );C(r10 );C(r11 );C(r12 );C(r13 );C(r14 );C(r15 );}invalid_code_path();return{};}
@@ -59,34 +95,6 @@ static Span<utf8> as_string(Register16 r){using enum Register16;switch(r){C( ax)
 static Span<utf8> as_string(Register8  r){using enum Register8 ;switch(r){C( al);C( bl);C( cl);C( dl);C( sil);C( dil);C( spl);C( bpl);C(r8b);C(r9b);C(r10b);C(r11b);C(r12b);C(r13b);C(r14b);C(r15b);}invalid_code_path();return{};}
 
 #undef C
-
-static umm append(StringBuilder&builder,Register64 r){return append(builder,as_string(r));}
-static umm append(StringBuilder&builder,Register32 r){return append(builder,as_string(r));}
-static umm append(StringBuilder&builder,Register16 r){return append(builder,as_string(r));}
-static umm append(StringBuilder&builder,Register8  r){return append(builder,as_string(r));}
-
-
-// Microsoft 64 bit calling convention - saved registers
-// -------------------------------------
-// | reg | volatile | used in bytecode |
-// -------------------------------------
-// | rax |    +     |                  |
-// | rbx |          |                  | used for bunch of bytecode instructions, for example to save rdx in div/idiv, or for pushing/popping floats
-// | rcx |    +     | +                |
-// | rdx |    +     | +                |
-// | rsi |          |                  |
-// | rdi |          |                  |
-// | rsp |          | +                |
-// | rbp |          | +                |
-// | r8  |    +     | +                |
-// | r9  |    +     | +                |
-// | r10 |    +     |                  |
-// | r11 |    +     |                  |
-// | r12 |          | +                |
-// | r13 |          | +                |
-// | r14 |          | +                |
-// | r15 |          | +                |
-// -------------------------------------
 
 #define REGISTER_MAP \
 	C(r0, rcx) \
@@ -97,6 +105,7 @@ static umm append(StringBuilder&builder,Register8  r){return append(builder,as_s
 	C(r5, r13) \
 	C(r6, r14) \
 	C(r7, r15) \
+	C(r8, rax) \
 	C(rs, rsp) \
 	C(rb, rbp)
 
@@ -123,32 +132,26 @@ inline static constexpr Register to_bc_register(Register64 r) {
 }
 
 #undef C
-
-static umm append(StringBuilder &builder, Register r) {
-	return append(builder, to_x86_register(r));
 }
 
-inline static constexpr Register64 part8b(Register64 r) { return r; }
-inline static constexpr Register32 part4b(Register64 r) { return (Register32)r; }
-inline static constexpr Register16 part2b(Register64 r) { return (Register16)r; }
-inline static constexpr Register8  part1b(Register64 r) { return (Register8 )r; }
+namespace tl {
 
-inline static constexpr Register64 part8b(Register r) { return part8b(to_x86_register(r)); }
-inline static constexpr Register32 part4b(Register r) { return part4b(to_x86_register(r)); }
-inline static constexpr Register16 part2b(Register r) { return part2b(to_x86_register(r)); }
-inline static constexpr Register8  part1b(Register r) { return part1b(to_x86_register(r)); }
+inline umm append(StringBuilder&builder,x86_64::Register64 r){return append(builder,as_string(r));}
+inline umm append(StringBuilder&builder,x86_64::Register32 r){return append(builder,as_string(r));}
+inline umm append(StringBuilder&builder,x86_64::Register16 r){return append(builder,as_string(r));}
+inline umm append(StringBuilder&builder,x86_64::Register8  r){return append(builder,as_string(r));}
 
-
-static umm append(StringBuilder &builder, Address a) {
+inline umm append(StringBuilder &builder, Address a) {
+	using namespace x86_64;
 	umm result = 0;
 	result += append(builder, '[');
-	result += append(builder, a.base);
+	result += append(builder, to_x86_register(a.base));
 	if (a.r1_scale) {
 		if (a.r2_scale) {
 			invalid_code_path("not implemented");
 		} else {
 			result += append(builder, '+');
-			result += append(builder, a.r1);
+			result += append(builder, to_x86_register(a.r1));
 			result += append(builder, '*');
 			result += append(builder, a.r1_scale);
 			if (a.c) {
@@ -170,17 +173,35 @@ static umm append(StringBuilder &builder, Address a) {
 	return result;
 }
 
-static umm append(StringBuilder &builder, FRegister r) {
-	using enum FRegister;
+inline umm append(StringBuilder &builder, Register r) {
+	using namespace x86_64;
+	return append(builder, to_x86_register(r));
+}
+inline umm append(StringBuilder &builder, XRegister r) {
+	using enum XRegister;
 	switch (r) {
-		case f0: return append(builder, "xmm0");
-		case f1: return append(builder, "xmm1");
-		case f2: return append(builder, "xmm2");
-		case f3: return append(builder, "xmm3");
+		case x0: return append(builder, "xmm0");
+		case x1: return append(builder, "xmm1");
+		case x2: return append(builder, "xmm2");
+		case x3: return append(builder, "xmm3");
 	}
 	invalid_code_path();
 	return {};
 }
+}
+
+namespace x86_64 {
+
+inline static constexpr Register64 part8b(Register64 r) { return r; }
+inline static constexpr Register32 part4b(Register64 r) { return (Register32)r; }
+inline static constexpr Register16 part2b(Register64 r) { return (Register16)r; }
+inline static constexpr Register8  part1b(Register64 r) { return (Register8 )r; }
+
+inline static constexpr Register64 part8b(Register r) { return part8b(to_x86_register(r)); }
+inline static constexpr Register32 part4b(Register r) { return part4b(to_x86_register(r)); }
+inline static constexpr Register16 part2b(Register r) { return part2b(to_x86_register(r)); }
+inline static constexpr Register8  part1b(Register r) { return part1b(to_x86_register(r)); }
+
 
 inline auto instruction_address(s64 val) { return FormatInt<s64>{.value=val, .radix=62}; }
 inline void prepare_stdcall(AstLambda *lambda) {
@@ -536,6 +557,9 @@ inline void append_instruction(StringBuilder &builder, s64 idx, Instruction i) {
 #endif
 		}
 
+		case call_r:
+			append_format(builder, "call {}", i.call_r.s);
+			break;
 		case call_m:
 			append_format(builder, "call qword {}", i.call_m.s);
 			break;
@@ -558,9 +582,17 @@ inline void append_instruction(StringBuilder &builder, s64 idx, Instruction i) {
 		case cvt_f64_s64:
 			append(builder, "cvtsd2si rax, [rsp]\nmov [rsp], rax");
 			break;
+		case cvt_s64_f64:
+			append(builder, "cvtsi2sd xmm7, [rsp]\nmovq [rsp], xmm7");
+			break;
 
 		case mov_fr: append_format(builder, "movq {}, {}", i.mov_fr.d, i.mov_fr.s); break;
 	    case mov_rf: append_format(builder, "movq {}, {}", i.mov_rf.d, i.mov_rf.s); break;
+
+		case mov1_xm: append_format(builder, "movb {}, byte {}", i.mov1_xm.d, i.mov1_xm.s); break;
+		case mov2_xm: append_format(builder, "movw {}, word {}", i.mov2_xm.d, i.mov2_xm.s); break;
+		case mov4_xm: append_format(builder, "movd {}, dword {}", i.mov4_xm.d, i.mov4_xm.s); break;
+		case mov8_xm: append_format(builder, "movq {}, qword {}", i.mov8_xm.d, i.mov8_xm.s); break;
 
 	    case add_f32_f32: append_format(builder, "addss {}, {}", i.add_f32_f32.d, i.add_f32_f32.s); break;
 	    case sub_f32_f32: append_format(builder, "subss {}, {}", i.sub_f32_f32.d, i.sub_f32_f32.s); break;

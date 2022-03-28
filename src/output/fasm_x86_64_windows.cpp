@@ -2,7 +2,9 @@
 #pragma warning(disable: 4702) // unreachable
 #include <bytecode.h>
 #include <ast.h>
-#include "x86_64.h"
+#include "../x86_64.h"
+
+using namespace x86_64;
 
 static void append_instructions(CompilerContext &context, StringBuilder &builder, List<Instruction> instructions) {
 	timed_function(context.profiler);
@@ -16,15 +18,7 @@ static void append_instructions(CompilerContext &context, StringBuilder &builder
 		// Override some of default instruction printing
 		switch (i.kind) {
 			using enum InstructionKind;
-			case push_e: append_format(builder, "push [{}]", i.push_e.s); break;
 			case mov_re: append_format(builder, "mov {}, [{}]", i.mov_re.d, i.mov_re.s); break;
-			case stdcall_string: {
-				move_stdcall_registers();
-				append_format(builder, "call [{}]", i.stdcall_string.string);
-				break;
-			}
-			case call_string:   invalid_code_path(); append_format(builder, "call [{}]", i.call_string.string); break;
-
 			default: append_instruction(builder, idx, i); break;
 		}
 #if BYTECODE_DEBUG

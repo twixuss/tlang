@@ -28,9 +28,10 @@ AstStruct type_noinit;
 AstStruct type_unsized_integer;
 AstStruct type_unsized_float;
 AstStruct type_void;
+AstStruct *type_default_signed_integer;
+AstStruct *type_default_unsigned_integer;
 AstStruct *type_default_integer;
 AstStruct *type_default_float;
-AstStruct type_autocast;
 AstUnaryOperator type_pointer_to_void;
 
 bool struct_is_built_in(AstStruct *type) {
@@ -118,7 +119,7 @@ void append_type(StringBuilder &builder, AstExpression *type, bool silent_error)
 		assert(x); \
 	}
 
-	ensure(is_type(type));
+	// ensure(is_type(type));
 	switch (type->kind) {
 		case Ast_struct: {
 			auto Struct = (AstStruct *)type;
@@ -179,7 +180,7 @@ List<utf8> type_to_string(AstExpression *type, bool silent_error) {
 	StringBuilder builder;
 	append_type(builder, type, silent_error);
 	auto d = direct(type);
-	if (d != type) {
+	if (d->location != type->location) {
 		append(builder, " (aka "s);
 		append_type(builder, d, silent_error);
 		append(builder, ')');
@@ -229,6 +230,20 @@ s64 get_align(AstExpression *type) {
 	}
 }
 
+bool same_argument_and_return_types(AstLambda *a, AstLambda *b) {
+	if (a->parameters.count != b->parameters.count)
+		return false;
+
+	if (!types_match(a->return_parameter->type, b->return_parameter->type))
+		return false;
+
+	for (umm i = 0; i < a->parameters.count; ++i) {
+		if (!types_match(a->parameters[i]->type, b->parameters[i]->type))
+			return false;
+	}
+	return true;
+}
+
 bool types_match_ns(AstExpression *a, AstExpression *b) {
 	while (a->kind == Ast_identifier) {
 		a = ((AstIdentifier *)a)->definition->expression;
@@ -264,16 +279,9 @@ bool types_match_ns(AstExpression *a, AstExpression *b) {
 	if (a->kind == Ast_lambda) {
 		auto al = (AstLambda *)a;
 		auto bl = (AstLambda *)b;
-		if (al->parameters.count != bl->parameters.count)
-			return false;
 
-		if (!types_match(al->return_parameter->type, bl->return_parameter->type))
+		if (!same_argument_and_return_types(al, bl))
 			return false;
-
-		for (umm i = 0; i < al->parameters.count; ++i) {
-			if (!types_match(al->parameters[i]->type, bl->parameters[i]->type))
-				return false;
-		}
 
 		if (al->convention != bl->convention)
 			return false;

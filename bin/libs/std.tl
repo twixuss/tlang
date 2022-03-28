@@ -1,6 +1,6 @@
 import "windows.tl"
 
-print_string :: fn (str : string) {
+print :: fn (str : string) {
     WriteConsoleA(GetStdHandle(STD_OUTPUT_HANDLE), str.data, str.count as u32, null, null);
 }
 
@@ -8,7 +8,7 @@ print_char :: fn (char : u8) {
     WriteConsoleA(GetStdHandle(STD_OUTPUT_HANDLE), &char as *void, 1, null, null);
 }
 
-print_int :: fn (_val : int) {
+print :: fn (_val : int) {
     val := _val;
     if val == 0 {
         print_char('0');
@@ -68,6 +68,6 @@ print_hex :: fn (_val : int) {
     }
 }
 
-merge :: fn (a : u8, b : u8) -> u16 {
-	return (a << 8) | b;
+merge :: fn (a : u8, b : u8): u16 {
+	return (a as u16 << 8) | b;
 }

@@ -1,7 +1,22 @@
 import "std.tl"
 import "opengl.tl"
 
-main :: fn () -> int {
+dc: HDC;
+
+draw :: fn () {
+    glColor3f(1, 1, 1);
+    glBegin(GL_TRIANGLES);
+
+    glVertex2f(-0.5, -0.5);
+    glVertex2f( 0.0,  0.5);
+    glVertex2f( 0.5, -0.5);
+
+    glEnd();
+
+    SwapBuffers(dc);
+}
+
+main :: fn (): int {
 	class_name := "window_class\0".data;
 	window_name := "hello window\0".data;
 
@@ -10,24 +25,28 @@ main :: fn () -> int {
 	wc : WNDCLASSEXA;
 	wc.hInstance = hInstance;
 	wc.cbSize = #sizeof WNDCLASSEXA;
-	wc.lpfnWndProc = fn #stdcall (hwnd : HWND, uMsg : UINT, wParam : WPARAM, lParam : LPARAM) -> LRESULT {
+	wc.lpfnWndProc = fn (hwnd: HWND, uMsg: UINT, wParam: WPARAM, lParam: LPARAM): LRESULT {
 		if uMsg == WM_DESTROY {
 			PostQuitMessage(0);
-			return 0;
-		}
-		return DefWindowProcA(hwnd, uMsg, wParam, lParam);
+		} else if uMsg == WM_SIZE {
+            glViewport(0, 0, (lParam & 0xffff) as s32, ((lParam >> 16) & 0xffff) as s32);
+            draw();
+        } else {
+            return DefWindowProcA(hwnd, uMsg, wParam, lParam);
+        }
+        return 0;
 	};
 	wc.lpszClassName = class_name;
 	wc.hCursor = LoadCursorA(null, IDC_ARROW);
     
-    print_string(if RegisterClassExA(&wc) != 0 then "Class created!\n" else "Class Failed!\n");
+    print(if RegisterClassExA(&wc) != 0 then "Class created!\n" else "Class Failed!\n");
 	
 	window := CreateWindowExA(
 		0, class_name, window_name, WS_OVERLAPPEDWINDOW | WS_VISIBLE, 
 		CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, null, null, hInstance, null
 	);
 	
-	print_string(if window != null then "Window Success!\n" else "Window Fail!\n");
+	print(if window != null then "Window Success!\n" else "Window Fail!\n");
 	
 	dp : PIXELFORMATDESCRIPTOR;
 	dp.nSize = #sizeof PIXELFORMATDESCRIPTOR;
@@ -40,13 +59,13 @@ main :: fn () -> int {
 	dp.iPixelType = PFD_TYPE_RGBA;
 	dp.iLayerType = PFD_MAIN_PLANE;
 	
-    dc := GetDC(window);
+    dc = GetDC(window);
     
     index := ChoosePixelFormat(dc, &dp);
 	if index == 0 {
 		error := GetLastError();
-		print_string("ChoosePixelFormat failed with code ");
-		print_int   (error);
+		print("ChoosePixelFormat failed with code ");
+		print(error);
 		return 1;
 	}
     
@@ -57,7 +76,7 @@ main :: fn () -> int {
 
 	context := wglCreateContext(dc);
 	if wglMakeCurrent(dc, context) != 1 {
-		print_string("wglMakeCurrent failed");
+		print("wglMakeCurrent failed");
 		return 1;
 	}
     
@@ -70,6 +89,6 @@ main :: fn () -> int {
 			DispatchMessageA(&msg);
 		}
         
-        SwapBuffers(dc);
+        draw();
 	}
 }

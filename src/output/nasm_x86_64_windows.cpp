@@ -2,7 +2,9 @@
 #pragma warning(disable: 4702) // unreachable
 #include <bytecode.h>
 #include <ast.h>
-#include "x86_64.h"
+#include "../x86_64.h"
+
+using namespace x86_64;
 
 static Span<utf8> locate_msvc() {
 	Span<utf8> path = u8"C:\\Program Files (x86)\\Microsoft Visual Studio\\"s;
@@ -104,7 +106,19 @@ static Span<utf8> locate_wkits() {
 static void append_instructions(CompilerContext &context, StringBuilder &builder, List<Instruction> instructions) {
 	timed_function(context.profiler);
 
-	append_format(builder, "section .text\nglobal main\nmain:\npush 0\ncall .{}\npop rcx\nand rsp, -16\nsub rsp, 16\ncall ExitProcess\nret\n", instruction_address(context.main_lambda->location_in_bytecode));
+	append_format(builder,
+		"section .text\n"
+		"global main\n"
+		"main:\n"
+		"and rsp, -16\n"
+		"push 0\n"
+		"push 0\n"
+		"call .{}\n"
+		"mov rcx, [rsp]\n"
+		"call ExitProcess\n"
+		"ret\n",
+		instruction_address(context.main_lambda->location_in_bytecode)
+	);
 
 	s64 idx = 0;
 	for (auto i : instructions) {
@@ -112,15 +126,7 @@ static void append_instructions(CompilerContext &context, StringBuilder &builder
 			append_format(builder, ".{}: ", instruction_address(idx));
 		switch (i.kind) {
 			using enum InstructionKind;
-			case push_e: append_format(builder, "mov rax, {}\npush rax"            , i.push_e.s); break;
-			case mov_re: append_format(builder, "mov {}, {}"          , i.mov_re.d, i.mov_re.s); break;
-			case call_string:   append_format(builder, "call {}", i.call_string.string); break;
-			case stdcall_string: {
-				move_stdcall_registers();
-				append_format(builder, "call {}", i.stdcall_string.string);
-				break;
-			}
-
+			case mov_re: append_format(builder, "mov {}, {}", i.mov_re.d, i.mov_re.s); break;
 			default: append_instruction(builder, idx, i); break;
 		}
 #if BYTECODE_DEBUG
@@ -250,4 +256,10 @@ DECLARE_OUTPUT_BUILDER {
 		print("Build succeeded\n");
 	}
 
+}
+
+DECLARE_TARGET_INFORMATION_GETTER {
+	context.stack_word_size = 8;
+	context.register_size = 8;
+	context.general_purpose_register_count = 16;
 }
