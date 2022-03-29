@@ -1,10 +1,13 @@
 #pragma once
+
+#define TRACK_ALLOCATIONS 1
+
 #ifdef NDEBUG
 #define TL_DEBUG 0
 #else
 #define TL_DEBUG 1
 #endif
-#define TL_PARENT_SOURCE_LOCATION 0
+#define TL_PARENT_SOURCE_LOCATION TRACK_ALLOCATIONS
 #define TL_ENABLE_PROFILER 0
 #include <source_location>
 #include <cstring>

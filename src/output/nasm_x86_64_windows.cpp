@@ -103,7 +103,7 @@ static Span<utf8> locate_wkits() {
 	return path;
 }
 
-static void append_instructions(CompilerContext &context, StringBuilder &builder, List<Instruction> instructions) {
+static void append_instructions(CompilerContext &context, StringBuilder &builder, InstructionList instructions) {
 	timed_function(context.profiler);
 
 	append_format(builder,
@@ -122,11 +122,11 @@ static void append_instructions(CompilerContext &context, StringBuilder &builder
 
 	s64 idx = 0;
 	for (auto i : instructions) {
-		if (i.flags & InstructionFlags::labeled)
+		if (i.labeled)
 			append_format(builder, ".{}: ", instruction_address(idx));
 		switch (i.kind) {
 			using enum InstructionKind;
-			case mov_re: append_format(builder, "mov {}, {}", i.mov_re.d, i.mov_re.s); break;
+			case mov_re: append_format(builder, "mov {}, {}", i.mov_re.d, Span(i.mov_re.s_data, i.mov_re.s_count)); break;
 			default: append_instruction(builder, idx, i); break;
 		}
 #if BYTECODE_DEBUG
@@ -220,7 +220,7 @@ DECLARE_OUTPUT_BUILDER {
 
 		auto bat_path = to_pathchars(concatenate(context.executable_directory, u8"\\nasm_build.bat"s));
 		write_entire_file(bat_path, as_bytes(to_string(bat_builder)));
-
+#if 1
 		timed_block(context.profiler, "nasm + link"s);
 
 		auto process = start_process(bat_path);
@@ -253,6 +253,7 @@ DECLARE_OUTPUT_BUILDER {
 			print(Print_error, "Build command failed\n");
 			return;
 		}
+#endif
 		print("Build succeeded\n");
 	}
 

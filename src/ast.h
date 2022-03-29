@@ -2,6 +2,8 @@
 #include <common.h>
 #include <token.h>
 #include <tl/big_int.h>
+#include <tl/list32.h>
+#include <tl/span32.h>
 
 // TODO: maybe this can be merged into tl
 // This structure allows to store data either in-place or reference it somewhere else
@@ -67,7 +69,7 @@ e(import) \
 e(autocast) \
 e(defer) \
 
-enum AstKind {
+enum AstKind : u8 {
 #define e(name) Ast_ ## name,
 	ENUMERATE_AST_KIND(e)
 #undef e
@@ -83,6 +85,39 @@ struct AstLambda;
 struct AstStruct;
 struct AstLiteral;
 struct AstDefer;
+
+template <class T>
+struct Ref {
+	inline static BlockList<T> storage;
+
+	u32 idx = -1;
+
+	Ref() = default;
+	Ref(T *val) {
+		umm idx = index_of(storage, val);
+		assert(idx <= max_value<u32>);
+		assert(idx < count_of(storage));
+		this->idx = (u32)idx;
+	}
+
+	Ref &operator=(T *ast) {
+		idx = index_of(storage, ast);
+		assert(idx < count_of(storage));
+		return *this;
+	}
+
+	T *operator->() {
+		return &storage[idx];
+	}
+	operator T*() {
+		return &storage[idx];
+	}
+
+	template <class U>
+	explicit operator U*() const {
+		return (U *)operator->();
+	}
+};
 
 struct Scope {
 	AstNode *node = 0;
@@ -106,9 +141,10 @@ extern s32 ast_node_uid_counter;
 
 struct AstNode {
 	AstKind kind = Ast_null;
+	Span32<utf8> location;
 	s32 uid = atomic_increment(&ast_node_uid_counter);
-	Span<utf8> location;
 };
+inline static constexpr auto sizeof_AstNode = sizeof AstNode;
 
 struct AstStatement : AstNode {
 };
@@ -128,7 +164,7 @@ struct AstExpressionStatement : AstStatement {
 };
 
 struct AstExpression : AstNode {
-	AstExpression *type = 0;
+	AstExpression *type = {};
 };
 
 enum class LiteralKind : u8 {
@@ -184,13 +220,12 @@ struct AstDefinition : AstStatement {
 	Scope *parent_scope = 0;
 
 	s64 offset_in_struct = INVALID_MEMBER_OFFSET;
+	s64 bytecode_offset = INVALID_DATA_OFFSET;
 
 	bool is_constant         : 1 = false;
 	bool is_parameter        : 1 = false;
 	bool built_in            : 1 = false;
 	bool is_return_parameter : 1 = false;
-
-	s64 bytecode_offset = INVALID_DATA_OFFSET;
 };
 
 struct AstReturn : AstStatement {
@@ -203,11 +238,17 @@ struct AstReturn : AstStatement {
 struct AstIdentifier : AstExpression {
 	AstIdentifier() { kind = Ast_identifier; }
 
-	AstDefinition *definition = 0;
-	List<AstDefinition *> possible_definitions;
+	Span32<utf8> name;
 
-	Span<utf8> name;
+	AstDefinition *definition = {};
+
+	List32<AstDefinition *> possible_definitions;
+
 };
+
+inline static constexpr auto sizeof_AstIdentifier = sizeof AstIdentifier;
+inline static constexpr auto sizeof_Span32 = sizeof Span32<AstIdentifier>;
+inline static constexpr auto sizeof_List32 = sizeof List32<AstIdentifier>;
 
 struct Instruction;
 
@@ -216,7 +257,7 @@ enum class ExternLanguage {
 	c,
 };
 
-enum class CallingConvention {
+enum class CallingConvention : u8 {
 	none,
 	tlang,
 	stdcall,
@@ -524,7 +565,7 @@ void my_deallocate(void *data, umm size);
 
 template <class T>
 T *new_ast(TL_LPC) {
-	return default_allocator.allocate<T>(TL_LAC);
+	return &Ref<T>::storage.add();
 }
 
 inline Optional<BigInt> get_constant_integer(AstExpression *expression) {

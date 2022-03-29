@@ -6,7 +6,7 @@
 
 using namespace x86_64;
 
-static void append_instructions(CompilerContext &context, StringBuilder &builder, List<Instruction> instructions) {
+static void append_instructions(CompilerContext &context, StringBuilder &builder, InstructionList instructions) {
 	timed_function(context.profiler);
 
 	append_format(builder, "section '.text' code readable executable\nmain:\npush 0\ncall .{}\npop rcx\nand rsp, -16\nsub rsp, 16\ncall [ExitProcess]\nret\n", instruction_address(context.main_lambda->location_in_bytecode));
@@ -18,7 +18,7 @@ static void append_instructions(CompilerContext &context, StringBuilder &builder
 		// Override some of default instruction printing
 		switch (i.kind) {
 			using enum InstructionKind;
-			case mov_re: append_format(builder, "mov {}, [{}]", i.mov_re.d, i.mov_re.s); break;
+			case mov_re: append_format(builder, "mov {}, [{}]", i.mov_re.d, Span(i.mov_re.s_data, i.mov_re.s_count)); break;
 			default: append_instruction(builder, idx, i); break;
 		}
 #if BYTECODE_DEBUG

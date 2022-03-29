@@ -35,11 +35,6 @@
     <ClInclude Include="src\x86.h" />
     <ClInclude Include="src\x86_64.h" />
   </ItemGroup>
-  <ItemGroup>
-    <ProjectReference Include="nasm_x86_64_windows.vcxproj">
-      <Project>{1af0bd2e-16b1-4c3d-ab7e-17a7c29e1787}</Project>
-    </ProjectReference>
-  </ItemGroup>
   <PropertyGroup Label="Globals">
     <VCProjectVersion>16.0</VCProjectVersion>
     <Keyword>Win32Proj</Keyword>

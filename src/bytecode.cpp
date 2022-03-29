@@ -2,8 +2,6 @@
 #include "ast.h"
 #include "x86_64.h"
 
-using InstructionBuilder = StaticBlockList<Instruction, 4096>;
-
 struct Relocation {
 	umm instruction_index;
 	AstLambda *lambda;
@@ -78,8 +76,7 @@ struct RegisterSet {
 };
 
 struct LambdaState {
-	InstructionBuilder body_builder;
-	// TODO: This could be fixed size
+	InstructionList body_builder;
 	RegisterSet available_registers;
 	RegistersState register_state = {};
 	StackState stack_state = {};
@@ -96,7 +93,7 @@ struct LambdaState {
 };
 
 struct Converter {
-	InstructionBuilder builder;
+	InstructionList builder;
 	StringBuilder constant_data_builder;
 	StringBuilder data_builder;
 	umm zero_data_size = 0;
@@ -748,10 +745,11 @@ static Optional<Register> load_address_of(Optional<Register> destination, Conver
 				if (destination) I(mov_rt, destination.value_unchecked(), lambda->location_in_bytecode);
 				else             I(push_t, lambda->location_in_bytecode);
 			} else {
+				assert((s64)(s32)lambda->definition->name.count == (s64)lambda->definition->name.count);
 				if (destination) {
-					I(mov_re, destination.value_unchecked(), lambda->definition->name);
+					I(mov_re, destination.value_unchecked(), lambda->definition->name.data, (s32)lambda->definition->name.count);
 				} else {
-					I(mov_re, r0, lambda->definition->name);
+					I(mov_re, r0, lambda->definition->name.data, (s32)lambda->definition->name.count);
 					I(push_r, r0);
 				}
 			}
@@ -893,7 +891,13 @@ static Optional<Register> load_address_of(Optional<Register> destination, Conver
 						Address a = {};
 						a.base = destination.value_unchecked();
 						a.r1 = temp_r;
-						a.r1_scale = element_size;
+						switch (element_size) {
+							case 1: a.r1_scale_index = 1; break;
+							case 2: a.r1_scale_index = 2; break;
+							case 4: a.r1_scale_index = 3; break;
+							case 8: a.r1_scale_index = 4; break;
+							default: invalid_code_path();
+						}
 						I(lea, destination.value_unchecked(), a);
 					} else {
 						I(mul_rc, temp_r, element_size);
@@ -1102,10 +1106,10 @@ static void append_memory_copy_a(Converter &conv, Address dst, Address src, s64 
 	static constexpr auto intermediary = r0;
 
 	assert(dst.base != intermediary);
-	if (dst.r1_scale != 0) assert(dst.r1 != intermediary);
+	if (dst.r1_scale_index != 0) assert(dst.r1 != intermediary);
 	if (dst.r2_scale != 0) assert(dst.r2 != intermediary);
 	assert(src.base != intermediary);
-	if (src.r1_scale != 0) assert(src.r1 != intermediary);
+	if (src.r1_scale_index != 0) assert(src.r1 != intermediary);
 	if (src.r2_scale != 0) assert(src.r2 != intermediary);
 
 	switch (bytes_to_copy) {
@@ -1171,7 +1175,8 @@ static void push_zeros(Converter &conv, s64 size) {
 	auto const threshold = 8*8;
 	if (size > threshold) {
 		I(sub_rc, rs, size);
-		I(set_mcc, rs, 0, size);
+		assert((s64)(s32)size == size);
+		I(set_mcc, rs, 0, (s32)size);
 	} else {
 		auto remaining_bytes = size;
 		while (remaining_bytes > 0) {
@@ -2015,7 +2020,7 @@ static void append(Converter &conv, AstIf *If) {
 
 	// :DUMMYNOOP:
 	// also acts as optimization barrier
-	II(noop)->flags |= InstructionFlags::labeled;
+	II(noop)->labeled = true;
 
 	append(conv, If->false_scope);
 
@@ -2029,7 +2034,7 @@ static void append(Converter &conv, AstIf *If) {
 	// :DUMMYNOOP:
 	// Next instruction after else block must be labeled,
 	// but we don't have it yet. So we add a noop so we can label it.
-	II(noop)->flags |= InstructionFlags::labeled;
+	II(noop)->labeled = true;
 
 	jz->offset = false_start - true_start + 1;
 	jmp->offset = false_end - false_start + 1;
@@ -2054,12 +2059,12 @@ static void append(Converter &conv, AstWhile *While) {
 	auto count_after_body = count_of(conv.ls->body_builder);
 	I(jmp, .offset=0)->offset = (s64)count_before_condition - (s64)count_after_body;
 
-	conv.ls->body_builder[count_before_condition].flags |= InstructionFlags::labeled;
+	conv.ls->body_builder[count_before_condition].labeled = true;
 
 	// :DUMMYNOOP:
 	// Next instruction after else block must be labeled,
 	// but we don't have it yet. So we add a noop so we can label it.
-	II(noop)->flags |= InstructionFlags::labeled;
+	II(noop)->labeled = true;
 
 
 	jz->offset = (s64)count_after_body - (s64)count_after_condition + 2;
@@ -2212,7 +2217,13 @@ static void append(Converter &conv, AstSubscript *subscript) {
 		Address a = {};
 		a.base = base_register;
 		a.r1 = index_register;
-		a.r1_scale = element_size;
+		switch (element_size) {
+			case 1: a.r1_scale_index = 1; break;
+			case 2: a.r1_scale_index = 2; break;
+			case 4: a.r1_scale_index = 3; break;
+			case 8: a.r1_scale_index = 4; break;
+			default: invalid_code_path();
+		}
 		I(push_m, a);
 	} else {
 		append(conv, subscript->index_expression);
@@ -2397,7 +2408,7 @@ static void append(Converter &conv, AstLambda *lambda, bool push_address) {
 		defer { conv.lambda = old_lambda; };
 
 		lambda->first_instruction = &conv.ls->body_builder.add(MI(noop));
-		lambda->first_instruction->flags |= InstructionFlags::labeled;
+		lambda->first_instruction->labeled = true;
 
 		if (lambda->definition) {
 			push_comment(conv, format(u8"lambda {}", lambda->definition->name));
@@ -2490,7 +2501,7 @@ static void append(Converter &conv, AstLambda *lambda, bool push_address) {
 			}
 		}
 
-		II(mov_rr, rs, rb)->flags |= InstructionFlags::labeled;
+		II(mov_rr, rs, rb)->labeled = true;
 		I(pop_r, rb);
 
 		if (lambda->convention == CallingConvention::stdcall) {
@@ -2536,12 +2547,12 @@ static void append(Converter &conv, AstIfx *If) {
 
 	auto count_after_false = count_of(conv.ls->body_builder);
 
-	conv.ls->body_builder[count_after_true].flags |= InstructionFlags::labeled;
+	conv.ls->body_builder[count_after_true].labeled = true;
 
 	// :DUMMYNOOP:
 	// Next instruction after else block must be labeled,
 	// but we don't have it yet. So we add a noop so we can label it.
-	II(noop)->flags |= InstructionFlags::labeled;
+	II(noop)->labeled = true;
 
 	jz->offset = count_after_true - count_before_true + 1;
 	jmp->offset = count_after_false - count_after_true + 1;
@@ -2712,7 +2723,7 @@ void print_bytecode(List<Instruction> instructions) {
 }
 #endif
 
-void fix_relocations(List<Instruction> &instructions, List<Relocation> relocations) {
+void fix_relocations(InstructionList &instructions, List<Relocation> relocations) {
 	timed_function(context.profiler);
 	for (auto &r : relocations) {
 		instructions[r.instruction_index].call_c.constant = r.lambda->location_in_bytecode;
@@ -2736,7 +2747,7 @@ Bytecode build_bytecode() {
 		append(conv, statement);
 	});
 
-	result.instructions = to_list(conv.builder);
+	result.instructions = conv.builder;
 	result.constant_data = (List<u8>)to_string(conv.constant_data_builder);
 	result.data = (List<u8>)to_string(conv.data_builder);
 	result.zero_data_size = conv.zero_data_size;
@@ -2748,4 +2759,9 @@ Bytecode build_bytecode() {
 	// print_bytecode(result.instructions);
 
 	return result;
+
+	sizeof(Address);
+	sizeof(Instruction);
+	sizeof(Instruction::mov_re);
+	sizeof(Instruction::mov8_mc);
 }

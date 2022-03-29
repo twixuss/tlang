@@ -146,14 +146,14 @@ inline umm append(StringBuilder &builder, Address a) {
 	umm result = 0;
 	result += append(builder, '[');
 	result += append(builder, to_x86_register(a.base));
-	if (a.r1_scale) {
+	if (a.r1_scale_index) {
 		if (a.r2_scale) {
 			invalid_code_path("not implemented");
 		} else {
 			result += append(builder, '+');
 			result += append(builder, to_x86_register(a.r1));
 			result += append(builder, '*');
-			result += append(builder, a.r1_scale);
+			result += append(builder, lea_scales[a.r1_scale_index]);
 			if (a.c) {
 				result += append(builder, '+');
 				result += append(builder, a.c);

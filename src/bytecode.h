@@ -35,16 +35,26 @@ enum InstructionFlags : u8 {
 	labeled = 0x1,
 };
 
+inline static constexpr Array<u8, 5> lea_scales {
+	0, 1, 2, 4, 8
+};
+
 struct Address {
 	Register base = {};
 	Register r1 = {};
-	s64      r1_scale = {};
 	Register r2 = {};
-	bool     r2_scale = {};
-	s64      c = {};
+	// stored value | represented scale
+	// 0              0
+	// 1              1
+	// 2              2
+	// 3              4
+	// 4              8
+	u8 r1_scale_index : 3 = {};
+	u8 r2_scale : 1 = {}; // either 0 or 1
+	s32 c = {};
 
 	bool is(Register r) {
-		return base == r && !r1_scale && !r2_scale && !c;
+		return base == r && !r1_scale_index && !r2_scale && !c;
 	}
 
 	Address() = default;
@@ -52,12 +62,15 @@ struct Address {
 };
 
 inline Address operator+(Register r, s64 c) {
+	assert(c == (s64)(s32)c);
+
 	Address a;
 	a.base = r;
-	a.c = c;
+	a.c = (s32)c;
 	return a;
 }
 inline Address operator+(Address a, s64 c) {
+	assert((s64)(a.c + (s32)c) == ((s64)a.c + c));
 	a.c += c;
 	return a;
 }
@@ -267,6 +280,8 @@ enum class InstructionKind : u8 {
 // Make sure instruction count does not go over 256
 static_assert((int)InstructionKind::count >= 127);
 
+#pragma pack(push, 1)
+
 struct Instruction {
 	// put all the variants first to allow type punning from a variant back to `Instruction`
 	union {
@@ -318,7 +333,7 @@ struct Instruction {
 		struct { Register d; s64 s; } mov_rd;
 		struct { Register d; s64 s; } mov_ru;
 		struct { Register d; s64 s; } mov_rt;
-		struct { Register d; Span<utf8> s; } mov_re;
+		struct { Register d; utf8 *s_data; s32 s_count; } mov_re;
 
 
 		struct { Register  d; } pop_r;
@@ -416,7 +431,7 @@ struct Instruction {
 		struct { s64 size; } copyf_ssc;
 		struct { s64 size; } copyb_ssc;
 
-		struct { Register d; s64 s, size; } set_mcc;
+		struct { Register d; s32 s, size; } set_mcc;
 
 		struct { AstLambda *lambda; CallingConvention convention; } begin_lambda;
 		struct { AstLambda *lambda; CallingConvention convention; } end_lambda;
@@ -456,17 +471,21 @@ struct Instruction {
 		struct {} debug_break;
 	};
 	InstructionKind kind;
-	std::underlying_type_t<InstructionFlags> flags;
+	bool labeled : 1;
 #if BYTECODE_DEBUG
 	utf8 *comment;
 	u64 line;
 #endif
 };
 
+#pragma pack(pop)
+
 using ExternLibraries = HashMap<Span<utf8>, List<Span<utf8>>>;
 
+using InstructionList = BlockList<Instruction>;
+
 struct Bytecode {
-	List<Instruction> instructions;
+	InstructionList instructions;
 	List<u8> constant_data;
 	List<u8> data;
 	umm zero_data_size;

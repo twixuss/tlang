@@ -4,6 +4,6 @@
     <ClCompile Include="src\output\fasm_x86_64_windows.cpp" />
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="src\output\x86_64.h" />
+    <ClInclude Include="src\x86_64.h" />
   </ItemGroup>
 </Project>

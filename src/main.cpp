@@ -21,7 +21,6 @@
 #define YIELD_STATE state->coro
 #define yield(x) (_ReadWriteBarrier(), ::coro_yield(YIELD_STATE, (size_t)x))
 
-#define COUNT_ALLOCATIONS 0
 #define USE_SLABS 0
 
 struct Parser;
@@ -3046,7 +3045,7 @@ void typecheck(TypecheckState *state, AstStatement *statement) {
 			};
 
 			coro_state *corostate;
-			coro_init(&corostate, typechecker, 1024*1024);
+			assert(coro_init(&corostate, typechecker, 1024*1024));
 			defer { coro_free(&corostate); };
 
 			auto original_coro = state->coro;
@@ -4363,7 +4362,7 @@ ParsedArguments parse_arguments(Span<Span<utf8>> arguments) {
 	return result;
 }
 
-#if COUNT_ALLOCATIONS
+#if TRACK_ALLOCATIONS
 static HashMap<std::source_location, u32> allocation_sizes;
 
 void print_allocation_count() {
@@ -4478,7 +4477,7 @@ SlabAllocator slab_allocator;
 auto slab_allocator_func(AllocatorMode mode, void *data, umm old_size, umm new_size, umm align, std::source_location location, void *) -> void * {
 	switch (mode) {
 		case Allocator_allocate: {
-#if COUNT_ALLOCATIONS
+#if TRACK_ALLOCATIONS
 			allocation_sizes.get_or_insert(location) += new_size;
 #endif
 			return slab_allocator.allocate(new_size, align, location);
@@ -4494,6 +4493,8 @@ auto slab_allocator_func(AllocatorMode mode, void *data, umm old_size, umm new_s
 	return 0;
 }
 
+#include <tl/tracking_allocator.h>
+
 s32 tl_main(Span<Span<utf8>> arguments) {
 	construct(context);
 
@@ -4507,11 +4508,11 @@ s32 tl_main(Span<Span<utf8>> arguments) {
 
 	defer { print("Peak memory usage: {}\n", format_bytes(get_memory_info().peak_usage)); };
 
-	// write_test_source();
+	//write_test_source();
 
 	init_ast_allocator();
 
-#if COUNT_ALLOCATIONS
+#if TRACK_ALLOCATIONS
 	allocation_sizes.allocator = os_allocator;
 	defer { print_allocation_count(); };
 #endif
@@ -4525,7 +4526,7 @@ s32 tl_main(Span<Span<utf8>> arguments) {
 		[](AllocatorMode mode, void *data, umm old_size, umm new_size, umm align, std::source_location location, void *) -> void * {
 			switch (mode) {
 				case Allocator_allocate: {
-#if COUNT_ALLOCATIONS
+#if TRACK_ALLOCATIONS
 					allocation_sizes.get_or_insert(location) += new_size;
 #endif
 					return my_allocate(new_size, align);
@@ -4575,6 +4576,39 @@ s32 tl_main(Span<Span<utf8>> arguments) {
 	defer { context.profiler.deinit(); };
 #endif
 
+#if 0
+
+	static HashMap<CallStack, u64> allocations;
+
+	default_allocator = current_allocator = {
+		[](AllocatorMode mode, void *data, umm old_size, umm new_size, umm align, std::source_location location, void *state) -> void * {
+			switch (mode) {
+				case Allocator_allocate: {
+					scoped_allocator(os_allocator);
+
+					auto call_stack = get_call_stack();
+
+					if (auto found = allocations.find(call_stack)) {
+						*found += new_size;
+						free(call_stack);
+					} else {
+						allocations.get_or_insert(call_stack) = new_size;
+					}
+
+					break;
+				}
+			}
+			return os_allocator.func(mode, data, old_size, new_size, align, location, state);
+		},
+		0
+	};
+	defer {
+		for_each(tracked_allocations, [](auto x, AllocationInfo info) {
+			print("{} bytes from:\n{}\n\n", info.size, info.call_stack);
+		});
+	};
+#endif
+
 	defer { write_entire_file("profile.tmd"s, context.profiler.output_for_timed()); };
 
 	timed_function(context.profiler);
@@ -4607,13 +4641,41 @@ restart_main:
 	construct(triple_char_tokens);
 	construct(import_paths);
 
+	construct(Ref<AstAssert>::storage);
+	construct(Ref<AstAutocast>::storage);
+	construct(Ref<AstBinaryOperator>::storage);
+	construct(Ref<AstBlock>::storage);
+	construct(Ref<AstCall>::storage);
+	construct(Ref<AstCast>::storage);
+	construct(Ref<AstDefer>::storage);
+	construct(Ref<AstDefinition>::storage);
+	construct(Ref<AstExpressionStatement>::storage);
+	construct(Ref<AstIdentifier>::storage);
+	construct(Ref<AstIf>::storage);
+	construct(Ref<AstIfx>::storage);
+	construct(Ref<AstImport>::storage);
+	construct(Ref<AstLambda>::storage);
+	construct(Ref<AstLiteral>::storage);
+	construct(Ref<AstPrint>::storage);
+	construct(Ref<AstReturn>::storage);
+	construct(Ref<AstSizeof>::storage);
+	construct(Ref<AstStruct>::storage);
+	construct(Ref<AstSubscript>::storage);
+	construct(Ref<AstTest>::storage);
+	construct(Ref<AstTuple>::storage);
+	construct(Ref<AstTypeof>::storage);
+	construct(Ref<AstUnaryOperator>::storage);
+	construct(Ref<AstWhile>::storage);
 
 
 	HMODULE lib = 0;
 	if (args.output != u8"none"s) {
 		scoped_phase("Collecting target information");
 
-		lib = LoadLibraryW((wchar *)to_utf16(concatenate(context.executable_directory, u8"\\outputs\\"s, args.output), true).data);
+		with(temporary_allocator,
+			lib = LoadLibraryW((wchar *)to_utf16(concatenate(context.executable_directory, u8"\\outputs\\"s, args.output), true).data)
+		);
+
 		if (!lib) {
 			print("Failed to load output generator '{}'. Check 'tlang\\bin\\outputs' directory\n", args.output);
 			return 1;
