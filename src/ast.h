@@ -2,8 +2,6 @@
 #include <common.h>
 #include <token.h>
 #include <tl/big_int.h>
-#include <tl/list32.h>
-#include <tl/span32.h>
 
 // TODO: maybe this can be merged into tl
 // This structure allows to store data either in-place or reference it somewhere else
@@ -141,8 +139,8 @@ extern s32 ast_node_uid_counter;
 
 struct AstNode {
 	AstKind kind = Ast_null;
-	Span32<utf8> location;
 	s32 uid = atomic_increment(&ast_node_uid_counter);
+	Span32<utf8> location;
 };
 inline static constexpr auto sizeof_AstNode = sizeof AstNode;
 
