@@ -4,7 +4,7 @@
 ```rs
 import "std.tl"
 main :: fn () {
-    print_string("Hello world!\n");
+    print("Hello world!\n");
 }
 ```
 Let's start with simple things, for example variable definition.
@@ -143,12 +143,12 @@ ptr : * #type fn (): int; // the same syntax is used for types. so to distinguis
 * Compile time assertions
 * Global definitions can be ordered in any way
 ```rs
-main :: fn () => print_int(X);
+main :: fn () => print(X);
 X :: 1337;
 ```
 * Almost everyting is an expression
 ```rs
-print_string(if true then "Hello" else "World");
+print(if true then "Hello" else "World");
 ```
 * Foreign function interface
 ```rs
@@ -159,16 +159,16 @@ ExitProcess :: fn (ret: u32);
 ```
 * Source location constants
 ```rs
-print_string(#file); // a.tl
-print_int   (#line); // 2
-print_string(#location); // a.tl:3:14
+print(#file); // a.tl
+print(#line); // 2
+print(#location); // a.tl:3:14
 ```
 * Module importing
 * Function overloading
 ```rs
 import "std.tl"
-foo :: fn (a: int) => print_string("int");
-foo :: fn (a: bool) => print_string("bool");
+foo :: fn (a: int) => print("int");
+foo :: fn (a: bool) => print("bool");
 main :: fn () {
   foo(true);
 }
