@@ -1,4 +1,6 @@
 #include <ast.h>
+#include <tl/ram.h>
+#include <tl/process.h>
 
 umm append(StringBuilder &builder, AstKind kind) {
 	switch (kind) {
@@ -10,6 +12,8 @@ umm append(StringBuilder &builder, AstKind kind) {
 }
 
 s32 ast_node_uid_counter;
+
+BlockList<AstDefinition> ast_definitions;
 
 AstStruct type_bool;
 AstStruct type_u8;
@@ -78,7 +82,7 @@ void unlock(Scope *scope) {
 	}
 }
 
-// HashMap<Span<utf8>, AstDefinition *> names_not_available_for_globals;
+// HashMap<String, AstDefinition *> names_not_available_for_globals;
 
 bool needs_semicolon(AstExpression *node) {
 	// if (node->kind == Ast_unary_operator)
@@ -146,8 +150,8 @@ void append_type(StringBuilder &builder, AstExpression *type, bool silent_error)
 		}
 		case Ast_identifier: {
 			auto identifier = (AstIdentifier *)type;
-			ensure(identifier->definition);
-			ensure(types_match(identifier->definition->expression->type, &type_type));
+			ensure(identifier->has_definition());
+			ensure(types_match(identifier->definition()->expression->type, &type_type));
 			append(builder, identifier->name);
 			break;
 		}
@@ -173,9 +177,9 @@ void append_type(StringBuilder &builder, AstExpression *type, bool silent_error)
 #undef ensure
 }
 
-List<utf8> type_to_string(AstExpression *type, bool silent_error) {
+HeapString type_to_string(AstExpression *type, bool silent_error) {
 	if (!type)
-		return to_list(u8"null"s);
+		return (HeapString)to_list<MyAllocator>(u8"null"s);
 
 	StringBuilder builder;
 	append_type(builder, type, silent_error);
@@ -185,16 +189,16 @@ List<utf8> type_to_string(AstExpression *type, bool silent_error) {
 		append_type(builder, d, silent_error);
 		append(builder, ')');
 	}
-	return (List<utf8>)to_string(builder);
+	return (HeapString)to_string<MyAllocator>(builder);
 }
 
-List<utf8> type_name(AstExpression *type, bool silent_error) {
+HeapString type_name(AstExpression *type, bool silent_error) {
 	if (!type)
-		return to_list(u8"null"s);
+		return (HeapString)to_list<MyAllocator>(u8"null"s);
 
 	StringBuilder builder;
 	append_type(builder, type, silent_error);
-	return (List<utf8>)to_string(builder);
+	return (HeapString)to_string<MyAllocator>(builder);
 }
 
 
@@ -207,7 +211,7 @@ s64 get_align(AstExpression *type) {
 		}
 		case Ast_identifier: {
 			auto identifier = (AstIdentifier *)type;
-			return get_size(identifier->definition->expression);
+			return get_size(identifier->definition()->expression);
 		}
 		case Ast_unary_operator: {
 			auto unop = (AstUnaryOperator *)type;
@@ -246,10 +250,10 @@ bool same_argument_and_return_types(AstLambda *a, AstLambda *b) {
 
 bool types_match_ns(AstExpression *a, AstExpression *b) {
 	while (a->kind == Ast_identifier) {
-		a = ((AstIdentifier *)a)->definition->expression;
+		a = ((AstIdentifier *)a)->definition()->expression;
 	}
 	while (b->kind == Ast_identifier) {
-		b = ((AstIdentifier *)b)->definition->expression;
+		b = ((AstIdentifier *)b)->definition()->expression;
 	}
 
 	if (a->kind != b->kind) {
@@ -304,8 +308,8 @@ AstExpression *direct(AstExpression *type) {
 		case Ast_identifier: {
 			do {
 				auto identifier = (AstIdentifier *)type;
-				assert(identifier->definition);
-				type = identifier->definition->expression;
+				assert(identifier->definition());
+				type = identifier->definition()->expression;
 			} while (type->kind == Ast_identifier);
 			break;
 		}
@@ -330,78 +334,11 @@ AstStruct *get_struct(AstExpression *type) {
 
 AstExpression *get_definition_expression(AstExpression *expression) {
 	while (expression->kind == Ast_identifier)
-		expression = ((AstIdentifier *)expression)->definition->expression;
+		expression = ((AstIdentifier *)expression)->definition()->expression;
 	return expression;
 }
 
-struct AllocationBlock {
-	u8 *base   = 0;
-	u8 *cursor = 0;
-	umm size   = 0;
-};
-
-List<AllocationBlock> ast_allocation_blocks;
-u32 last_allocation_block_index;
-Mutex allocation_mutex;
-
-umm ast_allocation_block_size;
-
-u32 debug_allocation_blocks = 0;
-
-void new_ast_block() {
-	AllocationBlock block;
-	block.size = ast_allocation_block_size;
-	block.cursor = block.base = os_allocator.allocate<u8>(ast_allocation_block_size);
-	assert(block.cursor);
-	ast_allocation_blocks.add(block);
-	last_allocation_block_index += 1;
-	atomic_increment(&debug_allocation_blocks);
-}
-
-void init_ast_allocator() {
-	ast_allocation_blocks.allocator = os_allocator;
-	ast_allocation_block_size = 1024*1024;
-	last_allocation_block_index = (u32)-1;
-	new_ast_block();
-	ast_allocation_block_size *= 2;
-}
-
-void *my_allocate(umm size, umm align) {
-	scoped_lock(allocation_mutex);
-
-	if (ast_allocation_blocks.count == 0) {
-		init_ast_allocator();
-	}
-
-retry:
-	auto block = &ast_allocation_blocks[last_allocation_block_index];
-
-	u8 *target = (u8 *)(((umm)block->cursor + align - 1) & ~(align - 1));
-	if ((umm)((u8 *)block->base + block->size - target) < size) {
-		ast_allocation_block_size *= 2;
-		while (ast_allocation_block_size < size + align - 1) {
-			ast_allocation_block_size *= 2;
-		}
-		new_ast_block();
-		goto retry;
-	}
-
-	block->cursor = target + size;
-
-	return target;
-}
-void *my_reallocate(void *data, umm old_size, umm new_size, umm align) {
-	auto result = my_allocate(new_size, align);
-	memcpy(result, data, old_size);
-	return result;
-}
-
-void my_deallocate(void *data, umm size) {
-	(void)data;
-	(void)size;
-}
-
-Span<utf8> operator_string(u64 op) {
+String operator_string(u64 op) {
 	switch (op) {
 		case '!': return u8"!"s;
 		case '+': return u8"+"s;
@@ -436,7 +373,7 @@ Span<utf8> operator_string(u64 op) {
 	invalid_code_path();
 	return {};
 }
-Span<utf8> operator_string(BinaryOperation op) {
+String operator_string(BinaryOperation op) {
 	using enum BinaryOperation;
 	switch (op) {
 		case add: return u8"+"s;
@@ -544,13 +481,13 @@ void operator delete(void *data, umm size) {
 
 bool is_pointer(AstExpression *type) {
 	if (type->kind == Ast_identifier) {
-		return is_pointer(((AstIdentifier *)type)->definition->expression);
+		return is_pointer(((AstIdentifier *)type)->definition()->expression);
 	}
 	return type->kind == Ast_unary_operator && ((AstUnaryOperator *)type)->operation == '*';
 }
 bool is_pointer_internally(AstExpression *type) {
 	if (type->kind == Ast_identifier) {
-		return is_pointer(((AstIdentifier *)type)->definition->expression);
+		return is_pointer(((AstIdentifier *)type)->definition()->expression);
 	}
 	return type->kind == Ast_lambda || (type->kind == Ast_unary_operator && ((AstUnaryOperator *)type)->operation == '*');
 }
@@ -560,9 +497,11 @@ AstLiteral *get_literal(AstExpression *expression) {
         case Ast_literal: return (AstLiteral *)expression;
         case Ast_identifier: {
             auto identifier = (AstIdentifier *)expression;
-            auto definition = identifier->definition;
-            if (definition && definition->is_constant) {
-                return get_literal(definition->expression);
+			if (identifier->has_definition()) {
+				auto definition = identifier->definition();
+				if (definition->is_constant) {
+					return get_literal(definition->expression);
+				}
             }
             break;
         }
@@ -576,8 +515,8 @@ bool is_constant(AstExpression *expression) {
 
     if (expression->kind == Ast_identifier) {
         auto identifier = (AstIdentifier *)expression;
-        if (identifier->definition)
-            return identifier->definition->is_constant;
+        if (identifier->has_definition())
+            return identifier->definition()->is_constant;
         return false;
     }
 
@@ -606,8 +545,8 @@ AstLambda *get_lambda(AstExpression *expression) {
 			return (AstLambda *)expression;
 		case Ast_identifier: {
 			auto ident = (AstIdentifier *)expression;
-			assert(ident->definition->expression);
-			return get_lambda(ident->definition->expression);
+			assert(ident->definition()->expression);
+			return get_lambda(ident->definition()->expression);
 		}
 	}
 	return 0;

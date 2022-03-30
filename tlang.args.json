@@ -7,6 +7,10 @@
       "Command": "performance_test.tl"
     },
     {
+      "Id": "c23521ab-0550-4dfa-b1ba-948610ced3db",
+      "Command": "--output nasm_x86_64_windows"
+    },
+    {
       "Id": "95f8981e-c7f3-4752-b466-c63af2094358",
       "Command": "--print-ast"
     },

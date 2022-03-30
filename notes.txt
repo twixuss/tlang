@@ -1,3 +1,7 @@
+CURRENT RESTRICTIONS:
+    MAX 4 bln definitions;
+    MAX 4 gb source file
+
 /*
 Member access operator (dot) parsing right now is implemented as a special case binary operator.
 Maybe it makes more sense to do it in `parse_sub_expression_no_cast`?
@@ -53,7 +57,7 @@ idea for templated functions:
 To make a template, just don't specify the type of a parameter.
 The type then can be obtained using typeof directive:
 */
-pow2 :: fn (x) -> #typeof x => x * x;
+pow2 :: fn (x): #typeof x => x * x;
 /*
 Also it would be nice to add return type deduction. Like this:
 */
@@ -161,7 +165,7 @@ InlineString :: struct {
 
 // Because the size is unknown at compile time, length of the array is calculated by evaluating user-provided expression.
 
-// Also this thing can only be passed by pointer.
+// Also this struct can only be passed by pointer.
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////

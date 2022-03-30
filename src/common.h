@@ -27,26 +27,43 @@ inline bool operator==(std::source_location a, std::source_location b) {
 #include <tl/process.h>
 #include <tl/profiler.h>
 #include <tl/time.h>
+#include <tl/ram.h>
 using namespace tl;
 
 #define REDECLARE_VAL(name, expr) auto _##name = expr; auto name = _##name;
 #define REDECLARE_REF(name, expr) auto &_##name = expr; auto &name = _##name;
 
+struct MyAllocator : AllocatorBase<MyAllocator> {
+	inline static MyAllocator current() { return {}; }
+
+	AllocationResult allocate_impl(umm size, umm alignment, std::source_location location = std::source_location::current());
+	AllocationResult reallocate_impl(void *data, umm old_size, umm new_size, umm alignment, std::source_location location = std::source_location::current());
+	void deallocate_impl(void *data, umm size, umm alignment, std::source_location location = std::source_location::current());
+};
+void init_my_allocator();
+
+using String = Span<utf8, u32>;
+using HeapString = List<utf8, MyAllocator, u32>;
+
+#pragma warning(disable: 4455)
+inline constexpr String operator""str(char const *string, umm count) { return String((utf8 *)string, (String::Size)count); }
+inline constexpr String operator""str(utf8 const *string, umm count) { return String((utf8 *)string, (String::Size)count); }
+
 struct AstLambda;
 
 struct SourceFileInfo {
-	Span<utf8> path;
-	Span<utf8> source;
-	List<Span<utf8>> lines;
+	String path;
+	String source;
+	List<String> lines;
 };
 
 struct CompilerContext {
-	Span<utf8> source_path;
-	Span<utf8> source_path_without_extension;
-	Span<utf8> executable_path;
-	Span<utf8> executable_name;
-	Span<utf8> executable_directory;
-	Span<utf8> current_directory;
+	String source_path;
+	String source_path_without_extension;
+	String executable_path;
+	String executable_name;
+	String executable_directory;
+	String current_directory;
 	AstLambda *main_lambda;
 	AstLambda *build_lambda;
 	Profiler profiler;
@@ -82,15 +99,15 @@ enum class ReportKind {
 };
 
 struct Report {
-	Span<utf8> location;
-	List<utf8> where;
-	List<utf8> message;
+	String location;
+	HeapString where;
+	HeapString message;
 	ReportKind kind;
 };
 
 u32 get_line_number(utf8 *from);
 u32 get_column_number(utf8 *from);
-List<utf8> where(utf8 *location);
+HeapString where(utf8 *location);
 
 void print_report(Report r);
 
@@ -99,36 +116,36 @@ inline umm get_hash(std::source_location l) {
 	return get_hash(l.column()) ^ get_hash(l.line());
 }
 
-inline bool operator==(Span<utf8> a, char const *b) {
+inline bool operator==(String a, char const *b) {
 	return as_chars(a) == as_span(b);
 }
 
 template <class ...Args>
-Report make_report(ReportKind kind, Span<utf8> location, char const *format_string, Args const &...args) {
+Report make_report(ReportKind kind, String location, char const *format_string, Args const &...args) {
 	Report r;
 	r.location = location;
 	r.kind = kind;
 	if (location.data) {
 		r.where = where(location.data);
 	}
-	r.message = (List<utf8>)format(format_string, args...);
+	r.message = (HeapString)format<MyAllocator>(format_string, args...);
 	return r;
 }
 
 template <class ...Args>
-void immediate_info(Span<utf8> location, char const *format_string, Args const &...args) {
+void immediate_info(String location, char const *format_string, Args const &...args) {
 	print_report(make_report(ReportKind::info, location, format_string, args...));
 }
 template <class ...Args>
 void immediate_info(char const *format_string, Args const &...args) {
-	immediate_info(Span<utf8>{}, format_string, args...);
+	immediate_info(String{}, format_string, args...);
 }
 
 template <class ...Args>
-void immediate_error(Span<utf8> location, char const *format_string, Args const &...args) {
+void immediate_error(String location, char const *format_string, Args const &...args) {
 	print_report(make_report(ReportKind::error, location, format_string, args...));
 }
 template <class ...Args>
 void immediate_error(char const *format_string, Args const &...args) {
-	immediate_error(Span<utf8>{}, format_string, args...);
+	immediate_error(String{}, format_string, args...);
 }

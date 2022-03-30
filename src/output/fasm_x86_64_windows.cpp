@@ -3,17 +3,28 @@
 #include <bytecode.h>
 #include <ast.h>
 #include "../x86_64.h"
+#include <tl/ram.h>
 
 using namespace x86_64;
 
 static void append_instructions(CompilerContext &context, StringBuilder &builder, InstructionList instructions) {
 	timed_function(context.profiler);
 
-	append_format(builder, "section '.text' code readable executable\nmain:\npush 0\ncall .{}\npop rcx\nand rsp, -16\nsub rsp, 16\ncall [ExitProcess]\nret\n", instruction_address(context.main_lambda->location_in_bytecode));
+	append_format(builder,
+		"section '.text' code readable executable\n"
+		"main:\n"
+		"and rsp, -16\n"
+		"push 0\n"
+		"push 0\n"
+		"call .{}\n"
+		"mov rcx, [rsp]\n"
+		"call [ExitProcess]\n"
+		"ret\n", instruction_address(context.main_lambda->location_in_bytecode));
 
 	s64 idx = 0;
 	for (auto i : instructions) {
-		append_format(builder, ".{}: ", instruction_address(idx));
+		if (i.labeled)
+			append_format(builder, ".{}: ", instruction_address(idx));
 
 		// Override some of default instruction printing
 		switch (i.kind) {
@@ -147,16 +158,23 @@ section '.idata' import data readable writeable
 	builder.clear();
 	auto &bat_builder = builder;
 
-	append_format(bat_builder, u8R"(@echo off
-{}\fasm\fasm.exe "{}"
-)", context.executable_directory, asm_path);
+	// For some reason fasm refuses to allocate more than 1371000 KiB
+	// Also it divides it by 2 at random times??? wtf
+	u32 fasm_max_kilobytes = 1024 * 1024; // min(1371000, get_ram_size() / 2 / 1024);
+
+	append_format(bat_builder,
+		u8"@echo off\r\n"
+		"{}\\fasm\\fasm.exe -m {} \"{}\"\r\n",
+		context.executable_directory, fasm_max_kilobytes, asm_path);
 
 	auto bat_path = to_pathchars(concatenate(context.executable_directory, u8"\\fasm_build.bat"s));
 	write_entire_file(bat_path, as_bytes(to_string(bat_builder)));
 
-	_putenv(tformat("Include={}/fasm/include{}", context.executable_directory, '\0').data);
+	auto includedir = tformat(u8"Include={}\\fasm\\include{}", context.executable_directory, '\0');
+	print("includedir: {}\n", includedir);
+	_wputenv((wchar *)to_utf16(includedir, true).data);
 
-	timed_block(context.profiler, "nasm + link"s);
+	timed_block(context.profiler, "fasm"s);
 
 	auto process = start_process(bat_path);
 	if (!process.handle) {
@@ -191,4 +209,10 @@ section '.idata' import data readable writeable
 	}
 
 	print("Build succeeded\n");
+}
+
+DECLARE_TARGET_INFORMATION_GETTER {
+	context.stack_word_size = 8;
+	context.register_size = 8;
+	context.general_purpose_register_count = 16;
 }

@@ -2,6 +2,8 @@
 #include "ast.h"
 #include "x86_64.h"
 
+#define OPTIMIZE_BYTECODE 1
+
 struct Relocation {
 	umm instruction_index;
 	AstLambda *lambda;
@@ -88,6 +90,7 @@ struct LambdaState {
 		}
 	}
 	void free() {
+		// `body_builder` may be not freed, master builder will steal it anyway.
 		tl::free(stack_state.data);
 	}
 };
@@ -201,8 +204,6 @@ Optional<s64> get_value_at(Converter &conv, Address addr) {
 
 	return {};
 }
-
-#define OPTIMIZE_BYTECODE 0
 
 Instruction *add_instruction(Converter &conv, Instruction next) {
 	auto &ls = *conv.ls;
@@ -757,7 +758,7 @@ static Optional<Register> load_address_of(Optional<Register> destination, Conver
 		}
 		case Ast_identifier: {
 			auto identifier = (AstIdentifier *)expression;
-			auto definition = identifier->definition;
+			auto definition = identifier->definition();
 
 			if (definition->expression && definition->expression->kind == Ast_lambda) {
 				expression = definition->expression;
@@ -850,7 +851,7 @@ static Optional<Register> load_address_of(Optional<Register> destination, Conver
 			using enum BinaryOperation;
 			assert(binop->operation == dot);
 			assert(binop->right->kind == Ast_identifier);
-			auto offset = ((AstIdentifier *)binop->right)->definition->offset_in_struct;
+			auto offset = ((AstIdentifier *)binop->right)->definition()->offset_in_struct;
 			assert(offset != INVALID_MEMBER_OFFSET);
 			auto destination = load_address_of(conv, binop->left);
 			if (offset) {
@@ -1355,7 +1356,7 @@ static void append(Converter &conv, AstBinaryOperator *bin) {
 
 					assert(right->kind == Ast_identifier);
 					auto ident = (AstIdentifier *)right;
-					auto member = ident->definition;;
+					auto member = ident->definition();
 					assert(member);
 					auto member_size = get_size(member->type);
 
@@ -1630,11 +1631,13 @@ static void append(Converter &conv, AstBinaryOperator *bin) {
 static void append(Converter &conv, AstIdentifier *identifier) {
 	push_comment(conv, format(u8"load identifer {}", identifier->name));
 
-	if (identifier->definition->expression && identifier->definition->expression->kind == Ast_lambda) {
+	auto definition = identifier->definition();
+
+	if (definition->expression && definition->expression->kind == Ast_lambda) {
 		// :PUSH_ADDRESS: TODO: Replace this with load_address_of
 		push_address_of(conv, identifier);
 	} else {
-		auto size = get_size(identifier->type); // NOT definition->type because definition can be unsized
+		auto size = get_size(identifier->type); // NOT definition->type because definition can be unsized (type is not hardened)
 		assert(size);
 
 		if (size <= context.register_size) {
@@ -1947,7 +1950,7 @@ static void append(Converter &conv, AstLiteral *literal) {
 
 			I(push_c, (s64)literal->string.count);
 
-			auto data = allocate_data(conv.constant_data_builder, as_bytes(literal->string));
+			auto data = allocate_data(conv.constant_data_builder, as_bytes((Span<utf8>)literal->string));
 			I(push_a, data);
 
 			literal->string_data_offset = data;
@@ -2513,7 +2516,11 @@ static void append(Converter &conv, AstLambda *lambda, bool push_address) {
 		I(ret);
 
 		lambda->location_in_bytecode = count_of(conv.builder);
+#if 1
+		add_steal(&conv.builder, &conv.ls->body_builder);
+#else
 		add(&conv.builder, conv.ls->body_builder);
+#endif
 
 		for (auto relocation : conv.local_relocations) {
 			relocation.instruction_index += lambda->location_in_bytecode;

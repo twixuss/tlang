@@ -37,6 +37,6 @@ enum : TokenKind {
 Span<utf8> token_kind_to_string(TokenKind kind);
 
 struct Token {
-	Span<utf8> string;
+	Span<utf8, u32> string;
 	TokenKind kind;
 };

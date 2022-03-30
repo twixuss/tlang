@@ -27,16 +27,24 @@ struct Parser;
 struct Reporter;
 struct SourceFileContext;
 
-static List<Span<utf8>> import_paths;
+static List<String> import_paths;
 
-AstDefinition *parse_definition(Span<utf8> name, Parser *parser);
+AstDefinition *parse_definition(String name, Parser *parser);
 AstDefinition *parse_definition(Parser *parser);
 AstExpression *make_pointer_type(AstExpression *type);
 
 void print_help() {
-	print(R"(Usage:
-	{} <path>
-)", context.executable_name);
+    print(
+		"Usage:\n"
+        "    {} <path> [options]\n"
+        "Option               Description\n"
+        "--print-ast          Print the abstract syntax tree of the program\n"
+        "--output <toolchain> Generate the executable using specified toolchain.\n"
+        "    toolchain variants:\n"
+        "        fasm_x86_64_windows (default)\n"
+        "        nasm_x86_64_windows\n"
+		, context.executable_name
+	);
 }
 
 struct Reporter {
@@ -48,31 +56,31 @@ struct Reporter {
 		}
 	}
 
-	template <class ...Args>
-	void info(Span<utf8> location, char const *format_string, Args const &...args) {
+	template <class Size, class ...Args>
+	void info(Span<utf8, Size> location, char const *format_string, Args const &...args) {
 		reports.add(make_report(ReportKind::info, location, format_string, args...));
 	}
 	template <class ...Args>
 	void info(char const *format_string, Args const &...args) {
-		info(Span<utf8>{}, format_string, args...);
+		info(String{}, format_string, args...);
 	}
 
-	template <class ...Args>
-	void warning(char const *format_string, Args const &...args) {
-		warning(Span<utf8>{}, format_string, args...);
-	}
-	template <class ...Args>
-	void warning(Span<utf8> location, char const *format_string, Args const &...args) {
+	template <class Size, class ...Args>
+	void warning(Span<utf8, Size> location, char const *format_string, Args const &...args) {
 		reports.add(make_report(ReportKind::warning, location, format_string, args...));
 	}
-
 	template <class ...Args>
-	void error(char const *format_string, Args const &...args) {
-		error(Span<utf8>{}, format_string, args...);
+	void warning(char const *format_string, Args const &...args) {
+		warning(String{}, format_string, args...);
+	}
+
+	template <class Size, class ...Args>
+	void error(Span<utf8, Size> location, char const *format_string, Args const &...args) {
+		reports.add(make_report(ReportKind::error, location, format_string, args...));
 	}
 	template <class ...Args>
-	void error(Span<utf8> location, char const *format_string, Args const &...args) {
-		reports.add(make_report(ReportKind::error, location, format_string, args...));
+	void error(char const *format_string, Args const &...args) {
+		error(String{}, format_string, args...);
 	}
 };
 
@@ -97,11 +105,12 @@ struct Lexer {
 
 	SourceFileInfo *source_info;
 	Buffer source_buffer;
-	Span<utf8> source;
+	String source;
 };
 
-HashSet<Span<utf8>> double_char_tokens;
-HashSet<Span<utf8>> triple_char_tokens;
+HashSet<String> double_char_tokens;
+HashSet<String> triple_char_tokens;
+HashMap<String, TokenKind> keywords;
 
 f32 lexer_time;
 bool lexer_function(Lexer *lexer) {
@@ -114,11 +123,6 @@ bool lexer_function(Lexer *lexer) {
 
 
 	defer { lexer->finished = true; };
-
-	HashMap<Span<utf8>, TokenKind> keywords;
-#define E(name, value) keywords.get_or_insert(u8#name##s) = value;
-	ENUMERATE_KEYWORDS(E);
-#undef E
 
 	auto current_p = lexer->source.begin();
 	auto next_p    = lexer->source.begin();
@@ -142,15 +146,15 @@ bool lexer_function(Lexer *lexer) {
 
 	auto push_token = [&] {
 		lexer->add(token);
-		//if (ends_with(get_source_path(token.string.data), u8"std.tl"s))
+		//if (ends_with(get_source_path(token.string.data), u8"std.tl"str))
 		//	print("{}\n", token.string);
 		//
-		//if (token.string == u8"while"s)
+		//if (token.string == u8"while"str)
 		//	debug_break();
 	};
 
 	utf8 *line_start = current_p;
-	List<Span<utf8>> lines;
+	List<String> lines;
 	lines.reserve(lexer->source.count / 32); // Guess 32 bytes per line on average
 
 	auto push_line = [&] {
@@ -219,13 +223,13 @@ bool lexer_function(Lexer *lexer) {
 			case '&':
 			case '^':
 			{
-				auto found = find(triple_char_tokens, token.string = Span(current_p, 3));
+				auto found = find(triple_char_tokens, token.string = Span(current_p, (u32)3));
 				if (found) {
 					int k = 3;
 				} else {
-					found = find(double_char_tokens, token.string = Span(current_p, 2));
+					found = find(double_char_tokens, token.string = Span(current_p, (u32)2));
 					if (!found) {
-						token.string = Span(current_p, 1);
+						token.string = Span(current_p, (u32)1);
 					}
 				}
 
@@ -518,8 +522,8 @@ struct Parser {
 	bool reached_end = false;
 	AstLambda *current_lambda = 0;
 	Reporter *reporter;
-	Span<utf8> extern_language;
-	Span<utf8> extern_library;
+	String extern_language;
+	String extern_library;
 	Scope *current_scope = &global_scope;
 	u32 scope_count = 0;
 	CallingConvention current_convention = CallingConvention::tlang;
@@ -576,16 +580,16 @@ struct SourceFileContext {
 	ParseResult result;
 };
 
-AstLiteral *make_string(Span<utf8> value) {
-	auto i = new_ast<AstLiteral>();
+AstLiteral *make_string(String value) {
+	auto i = AstLiteral::create();
 	i->literal_kind = LiteralKind::string;
 	i->string = value;
 	i->type = &type_string;
 	return i;
 }
 
-AstLiteral *make_integer(BigInt value, AstExpression *type = &type_unsized_integer) {
-	auto i = new_ast<AstLiteral>();
+AstLiteral *make_integer(BigInteger value, AstExpression *type = &type_unsized_integer) {
+	auto i = AstLiteral::create();
 	i->literal_kind = LiteralKind::integer;
 	i->integer = value;
 	i->type = type;
@@ -593,18 +597,18 @@ AstLiteral *make_integer(BigInt value, AstExpression *type = &type_unsized_integ
 }
 
 AstLiteral *make_integer(u64 value, AstExpression *type = &type_unsized_integer) {
-	return make_integer(make_big_int(value), type);
+	return make_integer(make_big_int<BigInteger>(value), type);
 }
 
 AstLiteral *make_boolean(bool value) {
-	auto i = new_ast<AstLiteral>();
+	auto i = AstLiteral::create();
 	i->literal_kind = LiteralKind::boolean;
 	i->Bool = value;
 	return i;
 }
 
 AstLiteral *make_float(f64 value, AstExpression *type = &type_unsized_float) {
-	auto i = new_ast<AstLiteral>();
+	auto i = AstLiteral::create();
 	i->literal_kind = LiteralKind::Float;
 	i->Float = value;
 	i->type = type;
@@ -682,14 +686,14 @@ s32 get_precedence(BinaryOperation op) {
 	return 0;
 }
 
-Span<utf8> unescape_string(Span<utf8> string) {
+String unescape_string(String string) {
 	string.data  += 1;
 	string.count -= 2;
 
 	if (!string.count)
 		return string;
 
-	List<utf8> new_string;
+	HeapString new_string;
 	new_string.reserve(string.count);
 
 	auto p = string.data;
@@ -741,21 +745,35 @@ AstDefinition *parse_definition(Parser *parser);
 	defer { parser->current_scope = CONCAT(old_scope, __LINE__); }; \
 	parser->scope_count += 1;
 
-ExternLanguage extern_language_from_string(Span<utf8> string) {
-	if (string == u8"C"s) return ExternLanguage::c;
+ExternLanguage extern_language_from_string(String string) {
+	if (string == "C"str) return ExternLanguage::c;
 
 	return ExternLanguage::none;
 }
 
 AstDefinition *make_retparam(Parser *parser, AstExpression *type) {
-	auto retparam = new_ast<AstDefinition>();
+	auto retparam = AstDefinition::create();
 
 	retparam->type = type;
 	retparam->is_return_parameter = true;
 	retparam->parent_block = parser->current_lambda;
-	retparam->parent_scope = parser->current_scope;
+	// retparam->set_parent_scope(parser->current_scope);
 
 	return retparam;
+}
+
+bool ensure_return_is_not_in_defer(Parser *parser, String location) {
+	auto scope = parser->current_scope;
+	// Global scope will have `node` set to null
+	while (scope->node) {
+		if (scope->node->kind == Ast_defer) {
+			parser->reporter->error(location, "Return statement can not be inside a defer statement");
+			return false;
+		}
+		scope = scope->parent;
+	}
+	assert(scope == &global_scope);
+	return true;
 }
 
 AstExpression *parse_sub_expression(Parser *parser) {
@@ -763,7 +781,7 @@ AstExpression *parse_sub_expression(Parser *parser) {
 
 	switch (parser->token->kind) {
 		case Token_autocast: {
-			auto cast = new_ast<AstAutocast>();
+			auto cast = AstAutocast::create();
 			cast->location = parser->token->string;
 			if (!parser->next_not_end())
 				return 0;
@@ -790,7 +808,7 @@ AstExpression *parse_sub_expression(Parser *parser) {
 			return array;
 		}
 		case Token_string_literal: {
-			auto string = new_ast<AstLiteral>();
+			auto string = AstLiteral::create();
 			string->literal_kind = LiteralKind::string;
 			string->location = parser->token->string;
 			string->string = unescape_string(parser->token->string);
@@ -802,7 +820,7 @@ AstExpression *parse_sub_expression(Parser *parser) {
 			return string;
 		}
 		case Token_character_literal: {
-			auto character = new_ast<AstLiteral>();
+			auto character = AstLiteral::create();
 			character->literal_kind = LiteralKind::character;
 			character->location = parser->token->string;
 			auto character_string = unescape_string(parser->token->string);
@@ -826,7 +844,7 @@ AstExpression *parse_sub_expression(Parser *parser) {
 			return result;
 		}
 		case Token_float_literal: {
-			auto result = new_ast<AstLiteral>();
+			auto result = AstLiteral::create();
 			result->literal_kind = LiteralKind::Float;
 			if (std::from_chars((char *)parser->token->string.begin(), (char *)parser->token->string.end(), result->Float).ec == std::errc::invalid_argument) {
 				parser->reporter->error(parser->token->string, "Failed to parse floating point number");
@@ -838,40 +856,44 @@ AstExpression *parse_sub_expression(Parser *parser) {
 			return result;
 		}
 		case Token_integer_literal: {
-			BigInt value = 0_ib;
-			if (parser->token->string.count >= 2 && parser->token->string.data[1] == 'x') {
-				for (u32 i = 2; i != parser->token->string.count; ++i) {
-					u8 quart;
-					switch (parser->token->string.data[i]) {
-						case '0': quart = 0; break;
-						case '1': quart = 1; break;
-						case '2': quart = 2; break;
-						case '3': quart = 3; break;
-						case '4': quart = 4; break;
-						case '5': quart = 5; break;
-						case '6': quart = 6; break;
-						case '7': quart = 7; break;
-						case '8': quart = 8; break;
-						case '9': quart = 9; break;
-						case 'a': case 'A': quart = 10; break;
-						case 'b': case 'B': quart = 11; break;
-						case 'c': case 'C': quart = 12; break;
-						case 'd': case 'D': quart = 13; break;
-						case 'e': case 'E': quart = 14; break;
-						case 'f': case 'F': quart = 15; break;
-					}
+			BigInteger value;
+			{
+				scoped_allocator(temporary_allocator);
+				value = make_big_int<BigInteger>(0);
+				if (parser->token->string.count >= 2 && parser->token->string.data[1] == 'x') {
+					for (u32 i = 2; i != parser->token->string.count; ++i) {
+						u8 quart;
+						switch (parser->token->string.data[i]) {
+							case '0': quart = 0; break;
+							case '1': quart = 1; break;
+							case '2': quart = 2; break;
+							case '3': quart = 3; break;
+							case '4': quart = 4; break;
+							case '5': quart = 5; break;
+							case '6': quart = 6; break;
+							case '7': quart = 7; break;
+							case '8': quart = 8; break;
+							case '9': quart = 9; break;
+							case 'a': case 'A': quart = 10; break;
+							case 'b': case 'B': quart = 11; break;
+							case 'c': case 'C': quart = 12; break;
+							case 'd': case 'D': quart = 13; break;
+							case 'e': case 'E': quart = 14; break;
+							case 'f': case 'F': quart = 15; break;
+						}
 
-					value <<= 4;
-					value |= make_big_int(quart);
-				}
-			} else {
-				for (auto character : parser->token->string) {
-					u64 digit = (u64)character - '0';
-					if (digit >= 10) {
-						parser->reporter->error(parser->token->string, "Failed to parse integer");
-						return 0;
+						value <<= 4;
+						value |= make_big_int<BigInteger>(quart);
 					}
-					value = value * 10_ib + make_big_int(digit);
+				} else {
+					for (auto character : parser->token->string) {
+						u64 digit = (u64)character - '0';
+						if (digit >= 10) {
+							parser->reporter->error(parser->token->string, "Failed to parse integer");
+							return 0;
+						}
+						value = value * (umm)10 + make_big_int<BigInteger>(digit);
+					}
 				}
 			}
 			auto location = parser->token->string;
@@ -882,7 +904,7 @@ AstExpression *parse_sub_expression(Parser *parser) {
 		}
 		case Token_true:
 		case Token_false: {
-			auto boolean = new_ast<AstLiteral>();
+			auto boolean = AstLiteral::create();
 			boolean->literal_kind = LiteralKind::boolean;
 			boolean->Bool = parser->token->kind == Token_true;
 			boolean->location = parser->token->string;
@@ -892,19 +914,19 @@ AstExpression *parse_sub_expression(Parser *parser) {
 		case Token_identifier: {
 			auto identifier_token = parser->token;
 			parser->next();
-			auto identifier = new_ast<AstIdentifier>();
+			auto identifier = AstIdentifier::create();
 			identifier->location = identifier->name = identifier_token->string;
 			return identifier;
 		}
 		case Token_directive: {
-			if (parser->token->string == u8"#type"s) {
+			if (parser->token->string == "#type"str) {
 				if (!parser->next_expect(Token_fn))
 					return 0;
 
 				is_parsing_type = true;
 				goto parse_function;
-			} else if (parser->token->string == u8"#sizeof"s) {
-				auto size_of = new_ast<AstSizeof>();
+			} else if (parser->token->string == "#sizeof"str) {
+				auto size_of = AstSizeof::create();
 				size_of->location = parser->token->string;
 
 				if (!parser->next_not_end())
@@ -915,8 +937,8 @@ AstExpression *parse_sub_expression(Parser *parser) {
 					return 0;
 
 				return size_of;
-			} else if (parser->token->string == u8"#typeof"s) {
-				auto typeof = new_ast<AstTypeof>();
+			} else if (parser->token->string == "#typeof"str) {
+				auto typeof = AstTypeof::create();
 				typeof->location = parser->token->string;
 
 				if (!parser->next_not_end())
@@ -928,17 +950,17 @@ AstExpression *parse_sub_expression(Parser *parser) {
 
 				typeof->location = {typeof->location.begin(), typeof->expression->location.end()};
 				return typeof;
-			} else if (parser->token->string == u8"#file"s) {
+			} else if (parser->token->string == "#file"str) {
 				auto result = make_string(parser->lexer->source_info->path);
 				result->location = parser->token->string;
 				parser->next();
 				return result;
-			} else if (parser->token->string == u8"#line"s) {
+			} else if (parser->token->string == "#line"str) {
 				auto result = make_integer(get_line_number(parser->token->string.data));
 				result->location = parser->token->string;
 				parser->next();
 				return result;
-			} else if (parser->token->string == u8"#location"s) {
+			} else if (parser->token->string == "#location"str) {
 				auto result = make_string(where(parser->token->string.data));
 				result->location = parser->token->string;
 				parser->next();
@@ -952,15 +974,15 @@ AstExpression *parse_sub_expression(Parser *parser) {
 
 		parse_function:
 
-			auto lambda = new_ast<AstLambda>();
+			auto lambda = AstLambda::create();
 
 			auto start_token = parser->token;
 			if (!parser->next_not_end())  return 0;
 
 			if (parser->token->kind == Token_directive) {
-				if (parser->token->string == u8"#stdcall"s) {
+				if (parser->token->string == "#stdcall"str) {
 					lambda->convention = CallingConvention::stdcall;
-				} else if (parser->token->string == u8"#intrinsic"s) {
+				} else if (parser->token->string == "#intrinsic"str) {
 					lambda->is_intrinsic = true;
 				} else {
 					parser->reporter->error(parser->token->string, "Unknown directive");
@@ -1096,7 +1118,10 @@ AstExpression *parse_sub_expression(Parser *parser) {
 					if (!parser->expect(';'))
 						return 0;
 
-					auto ret = new_ast<AstReturn>();
+					if (!ensure_return_is_not_in_defer(parser, opening_token->string))
+						return 0;
+
+					auto ret = AstReturn::create();
 					ret->expression = expression;
 					ret->location = opening_token->string;
 					ret->lambda = lambda;
@@ -1149,7 +1174,7 @@ AstExpression *parse_sub_expression(Parser *parser) {
 			return lambda;
 		}
 		case Token_struct: {
-			auto Struct = new_ast<AstStruct>();
+			auto Struct = AstStruct::create();
 			Struct->location = parser->token->string;
 
 			if (!parser->next_expect('{'))
@@ -1184,7 +1209,7 @@ AstExpression *parse_sub_expression(Parser *parser) {
 			return Struct;
 		}
 		case Token_if: {
-			auto If = new_ast<AstIfx>();
+			auto If = AstIfx::create();
 			If->location = parser->token->string;
 			if (!parser->next_not_end())
 				return 0;
@@ -1216,7 +1241,7 @@ AstExpression *parse_sub_expression(Parser *parser) {
 		}
 					 /*
 		case Token_import: {
-			auto import = new_ast<AstImport>();
+			auto import = AstImport::create();
 			import->location = parser->token->string;
 			if (!parser->next_not_end())
 				return 0;
@@ -1225,7 +1250,7 @@ AstExpression *parse_sub_expression(Parser *parser) {
 			parser->next();
 
 			for (auto import_path : import_paths) {
-				auto child = parse_file((Span<utf8>)concatenate(import_path, '\\', import->path));
+				auto child = parse_file((String)concatenate(import_path, '\\', import->path));
 				if (child->result == ParseResult::ok) {
 					import->scope = &child->scope;
 					break;
@@ -1265,14 +1290,14 @@ AstExpression *parse_sub_expression(Parser *parser) {
 			return expression;
 		}
 		case '?': {
-			auto noinit = new_ast<AstLiteral>();
+			auto noinit = AstLiteral::create();
 			noinit->location = parser->token->string;
 			noinit->literal_kind = LiteralKind::noinit;
 			parser->next();
 			return noinit;
 		}
 		case '[': {
-			auto subscript = new_ast<AstSubscript>();
+			auto subscript = AstSubscript::create();
 			subscript->location = parser->token->string;
 			subscript->is_prefix = true;
 
@@ -1297,7 +1322,7 @@ AstExpression *parse_sub_expression(Parser *parser) {
 		}
 		default: {
 			if (is_unary_operator(parser->token->kind)) {
-				auto unop = new_ast<AstUnaryOperator>();
+				auto unop = AstUnaryOperator::create();
 				unop->location = parser->token->string;
 				unop->operation = parser->token->kind;
 				if (!parser->next_not_end())
@@ -1320,7 +1345,7 @@ AstExpression *parse_sub_expression(Parser *parser) {
 }
 
 AstTuple *make_tuple(List<AstExpression *> expressions) {
-	auto tuple = new_ast<AstTuple>();
+	auto tuple = AstTuple::create();
 	tuple->expressions = expressions;
 	return tuple;
 }
@@ -1355,8 +1380,8 @@ AstExpression *parse_call(Parser *parser, AstExpression *expression) {
 		}
 		auto close_paren = parser->token->string;
 
-		auto call = new_ast<AstCall>();
-		call->location = Span(expression->location.data, parser->token->string.end());
+		auto call = AstCall::create();
+		call->location = String(expression->location.data, parser->token->string.end());
 		call->callable = expression;
 		call->argument = make_tuple(arguments);
 		call->argument->location = {open_paren.begin(), close_paren.end()};
@@ -1380,7 +1405,7 @@ AstExpression *parse_cast(Parser *parser, AstExpression *expression) {
 		return 0;
 
 	while (parser->token->kind == Token_as) {
-		auto cast = new_ast<AstCast>();
+		auto cast = AstCast::create();
 		cast->expression = expression;
 
 		if (!parser->next_not_end())
@@ -1477,7 +1502,7 @@ void simplify(AstExpression **_expression) {
 						if (left->literal_kind == LiteralKind::string) {
 							if (binop->right->kind == Ast_identifier) {
 								auto right = (AstIdentifier *)binop->right;
-								if (right->name == u8"count"s) {
+								if (right->name == "count"str) {
 									expression = make_integer(left->string.count, right->type);
 								}
 							}
@@ -1509,7 +1534,7 @@ void simplify(AstExpression **_expression) {
 						auto left  = left_literal->integer;
 						auto right = right_literal->integer;
 
-						BigInt value;
+						BigInteger value;
 
 						switch (binop->operation) {
 							case add: expression = make_integer(left + right, binop->type); return;
@@ -1591,14 +1616,14 @@ void combine_location(AstExpression *expression) {
 		case Ast_unary_operator: {
 			auto unop = (AstUnaryOperator *)expression;
 			combine_location(unop->expression);
-			unop->location = Span(unop->location.begin(), unop->expression->location.end());
+			unop->location = String(unop->location.begin(), unop->expression->location.end());
 			break;
 		}
 		case Ast_binary_operator: {
 			auto binop = (AstBinaryOperator *)expression;
 			combine_location(binop->left);
 			combine_location(binop->right);
-			binop->location = Span(binop->left->location.begin(), binop->right->location.end());
+			binop->location = String(binop->left->location.begin(), binop->right->location.end());
 			break;
 		}
 	}
@@ -1663,7 +1688,7 @@ AstExpression *parse_expression(Parser *parser) {
 #if USE_POST_SUBSCRIPT
 parse_subscript:
 	while (parser->token->kind == '[') {
-		auto subscript = new_ast<AstSubscript>();
+		auto subscript = AstSubscript::create();
 		subscript->is_prefix = false;
 
 		if (!parser->next_not_end())
@@ -1693,7 +1718,7 @@ parse_subscript:
 	AstBinaryOperator *previous_binop = 0;
 	s32 previous_precedence = 0;
 	while (is_binary_operator(parser->token->kind)) {
-		auto binop = new_ast<AstBinaryOperator>();
+		auto binop = AstBinaryOperator::create();
 		binop->left = sub;
 
 		binop->operation = binary_operation_from_token(parser->token->kind);
@@ -1777,7 +1802,7 @@ bool is_redefinable(AstDefinition *definition) {
 //
 // Use this if name token is already taken from parser.
 //
-AstDefinition *parse_definition(Span<utf8> name, Parser *parser) {
+AstDefinition *parse_definition(String name, Parser *parser) {
 	assert(parser->token->kind == ':');
 
 	if (!parser->next_not_end())  return 0;
@@ -1802,22 +1827,22 @@ AstDefinition *parse_definition(Span<utf8> name, Parser *parser) {
 		}
 	}
 
-	auto definition = new_ast<AstDefinition>();
+	auto definition = AstDefinition::create();
 
 	definition->location = definition->name = name;
 	definition->type = type;
 	definition->parent_block = parser->current_lambda;
 	definition->is_constant = is_constant;
-	definition->parent_scope = parser->current_scope;
+	// definition->set_parent_scope(parser->current_scope);
 
 #if 1
 	// Redefinition checks now are impossible at parsing time because of function overloading
-	if (definition->name != u8"_"s) {
+	if (definition->name != "_"str) {
 		scoped_lock(parser->current_scope);
 		parser->current_scope->definitions.get_or_insert(definition->name).add(definition);
 	}
 #else
-	if (definition->name != u8"_"s) {
+	if (definition->name != "_"str) {
 		bool check_redefinition_in_parent_scopes = true;
 		if (definition->parent_scope->node && definition->parent_scope->node->kind == Ast_struct) {
 			check_redefinition_in_parent_scopes = false;
@@ -1912,7 +1937,7 @@ AstExpressionStatement *make_statement(AstExpression *expression) {
 	if (!expression)
 		return 0;
 
-	auto statement = new_ast<AstExpressionStatement>();
+	auto statement = AstExpressionStatement::create();
 	statement->expression = expression;
 	return statement;
 }
@@ -1981,10 +2006,13 @@ void parse_statement(Parser *parser, AstStatement *&result) {
 		case Token_return: {
 			auto return_token = parser->token;
 
+			if (!ensure_return_is_not_in_defer(parser, return_token->string))
+				return;
+
 			if (!parser->next_not_end())
 				return;
 
-			auto ret = new_ast<AstReturn>();
+			auto ret = AstReturn::create();
 
 			if (parser->token->kind != ';') {
 				auto expression = parse_expression(parser);
@@ -2003,7 +2031,7 @@ void parse_statement(Parser *parser, AstStatement *&result) {
 			return;
 		}
 		case Token_if: {
-			auto If = new_ast<AstIf>();
+			auto If = AstIf::create();
 			If->location = parser->token->string;
 			if (!parser->next_not_end())
 				return;
@@ -2034,7 +2062,7 @@ void parse_statement(Parser *parser, AstStatement *&result) {
 			return;
 		}
 		case Token_while: {
-			auto While = new_ast<AstWhile>();
+			auto While = AstWhile::create();
 			While->location = parser->token->string;
 			if (!parser->next_not_end())
 				return;
@@ -2051,8 +2079,8 @@ void parse_statement(Parser *parser, AstStatement *&result) {
 			return;
 		}
 		case Token_directive: {
-			if (parser->token->string == u8"#test"s) {
-				auto test = new_ast<AstTest>();
+			if (parser->token->string == "#test"str) {
+				auto test = AstTest::create();
 				test->location = parser->token->string;
 
 				if (!parser->next_not_end())
@@ -2076,7 +2104,7 @@ void parse_statement(Parser *parser, AstStatement *&result) {
 
 				result = test;
 				return;
-			} else if (parser->token->string == u8"#print"s) {
+			} else if (parser->token->string == "#print"str) {
 				if (!parser->next_not_end())
 					return;
 
@@ -2085,11 +2113,11 @@ void parse_statement(Parser *parser, AstStatement *&result) {
 					return;
 				}
 
-				auto print = new_ast<AstPrint>();
+				auto print = AstPrint::create();
 				print->expression = expression;
 				result = print;
 				return;
-			} else if (parser->token->string == u8"#assert"s) {
+			} else if (parser->token->string == "#assert"str) {
 				if (!parser->next_not_end())
 					return;
 
@@ -2098,7 +2126,7 @@ void parse_statement(Parser *parser, AstStatement *&result) {
 					return;
 				}
 
-				auto assert = new_ast<AstAssert>();
+				auto assert = AstAssert::create();
 				assert->condition = expression;
 				result = assert;
 				return;
@@ -2109,18 +2137,19 @@ void parse_statement(Parser *parser, AstStatement *&result) {
 			break;
 		}
 		case Token_defer: {
-			auto Defer = new_ast<AstDefer>();
+			auto Defer = AstDefer::create();
 			Defer->location = parser->token->string;
 			if (!parser->next_not_end())
 				return;
 			if (!parse_block_or_single_statement(parser, &Defer->scope)) {
 				return;
 			}
+
 			result = Defer;
 			return;
 		}
 		case '{': {
-			auto block = new_ast<AstBlock>();
+			auto block = AstBlock::create();
 
 			push_scope(&block->scope);
 
@@ -2160,7 +2189,7 @@ void parse_statement(Parser *parser, AstStatement *&result) {
 			parser->token->kind == '<<=' ||
 			parser->token->kind == '>>='
 		) {
-			auto ass = new_ast<AstBinaryOperator>();
+			auto ass = AstBinaryOperator::create();
 			ass->location = parser->token->string;
 			ass->left = expression;
 			ass->operation = binary_operation_from_token(parser->token->kind);
@@ -2211,9 +2240,9 @@ ParseResult parser_function(Parser *parser);
 Lexer *failed_lexer;
 Parser *failed_parser;
 
-HashMap<Span<utf8>, SourceFileContext *> parsed_files;
+HashMap<String, SourceFileContext *> parsed_files;
 
-SourceFileContext *parse_file(Span<utf8> path) {
+SourceFileContext *parse_file(String path) {
 	timed_function(context.profiler);
 
 	if (auto found = parsed_files.find(path)) {
@@ -2236,11 +2265,11 @@ SourceFileContext *parse_file(Span<utf8> path) {
 	context->lexer.source_buffer.front() = '\0';
 	context->lexer.source_buffer.back() = '\0';
 
-	Span<utf8> source = as_utf8(context->lexer.source_buffer);
+	String source = String(context->lexer.source_buffer);
 	source.data += 1;
 	source.count -= 2;
 
-	auto bom = Span(context->lexer.source_buffer.data + 1, 3);
+	auto bom = Span(context->lexer.source_buffer.data + 1, (umm)3);
 	if (bom.end() <= context->lexer.source_buffer.end() && bom == "\xef\xbb\xbf"b) {
 		bom.back() = '\0';
 		source.data += 3;
@@ -2293,31 +2322,31 @@ ParseResult parser_function(Parser *parser) {
 	parser->token = lexer->begin();
 	while (!parser->reached_end) {
 		if (parser->token->kind == Token_directive) {
-			if (parser->token->string == u8"#extern_language"s) {
+			if (parser->token->string == "#extern_language"str) {
 				if (!parser->next_expect(Token_string_literal)) {
 					parser->reporter->error("Expected language name. Currently only \"C\" is available");
 					return ParseResult::syntax_error;
 				}
 				parser->extern_language = unescape_string(parser->token->string);
-				if (parser->extern_language != u8"C"s) {
+				if (parser->extern_language != "C"str) {
 					parser->reporter->error(parser->token->string, "Only \"C\" is supported");
 					return ParseResult::syntax_error;
 				}
 				parser->next();
-			} else if (parser->token->string == u8"#extern_library"s) {
+			} else if (parser->token->string == "#extern_library"str) {
 				if (!parser->next_expect(Token_string_literal)) {
 					parser->reporter->error("Expected library name");
 					return ParseResult::syntax_error;
 				}
 				parser->extern_library = unescape_string(parser->token->string);
 				parser->next();
-			} else if (parser->token->string == u8"#stdcall"s) {
+			} else if (parser->token->string == "#stdcall"str) {
 				parser->current_convention = CallingConvention::stdcall;
 				parser->next();
-			} else if (parser->token->string == u8"#tlangcall"s) {
+			} else if (parser->token->string == "#tlangcall"str) {
 				parser->current_convention = CallingConvention::tlang;
 				parser->next();
-			} else if (parser->token->string == u8"#layout_c"s) {
+			} else if (parser->token->string == "#layout_c"str) {
 				parser->current_struct_layout = StructLayout::c;
 				parser->next();
 			} else {
@@ -2329,7 +2358,7 @@ ParseResult parser_function(Parser *parser) {
 				return ParseResult::syntax_error;
 			}
 			auto libname = unescape_string(parser->token->string);
-			auto child = parse_file((Span<utf8>)concatenate(context.executable_directory, "\\libs\\", libname));
+			auto child = parse_file((String)concatenate(context.executable_directory, "\\libs\\", libname));
 			// global_scope.append(child->scope);
 			parser->next();
 		} else {
@@ -2362,7 +2391,7 @@ struct TypecheckState {
 	AstLambda *lambda = 0;
 	AstDefinition *definition = 0;
 	AstExpression *waiting_for = 0;
-	Span<utf8> waiting_for_name;
+	String waiting_for_name;
 
 	AstLambda *current_lambda = 0;
 
@@ -2391,9 +2420,9 @@ struct TypecheckState {
 		} \
 	}
 
-List<AstDefinition *> get_definitions(TypecheckState *state, Span<utf8> name) {
+DefinitionList get_definitions(TypecheckState *state, String name) {
 	timed_function(context.profiler);
-	List<AstDefinition *> result;
+	DefinitionList result;
 	auto scope = state->current_scope;
 	while (scope) {
 		auto found_local = scope->definitions.find(name);
@@ -2406,8 +2435,8 @@ List<AstDefinition *> get_definitions(TypecheckState *state, Span<utf8> name) {
 
 struct IntegerInfo {
 	AstStruct *type;
-	BigInt min_value;
-	BigInt max_value;
+	BigInteger min_value;
+	BigInteger max_value;
 };
 
 IntegerInfo integer_infos[8];
@@ -2456,7 +2485,7 @@ Box<AstLiteral> make_bool(bool val) {
 }
 
 void ensure_definition_is_resolved(TypecheckState *state, AstIdentifier *identifier) {
-	if (!identifier->definition) {
+	if (!identifier->has_definition()) {
 		if (identifier->possible_definitions.count) {
 			state->reporter.error(identifier->location, "Multiple definitions with this name");
 			for (auto definition : identifier->possible_definitions) {
@@ -2481,15 +2510,17 @@ Box<AstLiteral> evaluate(TypecheckState *state, AstExpression *expression) {
 
 			ensure_definition_is_resolved(state, ident);
 
-			if (!ident->definition->is_constant) {
+			auto definition = ident->definition();
+
+			if (!definition->is_constant) {
 				state->reporter.error(expression->location, "Can't evaluate expression at compile time: definition is not constant");
 				return nullptr;
 			}
 
-			if (ident->definition->evaluated)
-				return ident->definition->evaluated;
+			if (definition->evaluated)
+				return definition->evaluated;
 
-			return ident->definition->evaluated = evaluate(state, ident->definition->expression);
+			return definition->evaluated = evaluate(state, definition->expression);
 		}
 		case Ast_binary_operator: {
 			auto bin = (AstBinaryOperator *)expression;
@@ -2620,7 +2651,7 @@ bool do_all_paths_return(AstLambda *lambda) {
 
 AstExpression *make_pointer_type(AstExpression *type) {
 	timed_function(context.profiler);
-	auto unop = new_ast<AstUnaryOperator>();
+	auto unop = AstUnaryOperator::create();
 	unop->expression = type;
 	unop->type = &type_type;
 	unop->operation = '*';
@@ -2643,7 +2674,7 @@ bool operator==(CastType a, CastType b) {
 
 LinearSet<CastType> built_in_casts;
 
-bool ensure_fits(Reporter *reporter, AstExpression *expression, BigInt integer, IntegerInfo info) {
+bool ensure_fits(Reporter *reporter, AstExpression *expression, BigInteger integer, IntegerInfo info) {
 	if (integer >= info.min_value && integer <= info.max_value)
 		return true;
 	if (reporter) {
@@ -2702,7 +2733,7 @@ bool implicitly_cast(Reporter *reporter, AstExpression **_expression, AstExpress
 		auto found_built_in = find(built_in_casts, request);
 
 		if (found_built_in) {
-			auto cast = new_ast<AstCast>();
+			auto cast = AstCast::create();
 			cast->expression = expression;
 			cast->type = type;
 			expression = cast;
@@ -2758,7 +2789,7 @@ bool implicitly_cast(Reporter *reporter, AstExpression **_expression, AstExpress
 		auto found_built_in = find(built_in_casts, request);
 
 		if (found_built_in && found_built_in->implicit) {
-			auto cast = new_ast<AstCast>();
+			auto cast = AstCast::create();
 			cast->expression = expression;
 			cast->type = type;
 			//cast->cast_kind = found_built_in->kind;
@@ -2773,7 +2804,7 @@ bool implicitly_cast(Reporter *reporter, AstExpression **_expression, AstExpress
 	return false;
 }
 
-void wait_iteration(TypecheckState *state, Span<utf8> name) {
+void wait_iteration(TypecheckState *state, String name) {
 	state->no_progress_counter++;
 	if (state->no_progress_counter == 256) { /* TODO: This is not the best solution */
 		state->reporter.error(name, "Undeclared identifier");
@@ -2782,7 +2813,7 @@ void wait_iteration(TypecheckState *state, Span<utf8> name) {
 	yield(TypecheckResult::wait);
 }
 
-List<AstDefinition *> wait_for_definitions(TypecheckState *state, Span<utf8> name) {
+DefinitionList wait_for_definitions(TypecheckState *state, String name) {
 	while (1) {
 		auto definitions = get_definitions(state, name);
 		if (definitions.count) {
@@ -2837,11 +2868,12 @@ bool ensure_assignable(Reporter *reporter, AstExpression *expression) {
 	switch (expression->kind) {
 		case Ast_identifier: {
 			auto identifier = (AstIdentifier *)expression;
-			if (identifier->definition->is_constant) {
+			auto definition = identifier->definition();
+			if (definition->is_constant) {
 				reporter->error(identifier->location, "Can't assign to '{}' because it is constant", identifier->location);
 				return false;
 			}
-			if (identifier->definition->is_parameter) {
+			if (definition->is_parameter) {
 				reporter->error(identifier->location, "Can't assign to function parameters");
 				return false;
 			}
@@ -3166,7 +3198,7 @@ AstUnaryOperator *make_address_of(Reporter *reporter, AstExpression *expression)
 	if (!ensure_addressable(reporter, expression))
 		return 0;
 
-	auto result = new_ast<AstUnaryOperator>();
+	auto result = AstUnaryOperator::create();
 	result->expression = expression;
 	result->operation = '&';
 	result->location = expression->location;
@@ -3175,7 +3207,7 @@ AstUnaryOperator *make_address_of(Reporter *reporter, AstExpression *expression)
 }
 
 AstCast *make_cast(AstExpression *expression, AstExpression *type) {
-	auto result = new_ast<AstCast>();
+	auto result = AstCast::create();
 	result->expression = expression;
 	result->type = type;
 	result->location = expression->location;
@@ -3202,10 +3234,10 @@ void typecheck(TypecheckState *state, AstExpression *&expression) {
 		case Ast_identifier: {
 			auto identifier = (AstIdentifier *)expression;
 
-			// if (identifier->location == u8"HDC"s)
+			// if (identifier->location == "HDC"str)
 			// 	debug_break();
 
-			if (identifier->definition)
+			if (identifier->has_definition())
 				break;
 
 			auto definitions = wait_for_definitions(state, identifier->name);
@@ -3213,7 +3245,7 @@ void typecheck(TypecheckState *state, AstExpression *&expression) {
 			if (definitions.count == 1) {
 				auto definition = definitions[0];
 				assert(definition->type);
-				identifier->definition = definition;
+				identifier->set_definition(definition);
 				identifier->type = definition->type;
 			} else {
 				identifier->possible_definitions = definitions;
@@ -3242,11 +3274,12 @@ void typecheck(TypecheckState *state, AstExpression *&expression) {
 				auto identifier = (AstIdentifier *)call->callable;
 				Match match;
 				// TODO: These branches have similar code
-				if (identifier->definition) {
-					if (identifier->definition->expression)
-						match = {identifier->definition, get_lambda(identifier->definition->expression)};
+				if (identifier->has_definition()) {
+					auto definition = identifier->definition();
+					if (definition->expression)
+						match = {definition, get_lambda(definition->expression)};
 					else
-						match = {identifier->definition, get_lambda(identifier->definition->type)};
+						match = {definition, get_lambda(definition->type)};
 
 					if (!match.lambda) {
 						state->reporter.error(call->location, "No lambda with that name was found");
@@ -3338,7 +3371,7 @@ void typecheck(TypecheckState *state, AstExpression *&expression) {
 					}
 
 					match = matches[0];
-					identifier->definition = match.definition;
+					identifier->set_definition(match.definition);
 					identifier->type = match.definition->type;
 					//identifier->possible_definitions = {}; // actually this is redundant
 				}
@@ -3476,8 +3509,8 @@ void typecheck(TypecheckState *state, AstExpression *&expression) {
 							yield(TypecheckResult::fail);
 						}
 
-						member_identifier->definition = *found_member;
-						member_identifier->type = member_identifier->definition->type;
+						member_identifier->set_definition(*found_member);
+						member_identifier->type = (*found_member)->type;
 						bin->type = bin->right->type;
 					} else if (is_sized_array(bin->left->type)) {
 						if (bin->right->kind != Ast_identifier) {
@@ -3488,7 +3521,7 @@ void typecheck(TypecheckState *state, AstExpression *&expression) {
 						auto array_type = (AstSubscript *)bin->left->type;
 						auto identifier = (AstIdentifier *)bin->right;
 
-						if (identifier->name == u8"data"s) {
+						if (identifier->name == "data"str) {
 							bin->type = make_pointer_type(array_type->expression);
 
 							auto array_address = make_address_of(&state->reporter, bin->left);
@@ -3496,7 +3529,7 @@ void typecheck(TypecheckState *state, AstExpression *&expression) {
 								yield(TypecheckResult::fail);
 
 							expression = make_cast(array_address, bin->type);
-						} else if (identifier->name == u8"count"s) {
+						} else if (identifier->name == "count"str) {
 							auto size = evaluate(state, array_type->index_expression);
 							if (!size) {
 								state->reporter.error(array_type->index_expression->location, "INTERNAL ERROR: failed to evaluate index expression");
@@ -4032,7 +4065,7 @@ void typecheck(TypecheckState *state, AstExpression *&expression) {
 			}
 
 			for (auto import_path : import_paths) {
-				auto child = parse_file((Span<utf8>)concatenate(import_path, '\\', path_literal->string));
+				auto child = parse_file((String)concatenate(import_path, '\\', path_literal->string));
 				if (child->result == ParseResult::ok) {
 					break;
 				}
@@ -4066,8 +4099,8 @@ void *typecheck_global(coro_state *corostate, TypecheckState *state) {
 
 bool typecheck_finished;
 
-void add_member(AstStruct &destination, AstExpression *type, Span<utf8> name, AstLiteral *value, bool constant, s32 offset) {
-	auto d = new_ast<AstDefinition>();
+void add_member(AstStruct &destination, AstExpression *type, String name, AstLiteral *value, bool constant, s32 offset) {
+	auto d = AstDefinition::create();
 	d->location = name;
 	d->name = name;
 	d->expression = value;
@@ -4307,13 +4340,13 @@ main{} :: fn (): int {{
 }
 
 struct ParsedArguments {
-	Span<utf8> output;
+	String output;
 
-	List<Span<utf8>> source_files;
+	List<String> source_files;
 
 	bool print_ast = false;
 	bool no_typecheck = false;
-
+	bool debug_paths = false;
 	bool success = false;
 };
 
@@ -4325,14 +4358,14 @@ ParsedArguments parse_arguments(Span<Span<utf8>> arguments) {
 	context.executable_path = arguments[0];
 
 	if (!is_absolute_path(context.executable_path)) {
-		context.executable_path = concatenate(context.current_directory, u8'\\', context.executable_path);
+		context.executable_path = (String)concatenate(context.current_directory, u8'\\', context.executable_path);
 	}
 
 	auto parsed = parse_path(context.executable_path);
 	context.executable_name = parsed.name;
 	context.executable_directory = parsed.directory;
 
-	result.output = u8"nasm_x86_64_windows"s;
+	result.output = "fasm_x86_64_windows"str;
 
 	//print("executable_path: {}\nexecutable_name: {}\nexecutable_directory: {}\n", executable_path, executable_name, executable_directory);
 
@@ -4342,11 +4375,13 @@ ParsedArguments parse_arguments(Span<Span<utf8>> arguments) {
 	}
 
 	for (int i = 1; i < arguments.count; ++i) {
-		if (arguments[i] == u8"--print-ast"s) {
+		if (arguments[i] == "--print-ast"str) {
 			result.print_ast = true;
-		} else if (arguments[i] == u8"--no-type-check"s) {
+		} else if (arguments[i] == "--no-type-check"str) {
 			result.no_typecheck = true;
-		} else if (arguments[i] == u8"--output"s) {
+		} else if (arguments[i] == "--debug-paths"str) {
+			result.debug_paths = true;
+		} else if (arguments[i] == "--output"str) {
 			++i;
 			if (i >= arguments.count) {
 				print("Expected an argument after --output.\n");
@@ -4390,6 +4425,8 @@ void print_allocation_count() {
 #endif
 
 #include <tl/masked_block_list.h>
+
+#if 0
 
 struct SlabAllocator {
 	template <umm size>
@@ -4436,7 +4473,7 @@ struct SlabAllocator {
 													 else                   return slabs1024.allocate();
 							  else                   if (slab_size <= 2048) return slabs2048.allocate();
 													 else                   return slabs4096.allocate();
-		return my_allocate(size, alignment);
+		return MyAllocator{}.allocate_impl(size, alignment, location);
 	}
 	void *reallocate(void *data, umm old_size, umm new_size, umm alignment, std::source_location location) {
 		assert(alignment > 0);
@@ -4449,10 +4486,10 @@ struct SlabAllocator {
 
 		auto result = allocate(new_size, alignment, location);
 		memcpy(result, data, old_size);
-		free(data, old_size, alignment, location);
+		deallocate(data, old_size, alignment, location);
 		return result;
 	}
-	void free(void *data, umm size, umm alignment, std::source_location location) {
+	void deallocate(void *data, umm size, umm alignment, std::source_location location) {
 		assert(alignment > 0);
 		assert(size > 0);
 		assert(size >= alignment);
@@ -4468,7 +4505,7 @@ struct SlabAllocator {
 													 else                   return slabs1024.free(data);
 							  else                   if (slab_size <= 2048) return slabs2048.free(data);
 													 else                   return slabs4096.free(data);
-		return my_deallocate(data, size);
+		return MyAllocator{}.deallocate_impl(data, size, alignment, location);
 	}
 };
 
@@ -4486,12 +4523,13 @@ auto slab_allocator_func(AllocatorMode mode, void *data, umm old_size, umm new_s
 			return slab_allocator.reallocate(data, old_size, new_size, align, location);
 		}
 		case Allocator_free: {
-			slab_allocator.free(data, new_size, align, location);
+			slab_allocator.deallocate(data, new_size, align, location);
 			break;
 		}
 	}
 	return 0;
 }
+#endif
 
 #include <tl/tracking_allocator.h>
 
@@ -4510,7 +4548,7 @@ s32 tl_main(Span<Span<utf8>> arguments) {
 
 	//write_test_source();
 
-	init_ast_allocator();
+	init_my_allocator();
 
 #if TRACK_ALLOCATIONS
 	allocation_sizes.allocator = os_allocator;
@@ -4523,27 +4561,25 @@ s32 tl_main(Span<Span<utf8>> arguments) {
 	};
 #else
 	default_allocator = current_allocator = {
-		[](AllocatorMode mode, void *data, umm old_size, umm new_size, umm align, std::source_location location, void *) -> void * {
+		.func = [](AllocatorMode mode, void *data, umm old_size, umm new_size, umm align, std::source_location location, void *) -> AllocationResult {
 			switch (mode) {
 				case Allocator_allocate: {
 #if TRACK_ALLOCATIONS
 					allocation_sizes.get_or_insert(location) += new_size;
 #endif
-					return my_allocate(new_size, align);
+					return MyAllocator{}.allocate_impl(new_size, align, location);
 				}
 				case Allocator_reallocate: {
-					auto result = my_allocate(new_size, align);
-					memcpy(result, data, old_size);
-					return result;
+					return MyAllocator{}.reallocate_impl(data, old_size, new_size, align, location);
 				}
 				case Allocator_free: {
-					my_deallocate(data, new_size);
-					return 0;
+					MyAllocator{}.deallocate_impl(data, new_size, align, location);
+					break;
 				}
 			}
-			return 0;
+			return {};
 		},
-		0
+		.state = 0
 	};
 #endif
 
@@ -4615,21 +4651,29 @@ s32 tl_main(Span<Span<utf8>> arguments) {
 
 restart_main:
 
-	timed_begin(context.profiler, "setup"s);
+	timed_begin(context.profiler, "setup"str);
 
 	context.current_directory = get_current_directory();
 
 	auto args = parse_arguments(arguments);
 
+	if (args.debug_paths) print("executable_directory: {}\n", context.executable_directory);
+
+	if (args.debug_paths) print("current_directory: {}\n", context.current_directory);
+
 	if (args.source_files.count == 0) {
 		print("No source path received. Exiting.\n");
 		return 1;
 	}
+
 	context.source_path = args.source_files[0];
 	if (!is_absolute_path(context.source_path)) {
 		context.source_path = make_absolute_path(context.source_path);
 	}
+	if (args.debug_paths) print("source_path: {}\n", context.source_path);
+
 	context.source_path_without_extension = parse_path(context.source_path).path_without_extension();
+	if (args.debug_paths) print("source_path_without_extension: {}\n", context.source_path_without_extension);
 
 	construct(parsed_files);
 	construct(global_scope);
@@ -4641,6 +4685,9 @@ restart_main:
 	construct(triple_char_tokens);
 	construct(import_paths);
 
+	construct(AstDefinition::storage);
+
+	/*
 	construct(Ref<AstAssert>::storage);
 	construct(Ref<AstAutocast>::storage);
 	construct(Ref<AstBinaryOperator>::storage);
@@ -4666,14 +4713,18 @@ restart_main:
 	construct(Ref<AstTypeof>::storage);
 	construct(Ref<AstUnaryOperator>::storage);
 	construct(Ref<AstWhile>::storage);
-
+	*/
 
 	HMODULE lib = 0;
-	if (args.output != u8"none"s) {
+	if (args.output == "none"str) {
+		context.register_size = 8;
+		context.stack_word_size = 8;
+		context.general_purpose_register_count = 16;
+	} else {
 		scoped_phase("Collecting target information");
 
 		with(temporary_allocator,
-			lib = LoadLibraryW((wchar *)to_utf16(concatenate(context.executable_directory, u8"\\outputs\\"s, args.output), true).data)
+			lib = LoadLibraryW((wchar *)to_utf16(concatenate(context.executable_directory, "\\outputs\\"str, args.output), true).data)
 		);
 
 		if (!lib) {
@@ -4694,46 +4745,51 @@ restart_main:
 
 
 	import_paths.add(context.current_directory);
-	import_paths.add(concatenate(context.executable_directory, u8"\\libs"s));
+	import_paths.add(concatenate(context.executable_directory, "\\libs"str));
 
-	double_char_tokens.insert(u8"=="s);
-	double_char_tokens.insert(u8"=>"s);
-	double_char_tokens.insert(u8"!="s);
-	double_char_tokens.insert(u8">="s);
-	double_char_tokens.insert(u8"<="s);
-	double_char_tokens.insert(u8"+="s);
-	double_char_tokens.insert(u8"-="s);
-	double_char_tokens.insert(u8"*="s);
-	double_char_tokens.insert(u8"/="s);
-	double_char_tokens.insert(u8"%="s);
-	double_char_tokens.insert(u8"|="s);
-	double_char_tokens.insert(u8"&="s);
-	double_char_tokens.insert(u8"^="s);
-	double_char_tokens.insert(u8"->"s);
-	double_char_tokens.insert(u8">>"s);
-	double_char_tokens.insert(u8"<<"s);
+	double_char_tokens.insert("=="str);
+	double_char_tokens.insert("=>"str);
+	double_char_tokens.insert("!="str);
+	double_char_tokens.insert(">="str);
+	double_char_tokens.insert("<="str);
+	double_char_tokens.insert("+="str);
+	double_char_tokens.insert("-="str);
+	double_char_tokens.insert("*="str);
+	double_char_tokens.insert("/="str);
+	double_char_tokens.insert("%="str);
+	double_char_tokens.insert("|="str);
+	double_char_tokens.insert("&="str);
+	double_char_tokens.insert("^="str);
+	double_char_tokens.insert("->"str);
+	double_char_tokens.insert(">>"str);
+	double_char_tokens.insert("<<"str);
 
-	triple_char_tokens.insert(u8">>="s);
-	triple_char_tokens.insert(u8"<<="s);
+	triple_char_tokens.insert(">>="str);
+	triple_char_tokens.insert("<<="str);
 
-	integer_infos[0] = {&type_u8,  -0xff_ib,               0xff_ib              };
-	integer_infos[1] = {&type_u16, -0xffff_ib,             0xffff_ib            };
-	integer_infos[2] = {&type_u32, -0xffffffff_ib,         0xffffffff_ib        };
-	integer_infos[3] = {&type_u64, -0xffffffffffffffff_ib, 0xffffffffffffffff_ib};
-	integer_infos[4] = {&type_s8,  -0xff_ib,               0xff_ib              };
-	integer_infos[5] = {&type_s16, -0xffff_ib,             0xffff_ib            };
-	integer_infos[6] = {&type_s32, -0xffffffff_ib,         0xffffffff_ib        };
-	integer_infos[7] = {&type_s64, -0xffffffffffffffff_ib, 0xffffffffffffffff_ib};
+	construct(keywords);
+#define E(name, value) keywords.get_or_insert((String)u8#name##s) = value;
+	ENUMERATE_KEYWORDS(E);
+#undef E
 
-	auto init_type = [&](AstStruct &s, Span<utf8> name, s64 size, s64 align) {
-		s.members.allocator = default_allocator;
-		s.constants.allocator = default_allocator;
+	integer_infos[0] = {&type_u8,  -make_big_int<BigInteger>(0xff),               make_big_int<BigInteger>(0xff)              };
+	integer_infos[1] = {&type_u16, -make_big_int<BigInteger>(0xffff),             make_big_int<BigInteger>(0xffff)            };
+	integer_infos[2] = {&type_u32, -make_big_int<BigInteger>(0xffffffff),         make_big_int<BigInteger>(0xffffffff)        };
+	integer_infos[3] = {&type_u64, -make_big_int<BigInteger>(0xffffffffffffffff), make_big_int<BigInteger>(0xffffffffffffffff)};
+	integer_infos[4] = {&type_s8,  -make_big_int<BigInteger>(0xff),               make_big_int<BigInteger>(0xff)              };
+	integer_infos[5] = {&type_s16, -make_big_int<BigInteger>(0xffff),             make_big_int<BigInteger>(0xffff)            };
+	integer_infos[6] = {&type_s32, -make_big_int<BigInteger>(0xffffffff),         make_big_int<BigInteger>(0xffffffff)        };
+	integer_infos[7] = {&type_s64, -make_big_int<BigInteger>(0xffffffffffffffff), make_big_int<BigInteger>(0xffffffffffffffff)};
+
+	auto init_type = [&](AstStruct &s, String name, s64 size, s64 align) {
+		s.members.allocator = {};
+		s.constants.allocator = {};
 		s.size = size;
 		s.alignment = align;
 		s.type = &type_type;
 		s.location = name;
 
-		auto definition = new_ast<AstDefinition>();
+		auto definition = AstDefinition::create();
 		definition->is_constant = true;
 		definition->expression = &s;
 		definition->location = definition->name = name;
@@ -4748,23 +4804,23 @@ restart_main:
 		//typechecked_globals.get_or_insert(name) = definition;
 	};
 
-	init_type(type_void,   u8"void"s, 0, 0);
-	init_type(type_type,   u8"type"s, 8, 8);
-	init_type(type_bool,   u8"bool"s, 1, 1);
-	init_type(type_u8,     u8"u8"s,   1, 1);
-	init_type(type_u16,    u8"u16"s,  2, 2);
-	init_type(type_u32,    u8"u32"s,  4, 4);
-	init_type(type_u64,    u8"u64"s,  8, 8);
-	init_type(type_s8,     u8"s8"s,   1, 1);
-	init_type(type_s16,    u8"s16"s,  2, 2);
-	init_type(type_s32,    u8"s32"s,  4, 4);
-	init_type(type_s64,    u8"s64"s,  8, 8);
-	init_type(type_f32,    u8"f32"s,  4, 4);
-	init_type(type_f64,    u8"f64"s,  8, 8);
-	init_type(type_string, u8"string"s, context.register_size * 2, 8);
-	init_type(type_unsized_integer,  u8"unsized integer"s, 0, 0);
-	init_type(type_unsized_float,  u8"unsized float"s, 0, 0);
-	init_type(type_noinit, u8"(noinit)"s, 0, 0);
+	init_type(type_void,   "void"str, 0, 0);
+	init_type(type_type,   "type"str, 8, 8);
+	init_type(type_bool,   "bool"str, 1, 1);
+	init_type(type_u8,     "u8"str,   1, 1);
+	init_type(type_u16,    "u16"str,  2, 2);
+	init_type(type_u32,    "u32"str,  4, 4);
+	init_type(type_u64,    "u64"str,  8, 8);
+	init_type(type_s8,     "s8"str,   1, 1);
+	init_type(type_s16,    "s16"str,  2, 2);
+	init_type(type_s32,    "s32"str,  4, 4);
+	init_type(type_s64,    "s64"str,  8, 8);
+	init_type(type_f32,    "f32"str,  4, 4);
+	init_type(type_f64,    "f64"str,  8, 8);
+	init_type(type_string, "string"str, context.register_size * 2, 8);
+	init_type(type_unsized_integer,  "unsized integer"str, 0, 0);
+	init_type(type_unsized_float,  "unsized float"str, 0, 0);
+	init_type(type_noinit, "(noinit)"str, 0, 0);
 
 	type_pointer_to_void.expression = &type_void;
 	type_pointer_to_void.operation = '*';
@@ -4783,39 +4839,39 @@ restart_main:
 	type_default_integer = type_default_signed_integer;
 	type_default_float = &type_f64;
 
-	add_member(type_u8,  &type_u8,  u8"min"s, make_integer(0), true, INVALID_MEMBER_OFFSET);
-	add_member(type_u16, &type_u16, u8"min"s, make_integer(0), true, INVALID_MEMBER_OFFSET);
-	add_member(type_u32, &type_u32, u8"min"s, make_integer(0), true, INVALID_MEMBER_OFFSET);
-	add_member(type_u64, &type_u64, u8"min"s, make_integer(0), true, INVALID_MEMBER_OFFSET);
-	add_member(type_u8,  &type_u8,  u8"max"s, make_integer(0xff), true, INVALID_MEMBER_OFFSET);
-	add_member(type_u16, &type_u16, u8"max"s, make_integer(0xffff), true, INVALID_MEMBER_OFFSET);
-	add_member(type_u32, &type_u32, u8"max"s, make_integer(0xffffffff), true, INVALID_MEMBER_OFFSET);
-	add_member(type_u64, &type_u64, u8"max"s, make_integer(0xffffffffffffffff), true, INVALID_MEMBER_OFFSET);
-	add_member(type_s8,  &type_s8,  u8"min"s, make_integer(0x80), true, INVALID_MEMBER_OFFSET);
-	add_member(type_s16, &type_s16, u8"min"s, make_integer(0x8000), true, INVALID_MEMBER_OFFSET);
-	add_member(type_s32, &type_s32, u8"min"s, make_integer(0x80000000), true, INVALID_MEMBER_OFFSET);
-	add_member(type_s64, &type_s64, u8"min"s, make_integer(0x8000000000000000), true, INVALID_MEMBER_OFFSET);
-	add_member(type_s8,  &type_s8,  u8"max"s, make_integer(0x7f), true, INVALID_MEMBER_OFFSET);
-	add_member(type_s16, &type_s16, u8"max"s, make_integer(0x7fff), true, INVALID_MEMBER_OFFSET);
-	add_member(type_s32, &type_s32, u8"max"s, make_integer(0x7fffffff), true, INVALID_MEMBER_OFFSET);
-	add_member(type_s64, &type_s64, u8"max"s, make_integer(0x7fffffffffffffff), true, INVALID_MEMBER_OFFSET);
-	add_member(type_string, make_pointer_type(&type_u8), u8"data"s, 0, false, 0);
-	add_member(type_string, type_default_unsigned_integer, u8"count"s, 0, false, 8);
+	add_member(type_u8,  &type_u8,  "min"str, make_integer(0), true, INVALID_MEMBER_OFFSET);
+	add_member(type_u16, &type_u16, "min"str, make_integer(0), true, INVALID_MEMBER_OFFSET);
+	add_member(type_u32, &type_u32, "min"str, make_integer(0), true, INVALID_MEMBER_OFFSET);
+	add_member(type_u64, &type_u64, "min"str, make_integer(0), true, INVALID_MEMBER_OFFSET);
+	add_member(type_u8,  &type_u8,  "max"str, make_integer(0xff), true, INVALID_MEMBER_OFFSET);
+	add_member(type_u16, &type_u16, "max"str, make_integer(0xffff), true, INVALID_MEMBER_OFFSET);
+	add_member(type_u32, &type_u32, "max"str, make_integer(0xffffffff), true, INVALID_MEMBER_OFFSET);
+	add_member(type_u64, &type_u64, "max"str, make_integer(0xffffffffffffffff), true, INVALID_MEMBER_OFFSET);
+	add_member(type_s8,  &type_s8,  "min"str, make_integer(0x80), true, INVALID_MEMBER_OFFSET);
+	add_member(type_s16, &type_s16, "min"str, make_integer(0x8000), true, INVALID_MEMBER_OFFSET);
+	add_member(type_s32, &type_s32, "min"str, make_integer(0x80000000), true, INVALID_MEMBER_OFFSET);
+	add_member(type_s64, &type_s64, "min"str, make_integer(0x8000000000000000), true, INVALID_MEMBER_OFFSET);
+	add_member(type_s8,  &type_s8,  "max"str, make_integer(0x7f), true, INVALID_MEMBER_OFFSET);
+	add_member(type_s16, &type_s16, "max"str, make_integer(0x7fff), true, INVALID_MEMBER_OFFSET);
+	add_member(type_s32, &type_s32, "max"str, make_integer(0x7fffffff), true, INVALID_MEMBER_OFFSET);
+	add_member(type_s64, &type_s64, "max"str, make_integer(0x7fffffffffffffff), true, INVALID_MEMBER_OFFSET);
+	add_member(type_string, make_pointer_type(&type_u8), "data"str, 0, false, 0);
+	add_member(type_string, type_default_unsigned_integer, "count"str, 0, false, 8);
 
-	auto add_global_alias = [&](Span<utf8> name, AstExpression *expression) {
-		auto defn = new_ast<AstDefinition>();
+	auto add_global_alias = [&](String name, AstExpression *expression) {
+		auto defn = AstDefinition::create();
 		defn->location = defn->name = name;
 		defn->is_constant = true;
 		defn->built_in = true;
-		defn->parent_scope = &global_scope;
 		defn->type = expression->type;
 		defn->expression = expression;
-		defn->parent_scope->definitions.get_or_insert(defn->name).add(defn);
-		defn->parent_scope->statements.add(defn);
+		// defn->set_parent_scope(&global_scope);
+		global_scope.definitions.get_or_insert(defn->name).add(defn);
+		global_scope.statements.add(defn);
 	};
-	add_global_alias(u8"sint"s, type_default_integer);
-	add_global_alias(u8"uint"s, type_default_unsigned_integer);
-	add_global_alias(u8"int"s, type_default_signed_integer);
+	add_global_alias("sint"str, type_default_integer);
+	add_global_alias("uint"str, type_default_unsigned_integer);
+	add_global_alias("int"str, type_default_signed_integer);
 
 	built_in_casts.insert({&type_u8 , &type_s8 , /*CastKind::u8_s8  , */false});
 	built_in_casts.insert({&type_u8 , &type_s16, /*CastKind::u8_s16 , */true});
@@ -4879,12 +4935,12 @@ restart_main:
 
 	current_printer = standard_output_printer;
 
-	timed_end("setup"s);
+	timed_end("setup"str);
 
 	{
 		scoped_phase("Parsing");
 
-		auto parsed = parse_file(concatenate(context.executable_directory, u8"\\libs\\preload.tl"s));
+		auto parsed = parse_file(concatenate(context.executable_directory, "\\libs\\preload.tl"str));
 		assert_always(parsed->result != ParseResult::read_error);
 		// global_scope.append(parsed->scope);
 
@@ -4913,7 +4969,7 @@ restart_main:
 	if (!args.no_typecheck) {
 		scoped_phase("Typechecking");
 
-		timed_block(context.profiler, "typecheck"s);
+		timed_block(context.profiler, "typecheck"str);
 
 		Span<TypecheckState> typecheck_states;
 		typecheck_states.count = count(global_scope.statements, [&](AstStatement *statement) { return !(statement->kind == Ast_definition && ((AstDefinition *)statement)->built_in); });
@@ -4990,7 +5046,7 @@ restart_main:
 		return 1;
 	}
 
-	auto found_build_definitions = global_scope.definitions.find(u8"build"s);
+	auto found_build_definitions = global_scope.definitions.find("build"str);
 	if (found_build_definitions) {
 		auto build_definitions = *found_build_definitions;
 		if (build_definitions.count != 1) {
@@ -5009,7 +5065,7 @@ restart_main:
 		}
 	}
 
-	auto found_main_definitions = global_scope.definitions.find(u8"main"s);
+	auto found_main_definitions = global_scope.definitions.find("main"str);
 	if (found_main_definitions) {
 		auto main_definitions = *found_main_definitions;
 		if (main_definitions.count != 1) {
@@ -5041,7 +5097,7 @@ restart_main:
 		bytecode = build_bytecode();
 	}
 
-	if (args.output != u8"none"s) {
+	if (args.output != "none"str) {
 		scoped_phase("Generating executable");
 
 		auto build = (OutputBuilder)GetProcAddress(lib, "tlang_build_output");

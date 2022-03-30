@@ -117,13 +117,36 @@ struct Ref {
 	}
 };
 
-struct Scope {
+#define REFERENCE32(type, name) \
+	u32 _##name##_index = (u32)~0; \
+	type *##name##() { return &type::storage[_##name##_index]; } \
+	void set_##name##(type *value) { auto idx = index_of(type::storage, value); assert((umm)(u32)idx == idx); _##name##_index = (u32)idx; } \
+	bool has_##name##() { return _##name##_index != (u32)~0; }
+
+template <class T>
+struct DefaultAllocatable {
+	inline static T *create(TL_LPC) {
+		return default_allocator.allocate<T>(TL_LAC);
+	}
+};
+
+template <class T>
+struct StorageAllocatable {
+	inline static BlockList<T> storage;
+	inline static T *create(TL_LPC) {
+		return &T::storage.add(TL_LAC);
+	}
+};
+
+using DefinitionList = List<AstDefinition *, MyAllocator, u32>;
+
+struct Scope : DefaultAllocatable<Scope> {
 	AstNode *node = 0;
 	Scope *parent = 0;
 	u32 level = 0;
 	List<Scope *> children;
 	List<AstStatement *> statements;
-	HashMap<Span<utf8>, List<AstDefinition *>> definitions; // multiple definitions for a single name in case of function overloading
+	HashMap<String, DefinitionList> definitions; // multiple definitions for a single name in case of function overloading
 	List<AstDefer *> bytecode_defers;
 
 	void append(Scope &that) {
@@ -135,19 +158,30 @@ struct Scope {
 	}
 };
 
+template <class T>
+T *NEW(TL_LPC) {
+	return default_allocator.allocate<T>(TL_LAC);
+}
+
 extern s32 ast_node_uid_counter;
 
 struct AstNode {
 	AstKind kind = Ast_null;
-	s32 uid = atomic_increment(&ast_node_uid_counter);
-	Span32<utf8> location;
+	Span<utf8, u32> location;
+
+#if TL_DEBUG
+	s32 _uid = atomic_increment(&ast_node_uid_counter);
+	s32 uid() { return _uid; }
+#else
+	s32 uid() { return 0; }
+#endif
 };
 inline static constexpr auto sizeof_AstNode = sizeof AstNode;
 
 struct AstStatement : AstNode {
 };
 
-struct AstBlock : AstStatement {
+struct AstBlock : AstStatement, DefaultAllocatable<AstBlock> {
 	AstBlock() {
 		kind = Ast_block;
 		scope.node = this;
@@ -156,7 +190,7 @@ struct AstBlock : AstStatement {
 	Scope scope;
 };
 
-struct AstExpressionStatement : AstStatement {
+struct AstExpressionStatement : AstStatement, DefaultAllocatable<AstExpressionStatement> {
 	AstExpressionStatement() { kind = Ast_expression_statement; }
 	AstExpression *expression = 0;
 };
@@ -176,22 +210,24 @@ enum class LiteralKind : u8 {
 	type,
 };
 
-struct AstLiteral : AstExpression {
+using BigInteger = tl::impl::BigInt<u64, List<u64, MyAllocator, u32>>;
 
-	LiteralKind literal_kind = {};
+struct AstLiteral : AstExpression, DefaultAllocatable<AstLiteral> {
 
 	union {
-		BigInt integer;
+		BigInteger integer;
 		bool Bool;
 		struct {
-			Span<utf8> string;
-			s64 string_data_offset;
+			Span<utf8, u32> string;
+			s32 string_data_offset;
 #pragma warning(suppress: 4201)
 		};
 		u32 character;
 		f64 Float;
 		AstExpression *type_value;
 	};
+
+	LiteralKind literal_kind = {};
 
 	AstLiteral() {
 		memset(this, 0, sizeof(*this));
@@ -202,23 +238,25 @@ struct AstLiteral : AstExpression {
 	}
 };
 
+inline static constexpr auto sizeof_AstLiteral = sizeof AstLiteral;
+
 #define INVALID_MEMBER_OFFSET (-1)
 #define INVALID_DATA_OFFSET (-1)
 
-struct AstDefinition : AstStatement {
+struct AstDefinition : AstStatement, StorageAllocatable<AstDefinition> {
 	AstDefinition() { kind = Ast_definition; }
 
-	Span<utf8> name = {};
 	AstExpression *expression = 0;
 	AstExpression *type = 0;
+	AstExpression *parent_block = 0;
 
 	Box<AstLiteral> evaluated;
 
-	AstExpression *parent_block = 0;
-	Scope *parent_scope = 0;
+	// REFERENCE32(Scope, parent_scope);
 
-	s64 offset_in_struct = INVALID_MEMBER_OFFSET;
-	s64 bytecode_offset = INVALID_DATA_OFFSET;
+	Span<utf8, u32> name = {};
+	s32 offset_in_struct = INVALID_MEMBER_OFFSET;
+	s32 bytecode_offset = INVALID_DATA_OFFSET;
 
 	bool is_constant         : 1 = false;
 	bool is_parameter        : 1 = false;
@@ -226,27 +264,30 @@ struct AstDefinition : AstStatement {
 	bool is_return_parameter : 1 = false;
 };
 
-struct AstReturn : AstStatement {
+// Started with 176
+inline static constexpr auto sizeof_AstDefinition = sizeof AstDefinition;
+
+struct AstReturn : AstStatement, DefaultAllocatable<AstReturn> {
 	AstReturn() { kind = Ast_return; }
 
 	AstExpression *expression = 0;
 	AstLambda *lambda = 0;
 };
 
-struct AstIdentifier : AstExpression {
+struct AstIdentifier : AstExpression, DefaultAllocatable<AstIdentifier> {
 	AstIdentifier() { kind = Ast_identifier; }
 
-	Span32<utf8> name;
+	Span<utf8, u32> name;
 
-	AstDefinition *definition = {};
+	REFERENCE32(AstDefinition, definition);
 
-	List32<AstDefinition *> possible_definitions;
+	DefinitionList possible_definitions;
 
 };
 
 inline static constexpr auto sizeof_AstIdentifier = sizeof AstIdentifier;
-inline static constexpr auto sizeof_Span32 = sizeof Span32<AstIdentifier>;
-inline static constexpr auto sizeof_List32 = sizeof List32<AstIdentifier>;
+inline static constexpr auto sizeof_Span32 = sizeof Span<AstIdentifier, u32>;
+inline static constexpr auto sizeof_List32 = sizeof List<AstIdentifier, MyAllocator, u32>;
 
 struct Instruction;
 
@@ -262,7 +303,7 @@ enum class CallingConvention : u8 {
 };
 
 // MYTYPEISME
-struct AstLambda : AstExpression {
+struct AstLambda : AstExpression, DefaultAllocatable<AstLambda> {
 	AstLambda() {
 		kind = Ast_lambda;
 		parameter_scope.node = this;
@@ -278,15 +319,15 @@ struct AstLambda : AstExpression {
 	Scope parameter_scope;
 	Scope body_scope;
 
-	List<AstDefinition *> parameters; // This will be small most of the time, so no need in hashmap
+	DefinitionList parameters; // This will be small most of the time, so no need in hashmap
 
-	//List<AstDefinition *> return_parameters;
+	//DefinitionList return_parameters;
 
 	// List<AstStatement *> statements;
 
 	AstLambda *parent_lambda = 0;
 
-	// HashMap<Span<utf8>, AstDefinition *> local_definitions;
+	// HashMap<String, AstDefinition *> local_definitions;
 
 	bool has_body                   : 1 = true;
 	bool is_type                    : 1 = false;
@@ -294,7 +335,7 @@ struct AstLambda : AstExpression {
 	bool is_intrinsic               : 1 = false;
 
 	ExternLanguage extern_language = {};
-	Span<utf8> extern_library;
+	String extern_library;
 
 	Instruction *first_instruction = 0;
 	s64 location_in_bytecode = -1;
@@ -314,13 +355,13 @@ struct AstLambda : AstExpression {
 	List<ReturnInfo> return_jumps;
 };
 
-struct AstTuple : AstExpression {
+struct AstTuple : AstExpression, DefaultAllocatable<AstTuple> {
 	AstTuple() { kind = Ast_tuple; }
 
 	List<AstExpression *> expressions;
 };
 
-struct AstCall : AstExpression {
+struct AstCall : AstExpression, DefaultAllocatable<AstCall> {
 	AstCall() { kind = Ast_call; }
 
 	AstExpression *callable = 0;
@@ -334,7 +375,7 @@ enum class StructLayout {
 	c,
 };
 
-struct AstStruct : AstExpression {
+struct AstStruct : AstExpression, DefaultAllocatable<AstStruct> {
 	AstStruct() {
 		kind = Ast_struct;
 		scope.node = this;
@@ -343,8 +384,8 @@ struct AstStruct : AstExpression {
 	AstDefinition *definition = 0;
 
 	// TODO: this is redundant
-	List<AstDefinition *> members;
-	List<AstDefinition *> constants;
+	DefinitionList members;
+	DefinitionList constants;
 
 	Scope scope;
 
@@ -354,7 +395,7 @@ struct AstStruct : AstExpression {
 	StructLayout layout = StructLayout::none;
 };
 
-struct AstIf : AstStatement {
+struct AstIf : AstStatement, DefaultAllocatable<AstIf> {
 	AstIf() {
 		kind = Ast_if;
 		true_scope.node = this;
@@ -367,7 +408,7 @@ struct AstIf : AstStatement {
 	Scope false_scope;
 };
 
-struct AstWhile : AstStatement {
+struct AstWhile : AstStatement, DefaultAllocatable<AstWhile> {
 	AstWhile() {
 		kind = Ast_while;
 		scope.node = this;
@@ -412,7 +453,7 @@ enum class BinaryOperation {
     count,
 };
 
-struct AstBinaryOperator : AstExpression {
+struct AstBinaryOperator : AstExpression, DefaultAllocatable<AstBinaryOperator> {
 	AstBinaryOperator() { kind = Ast_binary_operator; }
 
 	BinaryOperation operation = {};
@@ -423,7 +464,7 @@ struct AstBinaryOperator : AstExpression {
 
 using UnaryOperation = u32;
 
-struct AstUnaryOperator : AstExpression {
+struct AstUnaryOperator : AstExpression, DefaultAllocatable<AstUnaryOperator> {
 	AstUnaryOperator() { kind = Ast_unary_operator; }
 
 	UnaryOperation operation = {};
@@ -431,7 +472,7 @@ struct AstUnaryOperator : AstExpression {
 	AstExpression *expression = 0;
 };
 
-struct AstSubscript : AstExpression {
+struct AstSubscript : AstExpression, DefaultAllocatable<AstSubscript> {
 	AstSubscript() { kind = Ast_subscript; }
 	AstExpression *expression = 0;
 	AstExpression *index_expression = 0;
@@ -442,12 +483,12 @@ struct AstSubscript : AstExpression {
 	// bool is_simd   : 1 = false;
 };
 
-struct AstPrint : AstStatement {
+struct AstPrint : AstStatement, DefaultAllocatable<AstPrint> {
 	AstPrint() {kind = Ast_print;}
 	AstExpression *expression = 0;
 };
 
-struct AstCast : AstExpression {
+struct AstCast : AstExpression, DefaultAllocatable<AstCast> {
 	AstCast() { kind = Ast_cast; }
 
 	AstExpression *expression = 0;
@@ -455,24 +496,24 @@ struct AstCast : AstExpression {
 	// AstLambda *lambda = 0; // non null for user defined casts
 };
 
-struct AstAutocast : AstExpression {
+struct AstAutocast : AstExpression, DefaultAllocatable<AstAutocast> {
 	AstAutocast() { kind = Ast_autocast; }
 	AstExpression *expression = 0;
 };
 
-struct AstSizeof : AstExpression {
+struct AstSizeof : AstExpression, DefaultAllocatable<AstSizeof> {
 	AstSizeof() { kind = Ast_sizeof; }
 
 	AstExpression *expression = 0;
 };
 
-struct AstTypeof : AstExpression {
+struct AstTypeof : AstExpression, DefaultAllocatable<AstTypeof> {
 	AstTypeof() { kind = Ast_typeof; }
 
 	AstExpression *expression = 0;
 };
 
-struct AstTest : AstStatement {
+struct AstTest : AstStatement, DefaultAllocatable<AstTest> {
 	AstTest() {
 		kind = Ast_test;
 		scope.node = this;
@@ -483,7 +524,7 @@ struct AstTest : AstStatement {
 	Scope scope;
 };
 
-struct AstIfx : AstExpression {
+struct AstIfx : AstExpression, DefaultAllocatable<AstIfx> {
 	AstIfx() {
 		kind = Ast_ifx;
 	}
@@ -492,7 +533,7 @@ struct AstIfx : AstExpression {
 	AstExpression *false_expression = 0;
 };
 
-struct AstAssert : AstStatement {
+struct AstAssert : AstStatement, DefaultAllocatable<AstAssert> {
 	AstAssert() {
 		kind = Ast_assert;
 	}
@@ -500,16 +541,16 @@ struct AstAssert : AstStatement {
 };
 
 // MYTYPEISME
-struct AstImport : AstExpression {
+struct AstImport : AstExpression, DefaultAllocatable<AstImport> {
 	AstImport() {
 		kind = Ast_import;
 	}
 
-	Span<utf8> path;
+	String path;
 	Scope *scope = 0;
 };
 
-struct AstDefer : AstStatement {
+struct AstDefer : AstStatement, DefaultAllocatable<AstDefer> {
 	AstDefer() {
 		kind = Ast_defer;
 		scope.node = this;
@@ -549,7 +590,7 @@ extern Mutex global_scope_mutex;
 void lock(Scope *scope);
 void unlock(Scope *scope);
 
-extern HashMap<Span<utf8>, AstDefinition *> names_not_available_for_globals;
+extern HashMap<String, AstDefinition *> names_not_available_for_globals;
 
 bool needs_semicolon(AstExpression *node);
 bool can_be_global(AstStatement *statement);
@@ -557,16 +598,8 @@ bool can_be_global(AstStatement *statement);
 AstStruct &get_built_in_type_from_token(TokenKind t);
 AstStruct *find_built_in_type_from_token(TokenKind t);
 
-void *my_allocate(umm size, umm align);
-void *my_reallocate(void *data, umm old_size, umm new_size, umm align);
-void my_deallocate(void *data, umm size);
 
-template <class T>
-T *new_ast(TL_LPC) {
-	return &Ref<T>::storage.add();
-}
-
-inline Optional<BigInt> get_constant_integer(AstExpression *expression) {
+inline Optional<BigInteger> get_constant_integer(AstExpression *expression) {
 	switch (expression->kind) {
 		case Ast_literal: {
 			auto literal = (AstLiteral *)expression;
@@ -577,8 +610,8 @@ inline Optional<BigInt> get_constant_integer(AstExpression *expression) {
 		}
 		case Ast_identifier: {
 			auto ident = (AstIdentifier *)expression;
-			if (ident->definition && ident->definition->is_constant) {
-				return get_constant_integer(ident->definition->expression);
+			if (ident->has_definition() && ident->definition()->is_constant) {
+				return get_constant_integer(ident->definition()->expression);
 			}
 			break;
 		}
@@ -623,10 +656,10 @@ inline Optional<BigInt> get_constant_integer(AstExpression *expression) {
 
 // Returns a human readable string.
 // For example for type `int` it will return "int (aka s64)"
-List<utf8> type_to_string(AstExpression *type, bool silent_error = false);
+HeapString type_to_string(AstExpression *type, bool silent_error = false);
 
 // Returns just the name of the type without synonyms
-List<utf8> type_name     (AstExpression *type, bool silent_error = false);
+HeapString type_name     (AstExpression *type, bool silent_error = false);
 
 inline s64 get_size(AstExpression *type) {
 	assert(type);
@@ -637,7 +670,7 @@ inline s64 get_size(AstExpression *type) {
 		}
 		case Ast_identifier: {
 			auto identifier = (AstIdentifier *)type;
-			return get_size(identifier->definition->expression);
+			return get_size(identifier->definition()->expression);
 		}
 		case Ast_unary_operator: {
 			auto unop = (AstUnaryOperator *)type;
@@ -682,10 +715,8 @@ AstStruct *get_struct(AstExpression *type);
 AstExpression *direct(AstExpression *type);
 AstExpression *get_definition_expression(AstExpression *expression);
 
-void init_ast_allocator();
-
-Span<utf8> operator_string(u64 op);
-Span<utf8> operator_string(BinaryOperation op);
+String operator_string(u64 op);
+String operator_string(BinaryOperation op);
 
 bool is_integer(AstExpression *type);
 bool is_signed(AstExpression *type);
