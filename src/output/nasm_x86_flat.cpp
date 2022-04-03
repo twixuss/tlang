@@ -323,11 +323,11 @@ DECLARE_OUTPUT_BUILDER {
 
 		append_format(bat_builder, u8R"(@echo off
 {}\nasm -f bin "{}.asm" -o "{}.bin" -w-number-overflow -w-db-empty
-	)", context.executable_directory, output_path_base, output_path_base);
+	)", context.compiler_directory, output_path_base, output_path_base);
 
 		append(bat_builder, "if %errorlevel% neq 0 exit /b %errorlevel%\n");
 
-		auto bat_path = to_pathchars(concatenate(context.executable_directory, u8"\\nasm_build.bat"s));
+		auto bat_path = to_pathchars(concatenate(context.compiler_directory, u8"\\nasm_build.bat"s));
 		write_entire_file(bat_path, as_bytes(to_string(bat_builder)));
 
 		timed_block(context.profiler, "nasm"s);

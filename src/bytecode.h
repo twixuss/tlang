@@ -240,6 +240,9 @@ enum class InstructionKind : u8 {
 	begin_lambda,
 	end_lambda,
 
+	cvt_f32_s32,
+	cvt_s32_f32,
+
 	cvt_f64_s64,
 	cvt_s64_f64,
 
@@ -435,6 +438,9 @@ struct Instruction {
 
 		struct { AstLambda *lambda; CallingConvention convention; } begin_lambda;
 		struct { AstLambda *lambda; CallingConvention convention; } end_lambda;
+
+		struct {} cvt_f32_s32;
+		struct {} cvt_s32_f32;
 
 		struct {} cvt_f64_s64;
 		struct {} cvt_s64_f64;

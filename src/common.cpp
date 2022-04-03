@@ -1,4 +1,6 @@
 #include "common.h"
+#define NOMINMAX
+#include <Windows.h>
 CompilerContext context;
 
 SourceFileInfo &get_source_info(utf8 *location);
@@ -187,14 +189,15 @@ HeapString where(utf8 *location) {
 }
 
 void print_report(Report r) {
-	print("{}: ", r.where);
+	if (r.where.count)
+		print("{}: ", r.where);
 	switch (r.kind) {
 		case ReportKind::info:    print(Print_info,    u8"Info"s);  break;
 		case ReportKind::warning: print(Print_warning, u8"Warning"s); break;
 		case ReportKind::error:	  print(Print_error,   u8"Error"s);	  break;
 		default: invalid_code_path();
 	}
-	print(": {}.\n", r.message);
+	print(": {}\n", r.message);
 	print_source_line(r.kind, r.location);
 }
 
@@ -263,4 +266,91 @@ AllocationResult MyAllocator::reallocate_impl(void *data, umm old_size, umm new_
 void MyAllocator::deallocate_impl(void *data, umm size, umm align, std::source_location location) {
 	(void)data;
 	(void)size;
+}
+
+HeapString escape_string(String string) {
+	if (!string.count)
+		return {};
+
+	HeapString new_string;
+	new_string.reserve(string.count);
+
+	auto p = string.data;
+	utf32 c = 0;
+	utf32 prev = 0;
+
+	while (1) {
+		if (p >= string.end())
+			break;
+		auto got_char = get_char_and_advance_utf8(&p);
+		if (!got_char) {
+			return {};
+		}
+
+		prev = c;
+		c = got_char.value_unchecked();
+
+		switch (c) {
+			case '"':  { new_string.add({'\\', '"'}); break; }
+			case '\n': { new_string.add({'\\', 'n'}); break; }
+			case '\r': { new_string.add({'\\', 'r'}); break; }
+			case '\t': { new_string.add({'\\', 't'}); break; }
+			case '\0': { new_string.add({'\\', '0'}); break; }
+			case '\\': { new_string.add({'\\', '\\'}); break; }
+			default: { new_string.add(c); break; }
+		}
+	}
+	return new_string;
+}
+
+HeapString unescape_string(String string) {
+
+	if (!string.count)
+		return {};
+
+	if (string.front() == '"') {
+		assert(string.back() == '"');
+		string.data  += 1;
+		string.count -= 2;
+	} else if (string.front() == '\'') {
+		assert(string.back() == '\'');
+		string.data  += 1;
+		string.count -= 2;
+	}
+
+	if (!string.count)
+		return {};
+
+	HeapString new_string;
+	new_string.reserve(string.count);
+
+	auto p = string.data;
+	utf32 c = 0;
+	utf32 prev = 0;
+
+	while (1) {
+		if (p >= string.end())
+			break;
+		auto got_char = get_char_and_advance_utf8(&p);
+		if (!got_char) {
+			return {};
+		}
+
+		prev = c;
+		c = got_char.value_unchecked();
+
+		if (prev == '\\') {
+			switch (c) {
+				case 'n': { new_string.back() = '\n'; break; }
+				case 'r': { new_string.back() = '\r'; break; }
+				case 't': { new_string.back() = '\t'; break; }
+				case '0': { new_string.back() = '\0'; break; }
+				case '\\': { new_string.back() = '\\'; c = 0; break; }
+				default: { new_string.back() = c; break; }
+			}
+		} else {
+			new_string.add(c);
+		}
+	}
+	return new_string;
 }

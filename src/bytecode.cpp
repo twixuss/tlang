@@ -758,7 +758,7 @@ static Optional<Register> load_address_of(Optional<Register> destination, Conver
 		}
 		case Ast_identifier: {
 			auto identifier = (AstIdentifier *)expression;
-			auto definition = identifier->definition();
+			auto definition = identifier->definition;
 
 			if (definition->expression && definition->expression->kind == Ast_lambda) {
 				expression = definition->expression;
@@ -851,7 +851,7 @@ static Optional<Register> load_address_of(Optional<Register> destination, Conver
 			using enum BinaryOperation;
 			assert(binop->operation == dot);
 			assert(binop->right->kind == Ast_identifier);
-			auto offset = ((AstIdentifier *)binop->right)->definition()->offset_in_struct;
+			auto offset = ((AstIdentifier *)binop->right)->definition->offset_in_struct;
 			assert(offset != INVALID_MEMBER_OFFSET);
 			auto destination = load_address_of(conv, binop->left);
 			if (offset) {
@@ -1219,9 +1219,9 @@ static void append(Converter &conv, AstDefinition *definition) {
 
 	auto definition_size = get_size(definition->type);
 
-	if (definition->parent_block && definition->parent_block->kind != Ast_struct && definition->is_constant) {
-		return;
-	}
+	// if (definition->parent_block && definition->parent_block->kind != Ast_struct && definition->is_constant) {
+	// 	return;
+	// }
 
 	if (definition->expression && definition->expression->kind == Ast_lambda) {
 		append(conv, (AstLambda *)definition->expression, false);
@@ -1244,7 +1244,7 @@ static void append(Converter &conv, AstDefinition *definition) {
 			parent_lambda->offset_accumulator += size;
 
 			if (definition->expression) {
-				if (definition->expression->type == &type_noinit) {
+				if (definition->expression->type == type_noinit) {
 					I(sub_rc, rs, size);
 				} else {
 					append(conv, definition->expression);
@@ -1356,7 +1356,7 @@ static void append(Converter &conv, AstBinaryOperator *bin) {
 
 					assert(right->kind == Ast_identifier);
 					auto ident = (AstIdentifier *)right;
-					auto member = ident->definition();
+					auto member = ident->definition;
 					assert(member);
 					auto member_size = get_size(member->type);
 
@@ -1437,8 +1437,22 @@ static void append(Converter &conv, AstBinaryOperator *bin) {
 			case bsl: {
 				append(conv, left);
 				append(conv, right);
-				// TODO: types_match here is too much, figure out a simpler way
-				if (types_match(bin->left->type, &type_f64)) {
+
+				auto lt = direct(bin->left->type);
+
+				if (lt == type_f32) {
+					I(pop_f, x1);
+					I(pop_f, x0);
+					switch (bin->operation) {
+						case add:  I(add_f32_f32, x0, x1); break;
+						case sub:  I(sub_f32_f32, x0, x1); break;
+						case mul:  I(mul_f32_f32, x0, x1); break;
+						case div:  I(div_f32_f32, x0, x1); break;
+						// case mod:  I(mod_f64, x0, x1); break;
+						default: invalid_code_path();
+					}
+					I(push_f, x0);
+				} else if (lt == type_f64) {
 					I(pop_f, x1);
 					I(pop_f, x0);
 					switch (bin->operation) {
@@ -1447,11 +1461,6 @@ static void append(Converter &conv, AstBinaryOperator *bin) {
 						case mul:  I(mul_f64_f64, x0, x1); break;
 						case div:  I(div_f64_f64, x0, x1); break;
 						// case mod:  I(mod_f64, x0, x1); break;
-						// case bor:  I(bor_f64, x0, x1); break;
-						// case band: I(band_f64, x0, x1); break;
-						// case bxor: I(bxor_f64, x0, x1); break;
-						// case bsr:  I(bsr_f64, x0, x1); break;
-						// case bsl:  I(bsl_f64, x0, x1); break;
 						default: invalid_code_path();
 					}
 					I(push_f, x0);
@@ -1474,8 +1483,10 @@ static void append(Converter &conv, AstBinaryOperator *bin) {
 				}
 				break;
 			}
-			case ass: { // TODO: BUG: right evaluates first rn, should push destination address, then evaluate right
+			case ass: {
 				auto bytes_to_write = get_size(left->type);
+				assert(bytes_to_write);
+
 				auto expr_size = get_size(right->type);
 				assert(bytes_to_write == expr_size);
 
@@ -1486,6 +1497,9 @@ static void append(Converter &conv, AstBinaryOperator *bin) {
 					append(conv, right);
 					append_memory_copy(conv, dst, rs, bytes_to_write, false, right->location, left->location); // will pop src and dst addresses
 					free_register(conv, dst);
+
+					push_comment(conv, u8"remove right from the stack"s);
+					I(add_rc, rs, ceil(bytes_to_write, context.stack_word_size));
 				} else {
 					append(conv, right);
 
@@ -1496,8 +1510,10 @@ static void append(Converter &conv, AstBinaryOperator *bin) {
 					}
 
 					append_memory_copy(conv, r0, rs, bytes_to_write, false, right->location, left->location); // will pop src and dst addresses
+
+					push_comment(conv, u8"remove left address and right from the stack"s);
+					I(add_rc, rs, ceil(bytes_to_write, context.stack_word_size) + context.stack_word_size);
 				}
-				I(add_rc, rs, ceil(bytes_to_write, context.stack_word_size));
 
 				break;
 
@@ -1631,7 +1647,8 @@ static void append(Converter &conv, AstBinaryOperator *bin) {
 static void append(Converter &conv, AstIdentifier *identifier) {
 	push_comment(conv, format(u8"load identifer {}", identifier->name));
 
-	auto definition = identifier->definition();
+	auto definition = identifier->definition;
+	assert(definition->bytecode_offset != -1);
 
 	if (definition->expression && definition->expression->kind == Ast_lambda) {
 		// :PUSH_ADDRESS: TODO: Replace this with load_address_of
@@ -1875,7 +1892,7 @@ static void append(Converter &conv, AstCall *call) {
 				I(add_rc, rs, 8);
 			}
 
-			if (!types_match(call->type, &type_void)) {
+			if (!types_match(call->type, type_void)) {
 				assert(get_size(lambda->return_parameter->type) > 0);
 				I(push_r, to_bc_register(Register64::rax));
 			}
@@ -1933,10 +1950,13 @@ static void append(Converter &conv, AstCall *call) {
 	}
 }
 static void append(Converter &conv, AstLiteral *literal) {
-	push_comment(conv, format(u8"literal {}", literal->location));
+	if (literal->literal_kind == LiteralKind::string)
+		push_comment(conv, format(u8"literal \"{}\"", escape_string(literal->string)));
+	else
+		push_comment(conv, format(u8"literal {}", literal->location));
 
-	assert(literal->type != &type_unsized_integer);
-	assert(literal->type != &type_unsized_float);
+	assert(literal->type != type_unsized_integer);
+	assert(literal->type != type_unsized_float);
 	auto dtype = direct(literal->type);
 
 	using enum LiteralKind;
@@ -1972,23 +1992,23 @@ static void append(Converter &conv, AstLiteral *literal) {
 			I(push_c, (u8)literal->Bool);
 			break;
 		case integer: {
-			if (dtype == &type_u8 ||
-				dtype == &type_s8)
+			if (dtype == type_u8 ||
+				dtype == type_s8)
 				I(push_c, (u8)literal->integer);
-			else if (dtype == &type_u16 ||
-					 dtype == &type_s16)
+			else if (dtype == type_u16 ||
+					 dtype == type_s16)
 				I(push_c, (u16)literal->integer);
-			else if (dtype == &type_u32 ||
-					 dtype == &type_s32)
+			else if (dtype == type_u32 ||
+					 dtype == type_s32)
 				I(push_c, (u32)literal->integer);
-			else if (dtype == &type_u64 ||
-					 dtype == &type_s64 ||
-					 dtype == &type_pointer_to_void)
+			else if (dtype == type_u64 ||
+					 dtype == type_s64 ||
+					 dtype == type_pointer_to_void)
 				I(push_c, (s64)literal->integer);
-			else if (dtype == &type_f32) {
+			else if (dtype == type_f32) {
 				auto f = (f32)(s64)literal->integer;
 				I(push_c, *(s32 *)&f);
-			} else if (dtype == &type_f64) {
+			} else if (dtype == type_f64) {
 				auto f = (f64)(s64)literal->integer;
 				I(push_c, *(s64 *)&f);
 			}
@@ -2000,6 +2020,22 @@ static void append(Converter &conv, AstLiteral *literal) {
 	}
 }
 static void append(Converter &conv, AstIf *If) {
+#if 0
+	if (If->is_constant) {
+		// constant if's statements were brought outside already by the typechecker. No need to append it.
+		return;
+	}
+#else
+	if (If->is_constant) {
+		// NOTE: constant if's scope is not merged into it's parent.
+		auto scope = If->true_branch_was_taken ? &If->true_scope : &If->false_scope;
+		for (auto statement : scope->statements) {
+			append(conv, statement);
+		}
+		return;
+	}
+#endif
+
 	auto start_offset = conv.lambda->offset_accumulator;
 
 	append(conv, If->condition);
@@ -2261,8 +2297,19 @@ static void append(Converter &conv, AstCast *cast) {
 		return;
 	}
 
-	auto from = get_struct(cast->expression->type);
-	auto to = get_struct(cast->type);
+	AstStruct *from = 0;
+	AstStruct *to = 0;
+
+	if (is_pointer_internally(cast->expression->type))
+		from = type_u64;
+	else
+		from = get_struct(cast->expression->type);
+
+	if (is_pointer_internally(cast->type))
+		to = type_u64;
+	else
+		to = get_struct(cast->type);
+
 
 	// Here are integer cases
 	//   source to    size destination operation
@@ -2280,98 +2327,99 @@ static void append(Converter &conv, AstCast *cast) {
 	//   signed to smaller      signed noop
 
 	if (false) {
-	} else if (from == &type_u8) {
+	} else if (from == type_u8) {
 		if (false) {}
-		else if (to == &type_u8) {}
-		else if (to == &type_u16) { I(and_mc, rs, 0xff); } // discard bits that could be garbage
-		else if (to == &type_u32) { I(and_mc, rs, 0xff); }
-		else if (to == &type_u64) { I(and_mc, rs, 0xff); }
-		else if (to == &type_s8) {}
-		else if (to == &type_s16) { I(and_mc, rs, 0xff); }
-		else if (to == &type_s32) { I(and_mc, rs, 0xff); }
-		else if (to == &type_s64) { I(and_mc, rs, 0xff); }
+		else if (to == type_u8) {}
+		else if (to == type_u16) { I(and_mc, rs, 0xff); } // discard bits that could be garbage
+		else if (to == type_u32) { I(and_mc, rs, 0xff); }
+		else if (to == type_u64) { I(and_mc, rs, 0xff); }
+		else if (to == type_s8) {}
+		else if (to == type_s16) { I(and_mc, rs, 0xff); }
+		else if (to == type_s32) { I(and_mc, rs, 0xff); }
+		else if (to == type_s64) { I(and_mc, rs, 0xff); }
 		else invalid_code_path();
-	} else if (from == &type_u16) {
+	} else if (from == type_u16) {
 		if (false) {}
-		else if (to == &type_u8) {}
-		else if (to == &type_u16) {}
-		else if (to == &type_u32) { I(and_mc, rs, 0xffff); }
-		else if (to == &type_u64) { I(and_mc, rs, 0xffff); }
-		else if (to == &type_s8) {}
-		else if (to == &type_s16) {}
-		else if (to == &type_s32) { I(and_mc, rs, 0xffff); }
-		else if (to == &type_s64) { I(and_mc, rs, 0xffff); }
+		else if (to == type_u8) {}
+		else if (to == type_u16) {}
+		else if (to == type_u32) { I(and_mc, rs, 0xffff); }
+		else if (to == type_u64) { I(and_mc, rs, 0xffff); }
+		else if (to == type_s8) {}
+		else if (to == type_s16) {}
+		else if (to == type_s32) { I(and_mc, rs, 0xffff); }
+		else if (to == type_s64) { I(and_mc, rs, 0xffff); }
 		else invalid_code_path();
-	} else if (from == &type_u32) {
+	} else if (from == type_u32) {
 		if (false) {}
-		else if (to == &type_u8) {}
-		else if (to == &type_u16) {}
-		else if (to == &type_u32) {}
-		else if (to == &type_u64) { I(and_mc, rs, 0xffffffff); }
-		else if (to == &type_s8) {}
-		else if (to == &type_s16) {}
-		else if (to == &type_s32) {}
-		else if (to == &type_s64) { I(and_mc, rs, 0xffffffff); }
+		else if (to == type_u8) {}
+		else if (to == type_u16) {}
+		else if (to == type_u32) {}
+		else if (to == type_u64) { I(and_mc, rs, 0xffffffff); }
+		else if (to == type_s8) {}
+		else if (to == type_s16) {}
+		else if (to == type_s32) {}
+		else if (to == type_s64) { I(and_mc, rs, 0xffffffff); }
 		else invalid_code_path();
-	} else if (from == &type_u64) {
+	} else if (from == type_u64) {
 		if (false) {}
-		else if (to == &type_u8) {}
-		else if (to == &type_u16) {}
-		else if (to == &type_u32) {}
-		else if (to == &type_u64) {}
-		else if (to == &type_s8) {}
-		else if (to == &type_s16) {}
-		else if (to == &type_s32) {}
-		else if (to == &type_s64) {}
+		else if (to == type_u8) {}
+		else if (to == type_u16) {}
+		else if (to == type_u32) {}
+		else if (to == type_u64) {}
+		else if (to == type_s8) {}
+		else if (to == type_s16) {}
+		else if (to == type_s32) {}
+		else if (to == type_s64) {}
 		else invalid_code_path();
-	} else if (from == &type_s8) {
+	} else if (from == type_s8) {
 		if (false) {}
-		else if (to == &type_u8) {}
-		else if (to == &type_u16) { I(movsx21_rm, r0, rs); I(mov2_mr, rs, r0); } // discard bits that could be garbage
-		else if (to == &type_u32) { I(movsx41_rm, r0, rs); I(mov4_mr, rs, r0); }
-		else if (to == &type_u64) { I(movsx81_rm, r0, rs); I(mov8_mr, rs, r0); }
-		else if (to == &type_s8) {}
-		else if (to == &type_s16) { I(movsx21_rm, r0, rs); I(mov2_mr, rs, r0); }
-		else if (to == &type_s32) { I(movsx41_rm, r0, rs); I(mov4_mr, rs, r0); }
-		else if (to == &type_s64) { I(movsx81_rm, r0, rs); I(mov8_mr, rs, r0); }
+		else if (to == type_u8) {}
+		else if (to == type_u16) { I(movsx21_rm, r0, rs); I(mov2_mr, rs, r0); } // discard bits that could be garbage
+		else if (to == type_u32) { I(movsx41_rm, r0, rs); I(mov4_mr, rs, r0); }
+		else if (to == type_u64) { I(movsx81_rm, r0, rs); I(mov8_mr, rs, r0); }
+		else if (to == type_s8) {}
+		else if (to == type_s16) { I(movsx21_rm, r0, rs); I(mov2_mr, rs, r0); }
+		else if (to == type_s32) { I(movsx41_rm, r0, rs); I(mov4_mr, rs, r0); }
+		else if (to == type_s64) { I(movsx81_rm, r0, rs); I(mov8_mr, rs, r0); }
 		else invalid_code_path();
-	} else if (from == &type_s16) {
+	} else if (from == type_s16) {
 		if (false) {}
-		else if (to == &type_u8) {}
-		else if (to == &type_u16) {}
-		else if (to == &type_u32) { I(movsx42_rm, r0, rs); I(mov4_mr, rs, r0); }
-		else if (to == &type_u64) { I(movsx82_rm, r0, rs); I(mov8_mr, rs, r0); }
-		else if (to == &type_s8) {}
-		else if (to == &type_s16) {}
-		else if (to == &type_s32) { I(movsx42_rm, r0, rs); I(mov4_mr, rs, r0); }
-		else if (to == &type_s64) { I(movsx82_rm, r0, rs); I(mov8_mr, rs, r0); }
+		else if (to == type_u8) {}
+		else if (to == type_u16) {}
+		else if (to == type_u32) { I(movsx42_rm, r0, rs); I(mov4_mr, rs, r0); }
+		else if (to == type_u64) { I(movsx82_rm, r0, rs); I(mov8_mr, rs, r0); }
+		else if (to == type_s8) {}
+		else if (to == type_s16) {}
+		else if (to == type_s32) { I(movsx42_rm, r0, rs); I(mov4_mr, rs, r0); }
+		else if (to == type_s64) { I(movsx82_rm, r0, rs); I(mov8_mr, rs, r0); }
 		else invalid_code_path();
-	} else if (from == &type_s32) {
+	} else if (from == type_s32) {
 		if (false) {}
-		else if (to == &type_u8) {}
-		else if (to == &type_u16) {}
-		else if (to == &type_u32) {}
-		else if (to == &type_u64) { I(movsx84_rm, r0, rs); I(mov8_mr, rs, r0); }
-		else if (to == &type_s8) {}
-		else if (to == &type_s16) {}
-		else if (to == &type_s32) {}
-		else if (to == &type_s64) { I(movsx84_rm, r0, rs); I(mov8_mr, rs, r0); }
+		else if (to == type_u8) {}
+		else if (to == type_u16) {}
+		else if (to == type_u32) {}
+		else if (to == type_u64) { I(movsx84_rm, r0, rs); I(mov8_mr, rs, r0); }
+		else if (to == type_s8) {}
+		else if (to == type_s16) {}
+		else if (to == type_s32) {}
+		else if (to == type_s64) { I(movsx84_rm, r0, rs); I(mov8_mr, rs, r0); }
+		else if (to == type_f32) { I(cvt_s32_f32); }
 		else invalid_code_path();
-	} else if (from == &type_s64) {
+	} else if (from == type_s64) {
 		if (false) {}
-		else if (to == &type_u8) {}
-		else if (to == &type_u16) {}
-		else if (to == &type_u32) {}
-		else if (to == &type_u64) {}
-		else if (to == &type_s8) {}
-		else if (to == &type_s16) {}
-		else if (to == &type_s32) {}
-		else if (to == &type_s64) {}
-		else if (to == &type_f64) { I(cvt_s64_f64); }
+		else if (to == type_u8) {}
+		else if (to == type_u16) {}
+		else if (to == type_u32) {}
+		else if (to == type_u64) {}
+		else if (to == type_s8) {}
+		else if (to == type_s16) {}
+		else if (to == type_s32) {}
+		else if (to == type_s64) {}
+		else if (to == type_f64) { I(cvt_s64_f64); }
 		else invalid_code_path();
-	} else if (from == &type_f64) {
+	} else if (from == type_f64) {
 		if (false) {}
-		else if (to == &type_s64) { I(cvt_f64_s64); }
+		else if (to == type_s64) { I(cvt_f64_s64); }
 		else invalid_code_path();
 	}
 	else invalid_code_path();
@@ -2386,7 +2434,7 @@ static void append(Converter &conv, AstLambda *lambda, bool push_address) {
 	lambda->parameters_size = parameter_size_accumulator;
 
 	if (lambda->has_body) {
-		if (types_match(lambda->return_parameter->type, &type_type)) {
+		if (types_match(lambda->return_parameter->type, type_type)) {
 			if (push_address) {
 				// TODO: this should work at runtime in the future
 				invalid_code_path("can't push address of lambda that returns a type");
@@ -2584,7 +2632,7 @@ static void append(Converter &conv, AstIdentifier *identifier, Optional<Register
 static void append(Converter &conv, AstLiteral *literal, Optional<Register> &outreg) {
 	push_comment(conv, format(u8"literal {}", literal->location));
 
-	assert(literal->type != &type_unsized_integer);
+	assert(literal->type != type_unsized_integer);
 	auto dtype = direct(literal->type);
 
 	using enum LiteralKind;
@@ -2630,23 +2678,23 @@ static void append(Converter &conv, AstLiteral *literal, Optional<Register> &out
 		case integer: {
 			outreg = allocate_register(conv);
 			if (outreg) {
-				if (dtype == &type_u8 ||
-					dtype == &type_s8)
+				if (dtype == type_u8 ||
+					dtype == type_s8)
 					I(mov_rc, outreg.value_unchecked(), (u8)literal->integer);
-				else if (dtype == &type_u16 ||
-						 dtype == &type_s16)
+				else if (dtype == type_u16 ||
+						 dtype == type_s16)
 					I(mov_rc, outreg.value_unchecked(), (u16)literal->integer);
-				else if (dtype == &type_u32 ||
-						 dtype == &type_s32)
+				else if (dtype == type_u32 ||
+						 dtype == type_s32)
 					I(mov_rc, outreg.value_unchecked(), (u32)literal->integer);
-				else if (dtype == &type_u64 ||
-						 dtype == &type_s64 ||
-						 dtype == &type_pointer_to_void)
+				else if (dtype == type_u64 ||
+						 dtype == type_s64 ||
+						 dtype == type_pointer_to_void)
 					I(mov_rc, outreg.value_unchecked(), (s64)literal->integer);
-				else if (dtype == &type_f32) {
+				else if (dtype == type_f32) {
 					auto f = (f32)(s64)literal->integer;
 					I(mov_rc, outreg.value_unchecked(), *(s32 *)&f);
-				} else if (dtype == &type_f64) {
+				} else if (dtype == type_f64) {
 					auto f = (f64)(s64)literal->integer;
 					I(mov_rc, outreg.value_unchecked(), *(s64 *)&f);
 				}
@@ -2654,23 +2702,23 @@ static void append(Converter &conv, AstLiteral *literal, Optional<Register> &out
 					I(mov_rc, outreg.value_unchecked(), (s64)literal->integer);
 				else invalid_code_path();
 			} else {
-				if (dtype == &type_u8 ||
-					dtype == &type_s8)
+				if (dtype == type_u8 ||
+					dtype == type_s8)
 					I(push_c, (u8)literal->integer);
-				else if (dtype == &type_u16 ||
-						 dtype == &type_s16)
+				else if (dtype == type_u16 ||
+						 dtype == type_s16)
 					I(push_c, (u16)literal->integer);
-				else if (dtype == &type_u32 ||
-						 dtype == &type_s32)
+				else if (dtype == type_u32 ||
+						 dtype == type_s32)
 					I(push_c, (u32)literal->integer);
-				else if (dtype == &type_u64 ||
-						 dtype == &type_s64 ||
-						 dtype == &type_pointer_to_void)
+				else if (dtype == type_u64 ||
+						 dtype == type_s64 ||
+						 dtype == type_pointer_to_void)
 					I(push_c, (s64)literal->integer);
-				else if (dtype == &type_f32) {
+				else if (dtype == type_f32) {
 					auto f = (f32)(s64)literal->integer;
 					I(push_c, *(s32 *)&f);
-				} else if (dtype == &type_f64) {
+				} else if (dtype == type_f64) {
 					auto f = (f64)(s64)literal->integer;
 					I(push_c, *(s64 *)&f);
 				}

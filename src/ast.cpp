@@ -15,48 +15,48 @@ s32 ast_node_uid_counter;
 
 BlockList<AstDefinition> ast_definitions;
 
-AstStruct type_bool;
-AstStruct type_u8;
-AstStruct type_u16;
-AstStruct type_u32;
-AstStruct type_u64;
-AstStruct type_s8;
-AstStruct type_s16;
-AstStruct type_s32;
-AstStruct type_s64;
-AstStruct type_f32;
-AstStruct type_f64;
-AstStruct type_type;
-AstStruct type_string;
-AstStruct type_noinit;
-AstStruct type_unsized_integer;
-AstStruct type_unsized_float;
-AstStruct type_void;
+AstStruct *type_bool;
+AstStruct *type_u8;
+AstStruct *type_u16;
+AstStruct *type_u32;
+AstStruct *type_u64;
+AstStruct *type_s8;
+AstStruct *type_s16;
+AstStruct *type_s32;
+AstStruct *type_s64;
+AstStruct *type_f32;
+AstStruct *type_f64;
+AstStruct *type_type;
+AstStruct *type_string;
+AstStruct *type_noinit;
+AstStruct *type_unsized_integer;
+AstStruct *type_unsized_float;
+AstStruct *type_void;
 AstStruct *type_default_signed_integer;
 AstStruct *type_default_unsigned_integer;
 AstStruct *type_default_integer;
 AstStruct *type_default_float;
-AstUnaryOperator type_pointer_to_void;
+AstUnaryOperator *type_pointer_to_void;
 
 bool struct_is_built_in(AstStruct *type) {
 	return
-		type == &type_bool   ||
-		type == &type_u8     ||
-		type == &type_u16    ||
-		type == &type_u32    ||
-		type == &type_u64    ||
-		type == &type_s8     ||
-		type == &type_s16    ||
-		type == &type_s32    ||
-		type == &type_s64    ||
-		type == &type_f32    ||
-		type == &type_f64    ||
-		type == &type_type   ||
-		type == &type_string ||
-		type == &type_noinit ||
-		type == &type_unsized_integer ||
-		type == &type_unsized_float ||
-		type == &type_void;
+		type == type_bool   ||
+		type == type_u8     ||
+		type == type_u16    ||
+		type == type_u32    ||
+		type == type_u64    ||
+		type == type_s8     ||
+		type == type_s16    ||
+		type == type_s32    ||
+		type == type_s64    ||
+		type == type_f32    ||
+		type == type_f64    ||
+		type == type_type   ||
+		type == type_string ||
+		type == type_noinit ||
+		type == type_unsized_integer ||
+		type == type_unsized_float ||
+		type == type_void;
 }
 bool type_is_built_in(AstExpression *type) {
 	switch (type->kind) {
@@ -95,15 +95,27 @@ bool needs_semicolon(AstExpression *node) {
 }
 
 bool can_be_global(AstStatement *statement) {
-	if (statement->kind == Ast_expression_statement) {
-		auto expression = ((AstExpressionStatement *)statement)->expression;
-		return expression->kind == Ast_import;
+	switch (statement->kind) {
+		case Ast_expression_statement: {
+			auto expression = ((AstExpressionStatement *)statement)->expression;
+			return expression->kind == Ast_import;
+		}
+		case Ast_if: {
+			auto If = (AstIf *)statement;
+			return If->is_constant;
+		}
+		case Ast_definition:
+		case Ast_print:
+		case Ast_assert:
+			return true;
+
+		default:
+			return false;
 	}
-	return statement->kind == Ast_definition || statement->kind == Ast_print || statement->kind == Ast_assert;
 }
 
 bool is_type(AstExpression *expression) {
-	if (types_match(expression->type, &type_type))
+	if (types_match(expression->type, type_type))
 		return true;
 
 	if (expression->kind == Ast_lambda)
@@ -150,8 +162,8 @@ void append_type(StringBuilder &builder, AstExpression *type, bool silent_error)
 		}
 		case Ast_identifier: {
 			auto identifier = (AstIdentifier *)type;
-			ensure(identifier->has_definition());
-			ensure(types_match(identifier->definition()->expression->type, &type_type));
+			ensure(identifier->definition);
+			ensure(types_match(identifier->definition->expression->type, type_type));
 			append(builder, identifier->name);
 			break;
 		}
@@ -211,7 +223,7 @@ s64 get_align(AstExpression *type) {
 		}
 		case Ast_identifier: {
 			auto identifier = (AstIdentifier *)type;
-			return get_size(identifier->definition()->expression);
+			return get_size(identifier->definition->expression);
 		}
 		case Ast_unary_operator: {
 			auto unop = (AstUnaryOperator *)type;
@@ -250,10 +262,10 @@ bool same_argument_and_return_types(AstLambda *a, AstLambda *b) {
 
 bool types_match_ns(AstExpression *a, AstExpression *b) {
 	while (a->kind == Ast_identifier) {
-		a = ((AstIdentifier *)a)->definition()->expression;
+		a = ((AstIdentifier *)a)->definition->expression;
 	}
 	while (b->kind == Ast_identifier) {
-		b = ((AstIdentifier *)b)->definition()->expression;
+		b = ((AstIdentifier *)b)->definition->expression;
 	}
 
 	if (a->kind != b->kind) {
@@ -308,10 +320,14 @@ AstExpression *direct(AstExpression *type) {
 		case Ast_identifier: {
 			do {
 				auto identifier = (AstIdentifier *)type;
-				assert(identifier->definition());
-				type = identifier->definition()->expression;
+				assert(identifier->definition);
+				type = identifier->definition->expression;
 			} while (type->kind == Ast_identifier);
 			break;
+		}
+		case Ast_binary_operator: {
+			auto binop = (AstBinaryOperator *)type;
+			return direct(binop->right);
 		}
 		case Ast_unary_operator:
 		case Ast_subscript:
@@ -334,7 +350,7 @@ AstStruct *get_struct(AstExpression *type) {
 
 AstExpression *get_definition_expression(AstExpression *expression) {
 	while (expression->kind == Ast_identifier)
-		expression = ((AstIdentifier *)expression)->definition()->expression;
+		expression = ((AstIdentifier *)expression)->definition->expression;
 	return expression;
 }
 
@@ -411,58 +427,58 @@ String operator_string(BinaryOperation op) {
 
 bool is_integer(AstExpression *type) {
 	return
-		types_match(type, &type_unsized_integer) ||
-		types_match(type, &type_u8) ||
-		types_match(type, &type_u16) ||
-		types_match(type, &type_u32) ||
-		types_match(type, &type_u64) ||
-		types_match(type, &type_s8) ||
-		types_match(type, &type_s16) ||
-		types_match(type, &type_s32) ||
-		types_match(type, &type_s64);
+		types_match(type, type_unsized_integer) ||
+		types_match(type, type_u8) ||
+		types_match(type, type_u16) ||
+		types_match(type, type_u32) ||
+		types_match(type, type_u64) ||
+		types_match(type, type_s8) ||
+		types_match(type, type_s16) ||
+		types_match(type, type_s32) ||
+		types_match(type, type_s64);
 }
 
 bool is_signed(AstExpression *type) {
 	return
-		types_match(type, &type_s8) ||
-		types_match(type, &type_s16) ||
-		types_match(type, &type_s32) ||
-		types_match(type, &type_s64);
+		types_match(type, type_s8) ||
+		types_match(type, type_s16) ||
+		types_match(type, type_s32) ||
+		types_match(type, type_s64);
 }
 
 bool is_integer(AstStruct *type) {
 	return
-		type == &type_unsized_integer ||
-		type == &type_u8 ||
-		type == &type_u16 ||
-		type == &type_u32 ||
-		type == &type_u64 ||
-		type == &type_s8 ||
-		type == &type_s16 ||
-		type == &type_s32 ||
-		type == &type_s64;
+		type == type_unsized_integer ||
+		type == type_u8 ||
+		type == type_u16 ||
+		type == type_u32 ||
+		type == type_u64 ||
+		type == type_s8 ||
+		type == type_s16 ||
+		type == type_s32 ||
+		type == type_s64;
 }
 
 bool is_signed(AstStruct *type) {
 	return
-		type == &type_s8 ||
-		type == &type_s16 ||
-		type == &type_s32 ||
-		type == &type_s64;
+		type == type_s8 ||
+		type == type_s16 ||
+		type == type_s32 ||
+		type == type_s64;
 }
 
 bool is_float(AstExpression *type) {
 	return
-		types_match(type, &type_unsized_float) ||
-		types_match(type, &type_f32) ||
-		types_match(type, &type_f64);
+		types_match(type, type_unsized_float) ||
+		types_match(type, type_f32) ||
+		types_match(type, type_f64);
 }
 
 bool is_float(AstStruct *type) {
 	return
-		type == &type_unsized_float ||
-		type == &type_f32 ||
-		type == &type_f64;
+		type == type_unsized_float ||
+		type == type_f32 ||
+		type == type_f64;
 }
 
 #if OVERLOAD_NEW
@@ -481,13 +497,13 @@ void operator delete(void *data, umm size) {
 
 bool is_pointer(AstExpression *type) {
 	if (type->kind == Ast_identifier) {
-		return is_pointer(((AstIdentifier *)type)->definition()->expression);
+		return is_pointer(((AstIdentifier *)type)->definition->expression);
 	}
 	return type->kind == Ast_unary_operator && ((AstUnaryOperator *)type)->operation == '*';
 }
 bool is_pointer_internally(AstExpression *type) {
 	if (type->kind == Ast_identifier) {
-		return is_pointer(((AstIdentifier *)type)->definition()->expression);
+		return is_pointer(((AstIdentifier *)type)->definition->expression);
 	}
 	return type->kind == Ast_lambda || (type->kind == Ast_unary_operator && ((AstUnaryOperator *)type)->operation == '*');
 }
@@ -497,8 +513,8 @@ AstLiteral *get_literal(AstExpression *expression) {
         case Ast_literal: return (AstLiteral *)expression;
         case Ast_identifier: {
             auto identifier = (AstIdentifier *)expression;
-			if (identifier->has_definition()) {
-				auto definition = identifier->definition();
+			if (identifier->definition) {
+				auto definition = identifier->definition;
 				if (definition->is_constant) {
 					return get_literal(definition->expression);
 				}
@@ -515,8 +531,8 @@ bool is_constant(AstExpression *expression) {
 
     if (expression->kind == Ast_identifier) {
         auto identifier = (AstIdentifier *)expression;
-        if (identifier->has_definition())
-            return identifier->definition()->is_constant;
+        if (identifier->definition)
+            return identifier->definition->is_constant;
         return false;
     }
 
@@ -545,8 +561,8 @@ AstLambda *get_lambda(AstExpression *expression) {
 			return (AstLambda *)expression;
 		case Ast_identifier: {
 			auto ident = (AstIdentifier *)expression;
-			assert(ident->definition()->expression);
-			return get_lambda(ident->definition()->expression);
+			assert(ident->definition->expression);
+			return get_lambda(ident->definition->expression);
 		}
 	}
 	return 0;
@@ -568,14 +584,15 @@ Comparison comparison_from_binary_operation(BinaryOperation operation) {
 	invalid_code_path();
 }
 
-List<AstExpression **> get_arguments_addresses(AstCall *call) {
+List<Expression<> *> get_arguments_addresses(AstCall *call) {
 	switch (call->argument->kind) {
-		case Ast_tuple: return map(((AstTuple *)call->argument)->expressions, [](auto &e) { return &e; });
+		case Ast_tuple:
+			return map(((AstTuple *)call->argument)->expressions, [](auto &e) { return &e; });
 		default: invalid_code_path();
 	}
 }
 
-List<AstExpression *> get_arguments(AstCall *call) {
+List<Expression<>> get_arguments(AstCall *call) {
 	switch (call->argument->kind) {
 		case Ast_tuple: return ((AstTuple *)call->argument)->expressions;
 		default: invalid_code_path();

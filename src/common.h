@@ -1,9 +1,10 @@
 #pragma once
 
-#define TRACK_ALLOCATIONS 1
+#define TRACK_ALLOCATIONS 0
 
 #ifdef NDEBUG
 #define TL_DEBUG 0
+#define assert(...)
 #else
 #define TL_DEBUG 1
 #endif
@@ -28,6 +29,7 @@ inline bool operator==(std::source_location a, std::source_location b) {
 #include <tl/profiler.h>
 #include <tl/time.h>
 #include <tl/ram.h>
+#include <tl/pool32.h>
 using namespace tl;
 
 #define REDECLARE_VAL(name, expr) auto _##name = expr; auto name = _##name;
@@ -40,7 +42,11 @@ struct MyAllocator : AllocatorBase<MyAllocator> {
 	AllocationResult reallocate_impl(void *data, umm old_size, umm new_size, umm alignment, std::source_location location = std::source_location::current());
 	void deallocate_impl(void *data, umm size, umm alignment, std::source_location location = std::source_location::current());
 };
+
 void init_my_allocator();
+
+template <class T>
+using Ptr32 = typename Pool32<T>::template Ptr<T>;
 
 using String = Span<utf8, u32>;
 using HeapString = List<utf8, MyAllocator, u32>;
@@ -60,9 +66,10 @@ struct SourceFileInfo {
 struct CompilerContext {
 	String source_path;
 	String source_path_without_extension;
-	String executable_path;
-	String executable_name;
-	String executable_directory;
+	String output_path;
+	String compiler_path;
+	String compiler_name;
+	String compiler_directory;
 	String current_directory;
 	AstLambda *main_lambda;
 	AstLambda *build_lambda;
@@ -73,14 +80,16 @@ struct CompilerContext {
 	s64 stack_word_size = 0;
 	s64 register_size = 0;
 	s64 general_purpose_register_count = 0;
+	bool do_profile = false;
 };
 extern CompilerContext context;
 
 #define scoped_phase(message) \
+		/*sleep_milliseconds(1000); */\
 		timed_block(context.profiler, as_utf8(as_span(message))); \
         context.phase_timers.add(create_precise_timer()); \
 		++context.tabs; \
-        defer { --context.tabs; for (int i = 0; i < context.tabs;++i) print("  "); print("{} done in {} ms.\n", message, get_time(context.phase_timers.pop()) * 1000); }
+        defer { if(!context.do_profile) return; --context.tabs; for (int i = 0; i < context.tabs;++i) print("  "); print("{} done in {} ms.\n", message, get_time(context.phase_timers.pop()) * 1000); }
 
 enum class Comparison : u8 {
 	e,
@@ -149,3 +158,6 @@ template <class ...Args>
 void immediate_error(char const *format_string, Args const &...args) {
 	immediate_error(String{}, format_string, args...);
 }
+
+HeapString escape_string(String string);
+HeapString unescape_string(String string);

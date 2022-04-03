@@ -39,11 +39,12 @@ void print_help() {
         "    {} <path> [options]\n"
         "Option               Description\n"
         "--print-ast          Print the abstract syntax tree of the program\n"
-        "--output <toolchain> Generate the executable using specified toolchain.\n"
+        "--output <path>      Specify pathname of resulting executable.\n"
+        "--target <toolchain> Generate the executable using specified toolchain.\n"
         "    toolchain variants:\n"
         "        fasm_x86_64_windows (default)\n"
         "        nasm_x86_64_windows\n"
-		, context.executable_name
+		, context.compiler_name
 	);
 }
 
@@ -293,7 +294,7 @@ bool lexer_function(Lexer *lexer) {
 						auto closed = [&] {
 							if (!next_char()) {
 								token.string.count = 2;
-								lexer->reporter->error(token.string, "Unclosed comment block (end of file)");
+								lexer->reporter->error(token.string, "Unclosed comment block (end of file).");
 								return false;
 							}
 							return true;
@@ -317,7 +318,7 @@ bool lexer_function(Lexer *lexer) {
 									}
 									deepness -= 1;
 									if (c == '\0') {
-										lexer->reporter->error(token.string, "Unclosed comment block (end of file)");
+										lexer->reporter->error(token.string, "Unclosed comment block (end of file).");
 										return false;
 									}
 								} else if (c == '\n') {
@@ -348,7 +349,7 @@ bool lexer_function(Lexer *lexer) {
 						auto comment_begin_or_end = find(Span(current_p, lexer->source.end()), {u8"*/"s, u8"/*"s});
 						if (!comment_begin_or_end) {
 							token.string.count = 2;
-							lexer->reporter->error(token.string, "Unclosed comment block");
+							lexer->reporter->error(token.string, "Unclosed comment block.");
 							return false;
 						}
 
@@ -392,7 +393,7 @@ bool lexer_function(Lexer *lexer) {
 					if (next_char()) {
 						if (c == 'x') {
 							if (!next_char()) {
-								lexer->reporter->error(token.string, "Unexpected end when parsing hex number");
+								lexer->reporter->error(token.string, "Unexpected end when parsing hex number.");
 								return false;
 							}
 
@@ -413,7 +414,7 @@ bool lexer_function(Lexer *lexer) {
 							}
 
 							if (current_p - token.string.data <= 2) {
-								lexer->reporter->error(token.string, "Invalid hex number");
+								lexer->reporter->error(token.string, "Invalid hex number.");
 								return false;
 							}
 						}
@@ -451,7 +452,7 @@ bool lexer_function(Lexer *lexer) {
 			}
 			case '#': {
 				if (!next_char()) {
-					lexer->reporter->error(token.string, "Unexpected end when parsing directive");
+					lexer->reporter->error(token.string, "Unexpected end when parsing directive.");
 					return false;
 				}
 				while (1) {
@@ -469,28 +470,32 @@ bool lexer_function(Lexer *lexer) {
 				break;
 			}
 			default: {
-				while (1) {
-					if (!next_char()) {
-						goto stop_identifier;
-					}
-					switch (c) {
-						case '`':  case '-':  case '=':  case '\\':
-						case '[':  case ']':  case ';':  case '\'':
-						case ',':  case '.':  case '/':  case '~':
-						case '!':  case '@':  case '#':  case '$':
-						case '%':  case '^':  case '&':  case '*':
-						case '(':  case ')':  case '+':  case '|':
-						case '{':  case '}':  case ':':  case '"':
-						case '<':  case '>':  case '?':  case ' ':
-						case '\n': case '\t': case '\r': case '\0': {
-							goto stop_identifier;
+				auto skip_identifier_chars = [&] {
+					while (1) {
+						if (!next_char()) {
+							return;
 						}
-						default: {
-							continue;
+						switch (c) {
+							case '`':  case '-':  case '=':  case '\\':
+							case '[':  case ']':  case ';':  case '\'':
+							case ',':  case '.':  case '/':  case '~':
+							case '!':  case '@':  case '#':  case '$':
+							case '%':  case '^':  case '&':  case '*':
+							case '(':  case ')':  case '+':  case '|':
+							case '{':  case '}':  case ':':  case '"':
+							case '<':  case '>':  case '?':  case ' ':
+							case '\n': case '\t': case '\r': case '\0': {
+								return;
+							}
+							default: {
+								continue;
+							}
 						}
 					}
-				}
-			stop_identifier:
+				};
+
+				skip_identifier_chars();
+
 				token.string.count = current_p - token.string.data;
 
 				auto found_keyword = keywords.find(token.string);
@@ -542,21 +547,21 @@ struct Parser {
 
 	bool expect(TokenKind expected_kind) {
 		if (token->kind != expected_kind) {
-			reporter->error(token->string, "Expected '{}', but got {}", token_kind_to_string(expected_kind), token_kind_to_string(token->kind));
+			reporter->error(token->string, "Expected '{}', but got {}.", token_kind_to_string(expected_kind), token_kind_to_string(token->kind));
 			return false;
 		}
 		return true;
 	}
 	bool next_not_end() {
 		if (!next()) {
-			reporter->error(token->string, "Unexpected end of file");
+			reporter->error(token->string, "Unexpected end of file.");
 			return false;
 		}
 		return true;
 	}
 	bool next_expect(TokenKind expected_kind) {
 		if (!next()) {
-			reporter->error(token->string, "Unexpected end of file");
+			reporter->error(token->string, "Unexpected end of file.");
 			return false;
 		}
 		if (!expect(expected_kind))
@@ -583,12 +588,12 @@ struct SourceFileContext {
 AstLiteral *make_string(String value) {
 	auto i = AstLiteral::create();
 	i->literal_kind = LiteralKind::string;
-	i->string = value;
-	i->type = &type_string;
+	i->string.set(value);
+	i->type = type_string;
 	return i;
 }
 
-AstLiteral *make_integer(BigInteger value, AstExpression *type = &type_unsized_integer) {
+AstLiteral *make_integer(BigInteger value, AstExpression *type = type_unsized_integer) {
 	auto i = AstLiteral::create();
 	i->literal_kind = LiteralKind::integer;
 	i->integer = value;
@@ -596,7 +601,7 @@ AstLiteral *make_integer(BigInteger value, AstExpression *type = &type_unsized_i
 	return i;
 }
 
-AstLiteral *make_integer(u64 value, AstExpression *type = &type_unsized_integer) {
+AstLiteral *make_integer(u64 value, AstExpression *type = type_unsized_integer) {
 	return make_integer(make_big_int<BigInteger>(value), type);
 }
 
@@ -604,10 +609,11 @@ AstLiteral *make_boolean(bool value) {
 	auto i = AstLiteral::create();
 	i->literal_kind = LiteralKind::boolean;
 	i->Bool = value;
+	i->type = type_bool;
 	return i;
 }
 
-AstLiteral *make_float(f64 value, AstExpression *type = &type_unsized_float) {
+AstLiteral *make_float(f64 value, AstExpression *type = type_unsized_float) {
 	auto i = AstLiteral::create();
 	i->literal_kind = LiteralKind::Float;
 	i->Float = value;
@@ -686,47 +692,6 @@ s32 get_precedence(BinaryOperation op) {
 	return 0;
 }
 
-String unescape_string(String string) {
-	string.data  += 1;
-	string.count -= 2;
-
-	if (!string.count)
-		return string;
-
-	HeapString new_string;
-	new_string.reserve(string.count);
-
-	auto p = string.data;
-	utf32 c = 0;
-	utf32 prev = 0;
-
-	while (1) {
-		if (p >= string.end())
-			break;
-		auto got_char = get_char_and_advance_utf8(&p);
-		if (!got_char) {
-			return {};
-		}
-
-		prev = c;
-		c = got_char.value_unchecked();
-
-		if (prev == '\\') {
-			switch (c) {
-				case 'n': { new_string.back() = '\n'; break; }
-				case 'r': { new_string.back() = '\r'; break; }
-				case 't': { new_string.back() = '\t'; break; }
-				case '0': { new_string.back() = '\0'; break; }
-				case '\\': { new_string.back() = '\\'; c = 0; break; }
-				default: { new_string.back() = c; break; }
-			}
-		} else {
-			new_string.add(c);
-		}
-	}
-	return new_string;
-}
-
 // TODO FIXME right now `!func()` parses as `(!func)()`
 
 AstStatement *parse_statement(Parser *parser);
@@ -767,13 +732,49 @@ bool ensure_return_is_not_in_defer(Parser *parser, String location) {
 	// Global scope will have `node` set to null
 	while (scope->node) {
 		if (scope->node->kind == Ast_defer) {
-			parser->reporter->error(location, "Return statement can not be inside a defer statement");
+			parser->reporter->error(location, "Return statement can not be inside a defer statement.");
 			return false;
 		}
 		scope = scope->parent;
 	}
 	assert(scope == &global_scope);
 	return true;
+}
+
+AstStruct *parse_struct(Parser *parser, String token) {
+	auto Struct = AstStruct::create();
+	Struct->location = token;
+
+	if (!parser->expect('{'))
+		return 0;
+
+	if (!parser->next_not_end())
+		return 0;
+
+	push_scope(&Struct->scope);
+
+	while (parser->token->kind != '}') {
+		auto definition = parse_definition(parser);
+		if (!definition)
+			return 0;
+
+		definition->parent_block = Struct;
+
+		if (!definition->expression || needs_semicolon(definition->expression)) {
+			if (!parser->expect(';')) {
+				return 0;
+			}
+			if (!parser->next_not_end())
+				return 0;
+		}
+
+		Struct->members.add(definition);
+	}
+
+	Struct->layout = parser->current_struct_layout;
+
+	parser->next();
+	return Struct;
 }
 
 AstExpression *parse_sub_expression(Parser *parser) {
@@ -797,7 +798,7 @@ AstExpression *parse_sub_expression(Parser *parser) {
 				return 0;
 
 			if (expr->kind != Ast_subscript) {
-				parser->reporter->error(expr->location, "Expected an array type after simd keyword, but got {}", expr->kind);
+				parser->reporter->error(expr->location, "Expected an array type after simd keyword, but got {}.", expr->kind);
 				return 0;
 			}
 
@@ -811,9 +812,28 @@ AstExpression *parse_sub_expression(Parser *parser) {
 			auto string = AstLiteral::create();
 			string->literal_kind = LiteralKind::string;
 			string->location = parser->token->string;
-			string->string = unescape_string(parser->token->string);
+
+
+			auto str = parser->token->string;
+			assert(str.front() == '"');
+			assert(str.back() == '"');
+			str.data += 1;
+			str.count -= 2;
+
+			string->string = erase_all<HeapString::Allocator>(str, u8'\r');
+
+			if (starts_with(string->string, "\n"s)) {
+				string->string.data += 1;
+				string->string.count -= 1;
+			}
+
+			if (ends_with(string->string, "\n"s)) {
+				string->string.count -= 1;
+			}
+
+			string->string = unescape_string(string->string);
 			if (!string->string.data) {
-				parser->reporter->error(parser->token->string, "Bad escape sequence in string literal");
+				parser->reporter->error(parser->token->string, "Bad escape sequence in string literal.");
 				return 0;
 			}
 			parser->next();
@@ -825,11 +845,11 @@ AstExpression *parse_sub_expression(Parser *parser) {
 			character->location = parser->token->string;
 			auto character_string = unescape_string(parser->token->string);
 			if (!character_string.data) {
-				parser->reporter->error(parser->token->string, "Bad escape sequence in string literal");
+				parser->reporter->error(parser->token->string, "Bad escape sequence in string literal.");
 				return 0;
 			}
 			if (character_string.count != 1) {
-				parser->reporter->error(parser->token->string, "Character literal can not contain more than one character");
+				parser->reporter->error(parser->token->string, "Character literal can not contain more than one character.");
 				return 0;
 			}
 			character->character = character_string.data[0];
@@ -840,25 +860,79 @@ AstExpression *parse_sub_expression(Parser *parser) {
 			auto result = make_integer(0);
 			result->location = parser->token->string;
 			parser->next();
-			result->type = &type_pointer_to_void;
+			result->type = type_pointer_to_void;
 			return result;
 		}
 		case Token_float_literal: {
 			auto result = AstLiteral::create();
 			result->literal_kind = LiteralKind::Float;
 			if (std::from_chars((char *)parser->token->string.begin(), (char *)parser->token->string.end(), result->Float).ec == std::errc::invalid_argument) {
-				parser->reporter->error(parser->token->string, "Failed to parse floating point number");
+				parser->reporter->error(parser->token->string, "Failed to parse floating point number.");
 				return 0;
 			}
-			result->type = &type_unsized_float;
+			result->type = type_unsized_float;
 			result->location = parser->token->string;
 			parser->next();
 			return result;
 		}
 		case Token_integer_literal: {
+#if 1
+			u64 value = 0;
+			if (parser->token->string.count >= 2 && parser->token->string.data[1] == 'x') {
+				for (u32 i = 2; i != parser->token->string.count; ++i) {
+					if (value & 0xF000'0000'0000'0000) {
+						invalid_code_path("do big int");
+					}
+
+					u8 quart;
+					switch (parser->token->string.data[i]) {
+						case '0': quart = 0; break;
+						case '1': quart = 1; break;
+						case '2': quart = 2; break;
+						case '3': quart = 3; break;
+						case '4': quart = 4; break;
+						case '5': quart = 5; break;
+						case '6': quart = 6; break;
+						case '7': quart = 7; break;
+						case '8': quart = 8; break;
+						case '9': quart = 9; break;
+						case 'a': case 'A': quart = 10; break;
+						case 'b': case 'B': quart = 11; break;
+						case 'c': case 'C': quart = 12; break;
+						case 'd': case 'D': quart = 13; break;
+						case 'e': case 'E': quart = 14; break;
+						case 'f': case 'F': quart = 15; break;
+					}
+
+					value <<= 4;
+					value |= quart;
+				}
+			} else {
+				for (auto character : parser->token->string) {
+					if (value >= 10000000000000000000ull) {
+						invalid_code_path("do big int");
+					}
+
+					u64 digit = (u64)character - '0';
+					if (digit >= 10) {
+						parser->reporter->error(parser->token->string, "Failed to parse integer.");
+						return 0;
+					}
+					value = value * (umm)10 + digit;
+				}
+			}
+			auto location = parser->token->string;
+			parser->next();
+			auto result = make_integer(value);
+			result->location = location;
+			return result;
+#else
 			BigInteger value;
 			{
 				scoped_allocator(temporary_allocator);
+
+
+
 				value = make_big_int<BigInteger>(0);
 				if (parser->token->string.count >= 2 && parser->token->string.data[1] == 'x') {
 					for (u32 i = 2; i != parser->token->string.count; ++i) {
@@ -889,7 +963,7 @@ AstExpression *parse_sub_expression(Parser *parser) {
 					for (auto character : parser->token->string) {
 						u64 digit = (u64)character - '0';
 						if (digit >= 10) {
-							parser->reporter->error(parser->token->string, "Failed to parse integer");
+							parser->reporter->error(parser->token->string, "Failed to parse integer.");
 							return 0;
 						}
 						value = value * (umm)10 + make_big_int<BigInteger>(digit);
@@ -901,6 +975,7 @@ AstExpression *parse_sub_expression(Parser *parser) {
 			auto result = make_integer(value);
 			result->location = location;
 			return result;
+#endif
 		}
 		case Token_true:
 		case Token_false: {
@@ -966,7 +1041,7 @@ AstExpression *parse_sub_expression(Parser *parser) {
 				parser->next();
 				return result;
 			} else {
-				parser->reporter->error(parser->token->string, "Unexpected expression level directive");
+				parser->reporter->error(parser->token->string, "Unexpected expression level directive.");
 				return 0;
 			}
 		}
@@ -985,7 +1060,7 @@ AstExpression *parse_sub_expression(Parser *parser) {
 				} else if (parser->token->string == "#intrinsic"str) {
 					lambda->is_intrinsic = true;
 				} else {
-					parser->reporter->error(parser->token->string, "Unknown directive");
+					parser->reporter->error(parser->token->string, "Unknown directive.");
 					return 0;
 				}
 				if (!parser->next_not_end())
@@ -1063,12 +1138,12 @@ AstExpression *parse_sub_expression(Parser *parser) {
 				}
 			} else {
 				// TODO: this probably will be executed a lot, so maybe this should be cached ???
-				lambda->return_parameter = make_retparam(parser, &type_void);
+				lambda->return_parameter = make_retparam(parser, type_void);
 			}
 
 
 			if (parser->token->kind != '{' && parser->token->kind != '=>' && parser->token->kind != ';') {
-				parser->reporter->error(parser->token->string, "Expected '{{' or '=>' or ';' or ':' instead of '{}'", parser->token->string);
+				parser->reporter->error(parser->token->string, "Expected '{{' or '=>' or ';' or ':' instead of '{}'.", parser->token->string);
 				return 0;
 			}
 
@@ -1078,10 +1153,10 @@ AstExpression *parse_sub_expression(Parser *parser) {
 				lambda->has_body = false;
 				lambda->is_type = true;
 				if (parser->token->kind == '{' || parser->token->kind == '=>') {
-					parser->reporter->error(lambda->location, "Body of a lambda can not be specified after a #type directive");
+					parser->reporter->error(lambda->location, "Body of a lambda can not be specified after a #type directive.");
 					return 0;
 				} else if (parser->token->kind != ';') {
-					parser->reporter->error(parser->token->string, "Expected ';' or return type instead of '{}'", parser->token->string);
+					parser->reporter->error(parser->token->string, "Expected ';' or return type instead of '{}'.", parser->token->string);
 					return 0;
 				}
 			} else {
@@ -1092,7 +1167,7 @@ AstExpression *parse_sub_expression(Parser *parser) {
 				} else if (parser->token->kind == ';') {
 					lambda->has_body = false;
 				} else {
-					parser->reporter->error(parser->token->string, "Expected '{' or '=>' or ';' or return type instead of '{}'", parser->token->string);
+					parser->reporter->error(parser->token->string, "Expected '{' or '=>' or ';' or return type instead of '{}'.", parser->token->string);
 					return 0;
 				}
 			}
@@ -1152,7 +1227,7 @@ AstExpression *parse_sub_expression(Parser *parser) {
 					}
 					*/
 					if (parser->extern_library.count == 0) {
-						parser->reporter->error(lambda->location, "Lambda has no body, but extern library was not provided");
+						parser->reporter->error(lambda->location, "Lambda has no body, but extern library was not provided,");
 						print_example();
 						return 0;
 					}
@@ -1160,7 +1235,7 @@ AstExpression *parse_sub_expression(Parser *parser) {
 					/*
 					lambda->extern_language = extern_language_from_string(parser->extern_language);
 					if (lambda->extern_language == ExternLanguage::none) {
-						parser->reporter->error(lambda->location, "Unsupported language: {}", parser->extern_language);
+						parser->reporter->error(lambda->location, "Unsupported language: {}.", parser->extern_language);
 						print_example();
 						return 0;
 					}
@@ -1174,38 +1249,20 @@ AstExpression *parse_sub_expression(Parser *parser) {
 			return lambda;
 		}
 		case Token_struct: {
-			auto Struct = AstStruct::create();
-			Struct->location = parser->token->string;
-
-			if (!parser->next_expect('{'))
-				return 0;
-
+			auto token = parser->token->string;
 			if (!parser->next_not_end())
 				return 0;
+			return parse_struct(parser, token);
+		}
+		case Token_union: {
+			auto token = parser->token->string;
+			if (!parser->next_not_end())
+				return 0;
+			auto Struct = parse_struct(parser, token);
+			if (!Struct)
+				return 0;
 
-			push_scope(&Struct->scope);
-
-			while (parser->token->kind != '}') {
-				auto definition = parse_definition(parser);
-				if (!definition)
-					return 0;
-
-				definition->parent_block = Struct;
-
-				if (!definition->expression || needs_semicolon(definition->expression)) {
-					if (!parser->expect(';')) {
-						return 0;
-					}
-					if (!parser->next_not_end())
-						return 0;
-				}
-
-				Struct->members.add(definition);
-			}
-
-			Struct->layout = parser->current_struct_layout;
-
-			parser->next();
+			Struct->is_union = true;
 			return Struct;
 		}
 		case Token_if: {
@@ -1269,7 +1326,7 @@ AstExpression *parse_sub_expression(Parser *parser) {
 		case '(': {
 			auto start_token = parser->token->string;
 			if (!parser->next()) {
-				parser->reporter->error(parser->token->string, "Unexpected end of file. Unclosed ')'");
+				parser->reporter->error(parser->token->string, "Unexpected end of file. Unclosed ')'.");
 				return 0;
 			}
 
@@ -1334,7 +1391,7 @@ AstExpression *parse_sub_expression(Parser *parser) {
 
 				return unop;
 			} else {
-				parser->reporter->error(parser->token->string, "Unexpected token '{}'", parser->token->string);
+				parser->reporter->error(parser->token->string, "Unexpected token '{}'.", parser->token->string);
 				return 0;
 			}
 		}
@@ -1346,7 +1403,8 @@ AstExpression *parse_sub_expression(Parser *parser) {
 
 AstTuple *make_tuple(List<AstExpression *> expressions) {
 	auto tuple = AstTuple::create();
-	tuple->expressions = expressions;
+	for (auto e : expressions)
+		tuple->expressions.add(e);
 	return tuple;
 }
 
@@ -1447,10 +1505,12 @@ AstExpression *parse_sub_expression_and_call_and_cast(Parser *parser) {
 //
 void simplify(AstExpression **_expression) {
 
+#define SIMPLIFY(x) do { auto y = raw(x); simplify(&y); x = y; } while (0)
+
 	auto expression = *_expression;
 	defer { *_expression = expression; };
 
-	bool is_type = (expression->type == &type_type) || (expression->type && expression->type->kind == Ast_lambda);
+	bool is_type = (expression->type == type_type) || (expression->type && expression->type->kind == Ast_lambda);
 
 	if (is_type) {
 		//
@@ -1467,7 +1527,7 @@ void simplify(AstExpression **_expression) {
 			case Ast_unary_operator: {
 				auto unop = (AstUnaryOperator *)type;
 				assert(unop->operation == '*');
-				simplify(&unop->expression);
+				SIMPLIFY(unop->expression);
 				break;
 			}
 			case Ast_struct: {
@@ -1475,8 +1535,8 @@ void simplify(AstExpression **_expression) {
 			}
 			case Ast_subscript: {
 				auto subscript = (AstSubscript *)type;
-				simplify(&subscript->expression);
-				simplify(&subscript->index_expression);
+				SIMPLIFY(subscript->expression);
+				SIMPLIFY(subscript->index_expression);
 				break;
 			}
 		}
@@ -1488,8 +1548,8 @@ void simplify(AstExpression **_expression) {
 			case Ast_binary_operator: {
 				auto binop = (AstBinaryOperator *)expression;
 
-				simplify(&binop->left);
-				simplify(&binop->right);
+				SIMPLIFY(binop->left);
+				SIMPLIFY(binop->right);
 
 				using enum BinaryOperation;
 
@@ -1561,7 +1621,7 @@ void simplify(AstExpression **_expression) {
 			case Ast_unary_operator: {
 				auto unop = (AstUnaryOperator *)expression;
 
-				simplify(&unop->expression);
+				SIMPLIFY(unop->expression);
 
 				if (unop->expression->kind == Ast_literal) {
 					auto literal = (AstLiteral *)unop->expression;
@@ -1601,10 +1661,10 @@ void simplify(AstExpression **_expression) {
 			case Ast_cast: {
 				auto cast = (AstCast *)expression;
 
-				simplify(&cast->expression);
+				SIMPLIFY(cast->expression);
 
 				assert(cast->type);
-				simplify(&cast->type);
+				SIMPLIFY(cast->type);
 				break;
 			}
 		}
@@ -1732,7 +1792,7 @@ parse_subscript:
 		}
 
 		if (!parser->next()) {
-			parser->reporter->error("Unexpected end of file after binary operator");
+			parser->reporter->error("Unexpected end of file after binary operator.");
 			return 0;
 		}
 
@@ -1744,13 +1804,13 @@ parse_subscript:
 			binop->right = parse_sub_expression_and_call_and_cast(parser);
 		}
 		if (!binop->right) {
-			parser->reporter->info("While parsing binary operator '{}'", operator_string(binop->operation));
+			parser->reporter->info("While parsing binary operator '{}'.", operator_string(binop->operation));
 			return 0;
 		}
 
 		if (binop->operation == dot) {
 			if (binop->right->kind != Ast_identifier && binop->right->kind != Ast_call) {
-				parser->reporter->error(binop->right->location, "This expression can not follow a dot. Only identifiers are allowed here");
+				parser->reporter->error(binop->right->location, "This expression can not follow a dot. Only identifiers are allowed here.");
 				return 0;
 			}
 		}
@@ -1850,8 +1910,8 @@ AstDefinition *parse_definition(String name, Parser *parser) {
 
 		{
 			auto report_redefinition_error = [&] (AstDefinition *_new, AstDefinition *existing) {
-				parser->reporter->error(_new->name, "Redefinition of '{}'", _new->name);
-				parser->reporter->info(existing->name, "Top declaration is here");
+				parser->reporter->error(_new->name, "Redefinition of '{}'.", _new->name);
+				parser->reporter->info(existing->name, "Top declaration is here:");
 			};
 
 			Scope *scope = parser->current_scope;
@@ -1925,7 +1985,7 @@ AstDefinition *parse_definition(Parser *parser) {
 			return 0;
 		return parse_definition(name, parser);
 	}
-	parser->reporter->error(parser->token->string, "Failed to parse definition");
+	parser->reporter->error(parser->token->string, "Failed to parse definition.");
 	return 0;
 }
 
@@ -1962,6 +2022,28 @@ bool parse_block_or_single_statement(Parser *parser, Scope *scope) {
 	}
 
 	return true;
+}
+AstIf *parse_if_statement(Parser *parser, String token) {
+	auto If = AstIf::create();
+	If->location = token;
+	If->condition = parse_expression(parser);
+	if (!If->condition)
+		return 0;
+
+	if (parser->token->kind == Token_then && !parser->next_not_end())
+		return 0;
+
+	if (!parse_block_or_single_statement(parser, &If->true_scope))
+		return 0;
+
+	if (parser->token->kind == Token_else) {
+		if (!parser->next_not_end())
+			return 0;
+
+		if (!parse_block_or_single_statement(parser, &If->false_scope))
+			return 0;
+	}
+	return If;
 }
 void parse_statement(Parser *parser, AstStatement *&result) {
 	timed_function(context.profiler);
@@ -2031,34 +2113,11 @@ void parse_statement(Parser *parser, AstStatement *&result) {
 			return;
 		}
 		case Token_if: {
-			auto If = AstIf::create();
-			If->location = parser->token->string;
+			auto token = parser->token->string;
 			if (!parser->next_not_end())
 				return;
 
-			If->condition = parse_expression(parser);
-			if (!If->condition) {
-				return;
-			}
-
-			if (parser->token->kind == Token_then && !parser->next_not_end()) {
-				return;
-			}
-
-			if (!parse_block_or_single_statement(parser, &If->true_scope)) {
-				return;
-			}
-
-			if (parser->token->kind == Token_else) {
-				if (!parser->next_not_end())
-					return;
-
-				if (!parse_block_or_single_statement(parser, &If->false_scope)) {
-					return;
-				}
-			}
-
-			result = If;
+			result = parse_if_statement(parser, token);
 			return;
 		}
 		case Token_while: {
@@ -2079,7 +2138,16 @@ void parse_statement(Parser *parser, AstStatement *&result) {
 			return;
 		}
 		case Token_directive: {
-			if (parser->token->string == "#test"str) {
+			if (parser->token->string == "#if"str) {
+				auto token = parser->token->string;
+				if (!parser->next_not_end())
+					return;
+
+				auto If = parse_if_statement(parser, token);
+				If->is_constant = true;
+				result = If;
+				return;
+			} else if (parser->token->string == "#test"str) {
 				auto test = AstTest::create();
 				test->location = parser->token->string;
 
@@ -2091,7 +2159,7 @@ void parse_statement(Parser *parser, AstStatement *&result) {
 				} else if (parser->token->kind == Token_false) {
 					test->should_compile = false;
 				} else {
-					parser->reporter->error(parser->token->string, "Unexpected token after #test directive, expected true or false");
+					parser->reporter->error(parser->token->string, "Unexpected token after #test directive, expected true or false.");
 					return;
 				}
 
@@ -2131,7 +2199,7 @@ void parse_statement(Parser *parser, AstStatement *&result) {
 				result = assert;
 				return;
 			} else {
-				parser->reporter->error(parser->token->string, "Unknown statement level directive");
+				parser->reporter->error(parser->token->string, "Unknown statement level directive.");
 				return;
 			}
 			break;
@@ -2170,7 +2238,7 @@ void parse_statement(Parser *parser, AstStatement *&result) {
 	if (expression) {
 		if (parser->token->kind == ';') {
 			if (!is_statement(expression)) {
-				parser->reporter->error(expression->location, "This expression is not a statement");
+				parser->reporter->error(expression->location, "This expression is not a statement.");
 				return;
 			}
 			parser->next();
@@ -2212,7 +2280,7 @@ void parse_statement(Parser *parser, AstStatement *&result) {
 		}
 	}
 
-	parser->reporter->error(parser->token->string, "Failed to parse statement or expression");
+	parser->reporter->error(parser->token->string, "Failed to parse statement or expression.");
 }
 AstStatement *parse_statement(Parser *parser) {
 	AstStatement *result;
@@ -2227,7 +2295,7 @@ AstStatement *parse_global_statement(Parser *parser) {
 		return 0;
 	}
 	if (!can_be_global(statement)) {
-		parser->reporter->error(statement->location, "This statement can not be global");
+		parser->reporter->error(statement->location, "This statement can not be global.");
 		return 0;
 	}
 
@@ -2324,18 +2392,18 @@ ParseResult parser_function(Parser *parser) {
 		if (parser->token->kind == Token_directive) {
 			if (parser->token->string == "#extern_language"str) {
 				if (!parser->next_expect(Token_string_literal)) {
-					parser->reporter->error("Expected language name. Currently only \"C\" is available");
+					parser->reporter->error("Expected language name. Currently only \"C\" is available.");
 					return ParseResult::syntax_error;
 				}
 				parser->extern_language = unescape_string(parser->token->string);
 				if (parser->extern_language != "C"str) {
-					parser->reporter->error(parser->token->string, "Only \"C\" is supported");
+					parser->reporter->error(parser->token->string, "Only \"C\" is supported.");
 					return ParseResult::syntax_error;
 				}
 				parser->next();
 			} else if (parser->token->string == "#extern_library"str) {
 				if (!parser->next_expect(Token_string_literal)) {
-					parser->reporter->error("Expected library name");
+					parser->reporter->error("Expected library name.");
 					return ParseResult::syntax_error;
 				}
 				parser->extern_library = unescape_string(parser->token->string);
@@ -2354,11 +2422,11 @@ ParseResult parser_function(Parser *parser) {
 			}
 		} else if (parser->token->kind == Token_import) {
 			if (!parser->next_expect(Token_string_literal)) {
-				parser->reporter->error("Expected library path");
+				parser->reporter->error("Expected library path.");
 				return ParseResult::syntax_error;
 			}
 			auto libname = unescape_string(parser->token->string);
-			auto child = parse_file((String)concatenate(context.executable_directory, "\\libs\\", libname));
+			auto child = parse_file((String)concatenate(context.compiler_directory, "\\libs\\", libname));
 			// global_scope.append(child->scope);
 			parser->next();
 		} else {
@@ -2393,6 +2461,8 @@ struct TypecheckState {
 	AstExpression *waiting_for = 0;
 	String waiting_for_name;
 
+	AstDefinition *currently_typechecking_definition = 0;
+
 	AstLambda *current_lambda = 0;
 
 	Scope *current_scope = 0;
@@ -2424,10 +2494,30 @@ DefinitionList get_definitions(TypecheckState *state, String name) {
 	timed_function(context.profiler);
 	DefinitionList result;
 	auto scope = state->current_scope;
+
+	auto is_lambda_scope = [&] (Scope *scope) {
+		// `body_scope` is inside `parameter_scope`, so parameter_scope is outermost.
+		return scope->node && scope->node->kind == Ast_lambda && scope == &((AstLambda *)scope->node)->parameter_scope;
+	};
+
 	while (scope) {
 		auto found_local = scope->definitions.find(name);
 		if (found_local)
 			result.add(*found_local);
+		if (is_lambda_scope(scope)) {
+			// skip all scopes of parent lambda
+			auto top_lambda = scope;
+
+			while (scope) {
+				if (is_lambda_scope(scope)) {
+					top_lambda = scope;
+				}
+				scope = scope->parent;
+			}
+
+			scope = top_lambda->parent;
+			continue;
+		}
 		scope = scope->parent;
 	}
 	return result;
@@ -2446,9 +2536,9 @@ void harden_type(AstExpression *expression) {
 		case Ast_literal: {
 			auto literal = (AstLiteral *)expression;
 			 // Literals may already have their type set by, for example, cast expressions
-			if (literal->type == &type_unsized_integer) {
+			if (literal->type == type_unsized_integer) {
 				literal->type = type_default_integer;
-			} else if (literal->type == &type_unsized_float) {
+			} else if (literal->type == type_unsized_float) {
 				literal->type = type_default_float;
 			}
 			break;
@@ -2471,7 +2561,7 @@ Box<AstLiteral> make_type_literal(AstExpression *type) {
 	AstLiteral result;
 	result.literal_kind = LiteralKind::type;
 	result.type_value = type;
-	result.type = &type_type;
+	result.type = type_type;
 	return result;
 }
 
@@ -2480,12 +2570,12 @@ Box<AstLiteral> make_bool(bool val) {
 	AstLiteral result;
 	result.literal_kind = LiteralKind::boolean;
 	result.Bool = val;
-	result.type = &type_bool;
+	result.type = type_bool;
 	return result;
 }
 
 void ensure_definition_is_resolved(TypecheckState *state, AstIdentifier *identifier) {
-	if (!identifier->has_definition()) {
+	if (!identifier->definition) {
 		if (identifier->possible_definitions.count) {
 			state->reporter.error(identifier->location, "Multiple definitions with this name");
 			for (auto definition : identifier->possible_definitions) {
@@ -2510,7 +2600,7 @@ Box<AstLiteral> evaluate(TypecheckState *state, AstExpression *expression) {
 
 			ensure_definition_is_resolved(state, ident);
 
-			auto definition = ident->definition();
+			auto definition = ident->definition;
 
 			if (!definition->is_constant) {
 				state->reporter.error(expression->location, "Can't evaluate expression at compile time: definition is not constant");
@@ -2558,7 +2648,7 @@ Box<AstLiteral> evaluate(TypecheckState *state, AstExpression *expression) {
 		}
 		case Ast_unary_operator: {
 			auto unop = (AstUnaryOperator *)expression;
-			if (types_match(expression->type, &type_type)) {
+			if (types_match(expression->type, type_type)) {
 				auto child = evaluate(state, unop->expression);
 				if (!child)
 					return nullptr;
@@ -2637,7 +2727,7 @@ bool do_all_paths_return(AstStatement *statement) {
 	return false;
 }
 bool do_all_paths_return(AstLambda *lambda) {
-	if (types_match(lambda->return_parameter->type, &type_void))
+	if (types_match(lambda->return_parameter->type, type_void))
 		return true;
 
 	for (auto statement : lambda->body_scope.statements) {
@@ -2653,12 +2743,12 @@ AstExpression *make_pointer_type(AstExpression *type) {
 	timed_function(context.profiler);
 	auto unop = AstUnaryOperator::create();
 	unop->expression = type;
-	unop->type = &type_type;
+	unop->type = type_type;
 	unop->operation = '*';
 	return unop;
 }
 
-void typecheck(TypecheckState *state, AstExpression *&expression);
+void typecheck(TypecheckState *state, Expression<> &expression);
 
 struct CastType {
 	AstStruct *from;
@@ -2679,12 +2769,12 @@ bool ensure_fits(Reporter *reporter, AstExpression *expression, BigInteger integ
 		return true;
 	if (reporter) {
 		auto type_string = type_name(info.type);
-		reporter->error(expression->location, "{} does not fit into {}. You can write '{} as {}' to discard excess bits", integer, type_string, expression->location, type_string);
+		reporter->error(expression->location, "{} does not fit into {}. You can explicitly write '{} as {}' to perform lossy conversion.", integer, type_string, expression->location, type_string);
 	}
 	return false;
 }
 
-bool implicitly_cast(Reporter *reporter, AstExpression **_expression, AstExpression *type) {
+bool implicitly_cast(Reporter *reporter, Expression<> *_expression, AstExpression *type) {
 	timed_function(context.profiler);
 	auto expression = *_expression;
 	defer { *_expression = expression; };
@@ -2696,7 +2786,7 @@ bool implicitly_cast(Reporter *reporter, AstExpression **_expression, AstExpress
 	if (expression->kind == Ast_literal) {
 		auto literal = (AstLiteral *)expression;
 		if (literal->literal_kind == LiteralKind::integer) {
-			if (types_match(literal->type, &type_pointer_to_void)) {
+			if (types_match(literal->type, type_pointer_to_void)) {
 				if (is_pointer(type)) {
 					return true;
 				}
@@ -2712,13 +2802,13 @@ bool implicitly_cast(Reporter *reporter, AstExpression **_expression, AstExpress
 					return true;
 				}
 
-				if (types_match(type, &type_f32) || types_match(type, &type_f64)) {
+				if (types_match(type, type_f32) || types_match(type, type_f64)) {
 					expression->type = type;
 					return true;
 				}
 			}
 		} else if (literal->literal_kind == LiteralKind::Float) {
-			if (types_match(type, &type_f32) || types_match(type, &type_f64)) {
+			if (types_match(type, type_f32) || types_match(type, type_f64)) {
 				expression->type = type;
 				return true;
 			}
@@ -2732,23 +2822,32 @@ bool implicitly_cast(Reporter *reporter, AstExpression **_expression, AstExpress
 		CastType request = {get_struct(expression->type), get_struct(type)};
 		auto found_built_in = find(built_in_casts, request);
 
-		if (found_built_in) {
+		auto allow_autocast = [&] {
 			auto cast = AstCast::create();
-			cast->expression = expression;
+			cast->expression = autocast->expression;
 			cast->type = type;
 			expression = cast;
 			return true;
+		};
+
+		if (found_built_in) {
+			return allow_autocast();
+		}
+
+		if (::is_pointer(expression->type) && type->kind == Ast_lambda) {
+			// Pointer can be converted to a lambda.
+			return allow_autocast();
 		}
 
 		if (reporter) {
-			reporter->error(expression->location, "Expression of type {} is not convertible to {}", type_to_string(expression->type), type_to_string(type));
+			reporter->error(expression->location, "Expression of type {} is not convertible to {}.", type_to_string(expression->type), type_to_string(type));
 		}
 		return false;
-	} else if (types_match(type, &type_pointer_to_void)) {
+	} else if (types_match(type, type_pointer_to_void)) {
 		if (is_pointer(expression->type)) {
 			return true;
 		}
-	} else if (expression->type == &type_unsized_integer) {
+	} else if (expression->type == type_unsized_integer) {
 		auto found_info = find_if(integer_infos, [&](auto &i) { return types_match(i.type, type); });
 		if (found_info) {
 			auto &info = *found_info;
@@ -2762,12 +2861,12 @@ bool implicitly_cast(Reporter *reporter, AstExpression **_expression, AstExpress
 			return true;
 		}
 
-		if (types_match(type, &type_f32) || types_match(type, &type_f64)) {
+		if (types_match(type, type_f32) || types_match(type, type_f64)) {
 			expression->type = type;
 			return true;
 		}
-	} else if (expression->type == &type_unsized_float) {
-		if (types_match(type, &type_f32) || types_match(type, &type_f64)) {
+	} else if (expression->type == type_unsized_float) {
+		if (types_match(type, type_f32) || types_match(type, type_f64)) {
 			expression->type = type;
 			return true;
 		}
@@ -2799,7 +2898,7 @@ bool implicitly_cast(Reporter *reporter, AstExpression **_expression, AstExpress
 	}
 
 	if (reporter) {
-		reporter->error(expression->location, "Expression of type {} is not implicitly convertible to {}", type_to_string(expression->type), type_to_string(type));
+		reporter->error(expression->location, "Expression of type {} is not implicitly convertible to {}.", type_to_string(expression->type), type_to_string(type));
 	}
 	return false;
 }
@@ -2807,7 +2906,12 @@ bool implicitly_cast(Reporter *reporter, AstExpression **_expression, AstExpress
 void wait_iteration(TypecheckState *state, String name) {
 	state->no_progress_counter++;
 	if (state->no_progress_counter == 256) { /* TODO: This is not the best solution */
-		state->reporter.error(name, "Undeclared identifier");
+		if (state->currently_typechecking_definition && state->currently_typechecking_definition->name == name) {
+			state->reporter.error(name, "Can't reference partially defined object.");
+			state->reporter.info(state->currently_typechecking_definition->location, "Declared here:");
+		} else {
+			state->reporter.error(name, "Undeclared identifier");
+		}
 		yield(TypecheckResult::fail);
 	}
 	yield(TypecheckResult::wait);
@@ -2860,7 +2964,7 @@ bool ensure_addressable(Reporter *reporter, AstExpression *expression) {
 						  */
 	}
 
-	reporter->error(expression->location, "Expression is not addressable");
+	reporter->error(expression->location, "Expression is not addressable.");
 	return false;
 }
 bool ensure_assignable(Reporter *reporter, AstExpression *expression) {
@@ -2868,13 +2972,13 @@ bool ensure_assignable(Reporter *reporter, AstExpression *expression) {
 	switch (expression->kind) {
 		case Ast_identifier: {
 			auto identifier = (AstIdentifier *)expression;
-			auto definition = identifier->definition();
+			auto definition = identifier->definition;
 			if (definition->is_constant) {
-				reporter->error(identifier->location, "Can't assign to '{}' because it is constant", identifier->location);
+				reporter->error(identifier->location, "Can't assign to '{}' because it is constant.", identifier->location);
 				return false;
 			}
 			if (definition->is_parameter) {
-				reporter->error(identifier->location, "Can't assign to function parameters");
+				reporter->error(identifier->location, "Can't assign to function parameters.");
 				return false;
 			}
 
@@ -2900,7 +3004,7 @@ bool ensure_assignable(Reporter *reporter, AstExpression *expression) {
 		}
 	}
 
-	reporter->error(expression->location, "Expression is not assignable");
+	reporter->error(expression->location, "Expression is not assignable.");
 	return false;
 }
 
@@ -2926,7 +3030,7 @@ void typecheck(TypecheckState *state, AstStatement *statement) {
 				if (!implicitly_cast(&state->reporter, &expression, lambda->return_parameter->type))
 					yield(TypecheckResult::fail);
 			} else {
-				if (!types_match(lambda->return_parameter->type, &type_void)) {
+				if (!types_match(lambda->return_parameter->type, type_void)) {
 					state->reporter.warning(ret->location, "No return expression provided. If you did't assign a value to the return parameter, this will return the default value");
 				}
 			}
@@ -2938,6 +3042,10 @@ void typecheck(TypecheckState *state, AstStatement *statement) {
 			if (definition->built_in) {
 				break;
 			}
+
+			auto previous_definition = state->currently_typechecking_definition;
+			state->currently_typechecking_definition = definition;
+			defer { state->currently_typechecking_definition = previous_definition; };
 
 			auto lambda = state->current_lambda;
 
@@ -3028,12 +3136,51 @@ void typecheck(TypecheckState *state, AstStatement *statement) {
 			auto If = (AstIf *)statement;
 
 			typecheck(state, If->condition);
-			if (!implicitly_cast(&state->reporter, &If->condition, &type_bool)) {
+			if (!implicitly_cast(&state->reporter, &If->condition, type_bool)) {
 				yield(TypecheckResult::fail);
 			}
 
-			typecheck_scope(&If->true_scope);
-			typecheck_scope(&If->false_scope);
+			if (If->is_constant) {
+				auto condition = evaluate(state, If->condition);
+				if (!condition)
+					yield(TypecheckResult::fail);
+
+
+				if (condition->literal_kind != LiteralKind::boolean) {
+					state->reporter.error(If->condition->location, "Expression must have bool type");
+					yield(TypecheckResult::fail);
+				}
+
+				If->true_branch_was_taken = condition->Bool;
+				Scope *scope = condition->Bool ? &If->true_scope : &If->false_scope;
+
+
+				// NOTE: Instead of this:
+				//
+				//     typecheck_scope(scope);
+				//
+				// We use this:
+				//
+				for (auto statement : scope->statements) {
+					typecheck(state, statement);
+				}
+				//
+				// Because constant if's true and false scopes are not regular.
+				// We want all statements to be outside these scopes as if they were directly
+				// in the parent scope.
+				// `typecheck_scope` sets the scope as the parent, and this is unwanted in this case.
+				//
+				// Note that right now this statement remains to be in the parent's statement list.
+				// I think a better solution to this problem would be to add all selected statements into parent scope and remove the if.
+				//
+
+
+				scope->parent->children.erase(*find(scope->parent->children, scope));
+				scope->parent->append(*scope);
+			} else {
+				typecheck_scope(&If->true_scope);
+				typecheck_scope(&If->false_scope);
+			}
 
 			break;
 		}
@@ -3041,7 +3188,7 @@ void typecheck(TypecheckState *state, AstStatement *statement) {
 			auto While = (AstWhile *)statement;
 
 			typecheck(state, While->condition);
-			if (!implicitly_cast(&state->reporter, &While->condition, &type_bool)) {
+			if (!implicitly_cast(&state->reporter, &While->condition, type_bool)) {
 				yield(TypecheckResult::fail);
 			}
 
@@ -3188,7 +3335,7 @@ void typecheck(TypecheckState *state, AstStatement *statement) {
 bool signedness_matches(AstStruct *a, AstStruct *b) {
 	assert(::is_integer(a));
 	assert(::is_integer(b));
-	if (a == &type_unsized_integer || b == &type_unsized_integer)
+	if (a == type_unsized_integer || b == type_unsized_integer)
 		return true;
 
 	return ::is_signed(a) == ::is_signed(b);
@@ -3214,7 +3361,7 @@ AstCast *make_cast(AstExpression *expression, AstExpression *type) {
 	return result;
 }
 
-void typecheck(TypecheckState *state, AstExpression *&expression) {
+void typecheck(TypecheckState *state, Expression<> &expression) {
 	assert(expression);
 
 	// Skip typechecking builtin expressions
@@ -3225,7 +3372,7 @@ void typecheck(TypecheckState *state, AstExpression *&expression) {
 		if (expression->kind == Ast_identifier && ((AstIdentifier *)expression)->possible_definitions.count) {
 		} else {
 			assert(expression->type);
-			simplify(&expression);
+			SIMPLIFY(expression);
 			assert(expression->type);
 		}
 	};
@@ -3237,7 +3384,7 @@ void typecheck(TypecheckState *state, AstExpression *&expression) {
 			// if (identifier->location == "HDC"str)
 			// 	debug_break();
 
-			if (identifier->has_definition())
+			if (identifier->definition)
 				break;
 
 			auto definitions = wait_for_definitions(state, identifier->name);
@@ -3245,7 +3392,7 @@ void typecheck(TypecheckState *state, AstExpression *&expression) {
 			if (definitions.count == 1) {
 				auto definition = definitions[0];
 				assert(definition->type);
-				identifier->set_definition(definition);
+				identifier->definition = (definition);
 				identifier->type = definition->type;
 			} else {
 				identifier->possible_definitions = definitions;
@@ -3274,8 +3421,8 @@ void typecheck(TypecheckState *state, AstExpression *&expression) {
 				auto identifier = (AstIdentifier *)call->callable;
 				Match match;
 				// TODO: These branches have similar code
-				if (identifier->has_definition()) {
-					auto definition = identifier->definition();
+				if (identifier->definition) {
+					auto definition = identifier->definition;
 					if (definition->expression)
 						match = {definition, get_lambda(definition->expression)};
 					else
@@ -3371,7 +3518,7 @@ void typecheck(TypecheckState *state, AstExpression *&expression) {
 					}
 
 					match = matches[0];
-					identifier->set_definition(match.definition);
+					identifier->definition = (match.definition);
 					identifier->type = match.definition->type;
 					//identifier->possible_definitions = {}; // actually this is redundant
 				}
@@ -3388,19 +3535,19 @@ void typecheck(TypecheckState *state, AstExpression *&expression) {
 			switch (literal->literal_kind) {
 				using enum LiteralKind;
 				case integer:
-					expression->type = &type_unsized_integer;
+					expression->type = type_unsized_integer;
 					break;
 				case boolean:
-					expression->type = &type_bool;
+					expression->type = type_bool;
 					break;
 				case string:
-					expression->type = &type_string;
+					expression->type = type_string;
 					break;
 				case character:
-					expression->type = &type_u8;
+					expression->type = type_u8;
 					break;
 				case noinit:
-					expression->type = &type_noinit;
+					expression->type = type_noinit;
 					break;
 				default:
 					invalid_code_path("not implemented");
@@ -3451,7 +3598,7 @@ void typecheck(TypecheckState *state, AstExpression *&expression) {
 							yield(TypecheckResult::fail);
 						}
 					} else {
-						if (!types_match(lambda->return_parameter->type, &type_void)) {
+						if (!types_match(lambda->return_parameter->type, type_void)) {
 							if (!lambda->return_parameter->name.count) {
 								state->reporter.error(ret->location, "Attempt to return nothing when lambda's return type is '{}' and return parameter is unnamed", type_to_string(lambda->return_parameter->type));
 								yield(TypecheckResult::fail);
@@ -3473,7 +3620,26 @@ void typecheck(TypecheckState *state, AstExpression *&expression) {
 		}
 		case Ast_binary_operator: {
 			auto bin = (AstBinaryOperator *)expression;
+
+			//if (bin->location == "mouse.usButtonFlags"str)
+			//	debug_break();
+
 			typecheck(state, bin->left);
+			if (!bin->left->type) {
+				if (bin->left->kind == Ast_identifier) {
+					auto ident = (AstIdentifier *)bin->left;
+					if (!ident->definition) {
+						state->reporter.error(bin->left->location, "Ambiguous name.");
+						state->reporter.info("Here are definitions:");
+						for (auto possible_definition : ident->possible_definitions) {
+							state->reporter.info(possible_definition->location, "Here:");
+						}
+						yield(TypecheckResult::fail);
+					}
+				}
+				state->reporter.error(bin->left->location, "INTERNAL ERROR: Could not determine the type of this expression.");
+				yield(TypecheckResult::fail);
+			}
 
 			auto report_type_mismatch = [&] {
 				state->reporter.error(bin->location, "Can't use binary {} on types {} and {}", operator_string(bin->operation), type_to_string(bin->left->type), type_to_string(bin->right->type));
@@ -3484,10 +3650,10 @@ void typecheck(TypecheckState *state, AstExpression *&expression) {
 
 			if (bin->operation == dot) {
 				if (bin->left->type->kind == Ast_import) {
-					invalid_code_path("not implemented");
-					auto import = (AstImport *)get_definition_expression(bin->left);
-					assert(import->kind == Ast_import);
-					import->scope;
+					// invalid_code_path("not implemented");
+					// auto import = (AstImport *)get_definition_expression(bin->left);
+					// assert(import->kind == Ast_import);
+					// import->scope;
 				} else {
 					assert(bin->right->kind == Ast_identifier);
 					auto member_identifier = (AstIdentifier *)bin->right;
@@ -3509,7 +3675,7 @@ void typecheck(TypecheckState *state, AstExpression *&expression) {
 							yield(TypecheckResult::fail);
 						}
 
-						member_identifier->set_definition(*found_member);
+						member_identifier->definition = (*found_member);
 						member_identifier->type = (*found_member)->type;
 						bin->type = bin->right->type;
 					} else if (is_sized_array(bin->left->type)) {
@@ -3560,7 +3726,7 @@ void typecheck(TypecheckState *state, AstExpression *&expression) {
 				if (!implicitly_cast(&state->reporter, &bin->right, bin->left->type)) {
 					yield(TypecheckResult::fail);
 				}
-				bin->type = &type_void;
+				bin->type = type_void;
 			} else {
 				typecheck(state, bin->right);
 
@@ -3620,13 +3786,19 @@ void typecheck(TypecheckState *state, AstExpression *&expression) {
 						case bxorass:
 						case bslass:
 						case bsrass: {
-							if (l == &type_unsized_integer && r == &type_unsized_integer) {
-								bin->type = &type_unsized_integer;
+							if (l == type_unsized_integer && r == type_unsized_integer) {
+								bin->type = type_unsized_integer;
 								return;
-							} else if (l == &type_unsized_integer && ri) {
+							}
+							if (l == type_unsized_integer && ri) {
 								bin->type = bin->left->type = r;
 								return;
-							} else if (r == &type_unsized_integer && li) {
+							}
+							if (li && r == type_unsized_integer) {
+								bin->type = bin->right->type = l;
+								return;
+							}
+							if (lf && r == type_unsized_integer) {
 								bin->type = bin->right->type = l;
 								return;
 							}
@@ -3638,13 +3810,13 @@ void typecheck(TypecheckState *state, AstExpression *&expression) {
 						case gt:
 						case le:
 						case ge: {
-							bin->type = &type_bool;
-							if (l == &type_unsized_integer && r == &type_unsized_integer) {
+							bin->type = type_bool;
+							if (l == type_unsized_integer && r == type_unsized_integer) {
 								return;
-							} else if (l == &type_unsized_integer && ri) {
+							} else if (l == type_unsized_integer && ri) {
 								bin->left->type = r;
 								return;
-							} else if (r == &type_unsized_integer && li) {
+							} else if (r == type_unsized_integer && li) {
 								bin->right->type = l;
 								return;
 							}
@@ -3689,13 +3861,13 @@ void typecheck(TypecheckState *state, AstExpression *&expression) {
 
 						case ne:
 						case eq: {
-							bin->type = &type_bool;
+							bin->type = type_bool;
 
 							if (types_match(l, r)) {
 								return;
 							}
 
-							if ((li && r == &type_unsized_integer) || (ri && l == &type_unsized_integer)) {
+							if ((li && r == type_unsized_integer) || (ri && l == type_unsized_integer)) {
 								return;
 							}
 
@@ -3706,7 +3878,7 @@ void typecheck(TypecheckState *state, AstExpression *&expression) {
 						case gt:
 						case le:
 						case ge: {
-							bin->type = &type_bool;
+							bin->type = type_bool;
 
 							if (li && ri) {
 								if (signedness_matches(l, r)) {
@@ -3715,7 +3887,7 @@ void typecheck(TypecheckState *state, AstExpression *&expression) {
 								break;
 							}
 
-							if ((li && r == &type_unsized_integer) || (ri && l == &type_unsized_integer)) {
+							if ((li && r == type_unsized_integer) || (ri && l == type_unsized_integer)) {
 								return;
 							}
 
@@ -3742,8 +3914,8 @@ void typecheck(TypecheckState *state, AstExpression *&expression) {
 						case bsr:
 						case bslass:
 						case bsrass: {
-							if ((li && r == &type_unsized_integer) || (ri && l == &type_unsized_integer)) {
-								bin->type = r == &type_unsized_integer ? l : r;
+							if ((li && r == type_unsized_integer) || (ri && l == type_unsized_integer)) {
+								bin->type = r == type_unsized_integer ? l : r;
 								return;
 							}
 
@@ -3756,7 +3928,7 @@ void typecheck(TypecheckState *state, AstExpression *&expression) {
 					REDECLARE_VAL(r, (AstUnaryOperator *)r);
 					switch (bin->operation) {
 						case ne: {
-							bin->type = &type_bool;
+							bin->type = type_bool;
 							if (types_match(l->expression, r->expression))
 								return;
 							break;
@@ -3790,7 +3962,7 @@ void typecheck(TypecheckState *state, AstExpression *&expression) {
 					state->reporter.error(unop->location, "Unary operator '{}' can not be applied to a type expression", operator_string(unop->operation));
 					yield(TypecheckResult::fail);
 				}
-				unop->type = &type_type;
+				unop->type = type_type;
 			} else {
 				switch (unop->operation) {
 					case '-': {
@@ -3821,11 +3993,11 @@ void typecheck(TypecheckState *state, AstExpression *&expression) {
 					}
 					case '!': {
 						// TODO: implicit cast from int to bool? ...
-						if (!types_match(unop->expression->type, &type_bool)/* && !::is_integer(unop->expression->type)*/) {
+						if (!types_match(unop->expression->type, type_bool)/* && !::is_integer(unop->expression->type)*/) {
 							state->reporter.error(unop->location, "{} is not a boolean type, can't invert it", type_to_string(unop->expression->type));
 							yield(TypecheckResult::fail);
 						}
-						unop->type = &type_bool;
+						unop->type = type_bool;
 						break;
 					}
 					default: {
@@ -3841,8 +4013,8 @@ void typecheck(TypecheckState *state, AstExpression *&expression) {
 			auto definition = Struct->definition;
 
 			//assert(!definition->type);
-			//definition->type = &type_type;
-			Struct->type = &type_type;
+			//definition->type = type_type;
+			Struct->type = type_type;
 
 
 			s64 struct_size = 0;
@@ -3852,31 +4024,55 @@ void typecheck(TypecheckState *state, AstExpression *&expression) {
 				push_scope(&Struct->scope);
 				for (auto member : Struct->members) {
 					typecheck(state, member);
+				}
 
-					switch (Struct->layout) {
-						case StructLayout::tlang: {
-							member->offset_in_struct = struct_size;
-							struct_size += get_size(member->type);
-							break;
+				if (Struct->is_union) {
+					for (auto member : Struct->members) {
+						switch (Struct->layout) {
+							case StructLayout::tlang: {
+								member->offset_in_struct = 0;
+								struct_size = max(struct_size, get_size(member->type));
+								break;
+							}
+							case StructLayout::c: {
+								auto member_alignment = get_align(member->type);
+								struct_alignment = max(struct_alignment, member_alignment);
+
+								member->offset_in_struct = 0;
+								struct_size = max(struct_size, get_size(member->type));
+								break;
+							}
+							default:
+								invalid_code_path();
 						}
-						case StructLayout::c: {
-							auto member_alignment = get_align(member->type);
-							struct_alignment = max(struct_alignment, member_alignment);
-							assert(member_alignment >= 1);
-							struct_size = ceil(struct_size, member_alignment);
-							member->offset_in_struct = struct_size;
-							struct_size += get_size(member->type);
-							break;
-						}
-						default:
-							invalid_code_path();
 					}
+				} else {
+					for (auto member : Struct->members) {
+						switch (Struct->layout) {
+							case StructLayout::tlang: {
+								member->offset_in_struct = struct_size;
+								struct_size += get_size(member->type);
+								break;
+							}
+							case StructLayout::c: {
+								auto member_alignment = get_align(member->type);
+								struct_alignment = max(struct_alignment, member_alignment);
+								assert(member_alignment >= 1);
 
+								struct_size = ceil(struct_size, member_alignment);
+								member->offset_in_struct = struct_size;
+								struct_size += get_size(member->type);
+								break;
+							}
+							default:
+								invalid_code_path();
+						}
+					}
 				}
 			}
 
-			Struct->size = struct_size;
 			Struct->alignment = struct_alignment;
+			Struct->size = max(struct_size, struct_alignment);
 
 			break;
 		}
@@ -3894,7 +4090,7 @@ void typecheck(TypecheckState *state, AstExpression *&expression) {
 
 			typecheck(state, subscript->expression);
 			if (is_type(subscript->expression)) {
-				subscript->type = &type_type;
+				subscript->type = type_type;
 
 				// if (subscript->is_simd) {
 				//
@@ -3939,7 +4135,7 @@ void typecheck(TypecheckState *state, AstExpression *&expression) {
 			}
 
 			expression = make_integer(get_size(size_of->expression));
-			expression->type = &type_unsized_integer;
+			expression->type = type_unsized_integer;
 
 			break;
 		}
@@ -3961,7 +4157,7 @@ void typecheck(TypecheckState *state, AstExpression *&expression) {
 				}
 
 				if (::is_integer(src_type)) {
-					if (src_type == &type_unsized_integer) {
+					if (src_type == type_unsized_integer) {
 						if (::is_pointer(dst_type) || ::is_integer(dst_type)) {
 							// Just replace cast with literal
 							expression = cast->expression;
@@ -3970,7 +4166,7 @@ void typecheck(TypecheckState *state, AstExpression *&expression) {
 						}
 					} else {
 						if (::is_pointer(dst_type)) {
-							auto built_in_cast = find_if(built_in_casts, [&](auto c) { return c.from == src_type; });
+							auto built_in_cast = find_if(built_in_casts, [&](auto c) { return types_match(c.from, src_type); });
 							assert(built_in_cast);
 							//cast->cast_kind = built_in_cast->kind;
 							break;
@@ -3988,7 +4184,7 @@ void typecheck(TypecheckState *state, AstExpression *&expression) {
 						}
 
 						auto built_in_cast = find_if(built_in_casts, [&](auto c) {
-							return c.from == &type_u64 && types_match(c.to, dst_type);
+							return c.from == type_u64 && types_match(c.to, dst_type);
 						});
 						assert(built_in_cast);
 						//cast->cast_kind = built_in_cast->kind;
@@ -4020,7 +4216,7 @@ void typecheck(TypecheckState *state, AstExpression *&expression) {
 			auto If = (AstIfx *)expression;
 
 			typecheck(state, If->condition);
-			if (!implicitly_cast(&state->reporter, &If->condition, &type_bool)) {
+			if (!implicitly_cast(&state->reporter, &If->condition, type_bool)) {
 				yield(TypecheckResult::fail);
 			}
 
@@ -4042,15 +4238,15 @@ void typecheck(TypecheckState *state, AstExpression *&expression) {
 		case Ast_typeof: {
 			auto typeof = (AstTypeof *)expression;
 			typecheck(state, typeof->expression);
-			typeof->type = &type_type;
+			typeof->type = type_type;
 		   //  print("typeof {} is {}\n", typeof->expression->location, type_to_string(typeof->expression->type));
 			break;
 		}
 		case Ast_import: {
+#if 0
 			auto import = (AstImport *)expression;
 			import->type = import; // MYTYPEISME
 			state->current_scope->append(*import->scope);
-#if 0
 
 			// TODO: if import path is a literal, maybe do it at parse time?
 
@@ -4099,7 +4295,7 @@ void *typecheck_global(coro_state *corostate, TypecheckState *state) {
 
 bool typecheck_finished;
 
-void add_member(AstStruct &destination, AstExpression *type, String name, AstLiteral *value, bool constant, s32 offset) {
+void add_member(AstStruct *destination, AstExpression *type, String name, AstLiteral *value, bool constant, s32 offset) {
 	auto d = AstDefinition::create();
 	d->location = name;
 	d->name = name;
@@ -4107,12 +4303,12 @@ void add_member(AstStruct &destination, AstExpression *type, String name, AstLit
 	d->is_constant = constant;
 	d->type = type;
 	d->offset_in_struct = offset;
-	d->parent_block = &destination;
+	d->parent_block = destination;
 	if (value) {
 		value->type = type;
 	}
 
-	(constant ? destination.constants : destination.members).add(d);
+	(constant ? destination->constants : destination->members).add(d);
 }
 
 static void write_test_source() {
@@ -4340,6 +4536,7 @@ main{} :: fn (): int {{
 }
 
 struct ParsedArguments {
+	String target;
 	String output;
 
 	List<String> source_files;
@@ -4355,19 +4552,22 @@ ParsedArguments parse_arguments(Span<Span<utf8>> arguments) {
 
 	ParsedArguments result = {};
 
-	context.executable_path = arguments[0];
+	{
+		List<utf16> temp;
+		temp.allocator = temporary_allocator;
+		temp.reserve(512);
+		temp.count = GetModuleFileNameW(0, (wchar *)temp.data, temp.capacity);
 
-	if (!is_absolute_path(context.executable_path)) {
-		context.executable_path = (String)concatenate(context.current_directory, u8'\\', context.executable_path);
+		context.compiler_path = (String)to_utf8(temp);
 	}
 
-	auto parsed = parse_path(context.executable_path);
-	context.executable_name = parsed.name;
-	context.executable_directory = parsed.directory;
+	auto parsed = parse_path(context.compiler_path);
+	context.compiler_name = parsed.name;
+	context.compiler_directory = parsed.directory;
 
-	result.output = "fasm_x86_64_windows"str;
+	result.target = "fasm_x86_64_windows"str;
 
-	//print("executable_path: {}\nexecutable_name: {}\nexecutable_directory: {}\n", executable_path, executable_name, executable_directory);
+	//print("compiler_path: {}\ncompiler_name: {}\ncompiler_directory: {}\n", compiler_path, compiler_name, compiler_directory);
 
 	if (arguments.count == 1) {
 		print_help();
@@ -4381,6 +4581,13 @@ ParsedArguments parse_arguments(Span<Span<utf8>> arguments) {
 			result.no_typecheck = true;
 		} else if (arguments[i] == "--debug-paths"str) {
 			result.debug_paths = true;
+		} else if (arguments[i] == "--target"str) {
+			++i;
+			if (i >= arguments.count) {
+				print("Expected an argument after --target.\n");
+				return result;
+			}
+			result.target = arguments[i];
 		} else if (arguments[i] == "--output"str) {
 			++i;
 			if (i >= arguments.count) {
@@ -4388,6 +4595,8 @@ ParsedArguments parse_arguments(Span<Span<utf8>> arguments) {
 				return result;
 			}
 			result.output = arguments[i];
+		} else if (arguments[i] == "--profile"str) {
+			context.do_profile = true;
 		} else {
 			result.source_files.add(arguments[i]);
 		}
@@ -4534,17 +4743,20 @@ auto slab_allocator_func(AllocatorMode mode, void *data, umm old_size, umm new_s
 #include <tl/tracking_allocator.h>
 
 s32 tl_main(Span<Span<utf8>> arguments) {
+	defer { print(""); }; // to reset console color
+
 	construct(context);
 
 	auto global_timer = create_precise_timer();
-	defer { print("Execution finished in {} ms\n", reset(global_timer) * 1000); };
-	// defer { format("Execution finished in {} ms\n", reset(global_timer) * 1000); };     (print\(|format\()".*%.*"
-
-	//CreateWindowExA(0, (char *)1, (char *)2, 3, 4, 5, 6, 7, (HWND)8, (HMENU)9, (HINSTANCE)10, (void *)11);
 
 	set_console_encoding(Encoding_utf8);
 
-	defer { print("Peak memory usage: {}\n", format_bytes(get_memory_info().peak_usage)); };
+	defer {
+		if (context.do_profile) {
+			print("Execution finished in {} ms\n", reset(global_timer) * 1000);
+			print("Peak memory usage: {}\n", format_bytes(get_memory_info().peak_usage));
+		}
+	};
 
 	//write_test_source();
 
@@ -4651,13 +4863,13 @@ s32 tl_main(Span<Span<utf8>> arguments) {
 
 restart_main:
 
-	timed_begin(context.profiler, "setup"str);
+	auto timer = context.profiler.scoped_timer("setup");
 
 	context.current_directory = get_current_directory();
 
 	auto args = parse_arguments(arguments);
 
-	if (args.debug_paths) print("executable_directory: {}\n", context.executable_directory);
+	if (args.debug_paths) print("compiler_directory: {}\n", context.compiler_directory);
 
 	if (args.debug_paths) print("current_directory: {}\n", context.current_directory);
 
@@ -4670,10 +4882,20 @@ restart_main:
 	if (!is_absolute_path(context.source_path)) {
 		context.source_path = make_absolute_path(context.source_path);
 	}
+
 	if (args.debug_paths) print("source_path: {}\n", context.source_path);
 
 	context.source_path_without_extension = parse_path(context.source_path).path_without_extension();
 	if (args.debug_paths) print("source_path_without_extension: {}\n", context.source_path_without_extension);
+
+	if (args.output.count) {
+		context.output_path = args.output;
+		if (!is_absolute_path(context.output_path)) {
+			context.output_path = make_absolute_path(context.output_path);
+		}
+	} else {
+		context.output_path = (String)format("{}\\{}.exe", get_current_directory(), parse_path(context.source_path).name);
+	}
 
 	construct(parsed_files);
 	construct(global_scope);
@@ -4685,7 +4907,8 @@ restart_main:
 	construct(triple_char_tokens);
 	construct(import_paths);
 
-	construct(AstDefinition::storage);
+	Pool32<AstExpression>::init();
+	Pool32<AstStatement>::init();
 
 	/*
 	construct(Ref<AstAssert>::storage);
@@ -4716,7 +4939,7 @@ restart_main:
 	*/
 
 	HMODULE lib = 0;
-	if (args.output == "none"str) {
+	if (args.target == "none"str) {
 		context.register_size = 8;
 		context.stack_word_size = 8;
 		context.general_purpose_register_count = 16;
@@ -4724,17 +4947,17 @@ restart_main:
 		scoped_phase("Collecting target information");
 
 		with(temporary_allocator,
-			lib = LoadLibraryW((wchar *)to_utf16(concatenate(context.executable_directory, "\\outputs\\"str, args.output), true).data)
+			lib = LoadLibraryW((wchar *)to_utf16(concatenate(context.compiler_directory, "\\targets\\"str, args.target), true).data)
 		);
 
 		if (!lib) {
-			print("Failed to load output generator '{}'. Check 'tlang\\bin\\outputs' directory\n", args.output);
+			print("Failed to load target code generator '{}'. Check \"tlang\\bin\\targets\" directory\n", args.target);
 			return 1;
 		}
 
 		auto get_target_information = (TargetInformationGetter)GetProcAddress(lib, "tlang_get_target_information");
 		if (!get_target_information) {
-			print("Failed to load output generator '{}'. There is no `tlang_get_target_information` function\n", args.output);
+			print("Failed to load target code generator '{}'. There is no `tlang_get_target_information` function\n", args.target);
 			return 1;
 		}
 
@@ -4745,7 +4968,7 @@ restart_main:
 
 
 	import_paths.add(context.current_directory);
-	import_paths.add(concatenate(context.executable_directory, "\\libs"str));
+	import_paths.add(concatenate(context.compiler_directory, "\\libs"str));
 
 	double_char_tokens.insert("=="str);
 	double_char_tokens.insert("=>"str);
@@ -4772,40 +4995,32 @@ restart_main:
 	ENUMERATE_KEYWORDS(E);
 #undef E
 
-	integer_infos[0] = {&type_u8,  -make_big_int<BigInteger>(0xff),               make_big_int<BigInteger>(0xff)              };
-	integer_infos[1] = {&type_u16, -make_big_int<BigInteger>(0xffff),             make_big_int<BigInteger>(0xffff)            };
-	integer_infos[2] = {&type_u32, -make_big_int<BigInteger>(0xffffffff),         make_big_int<BigInteger>(0xffffffff)        };
-	integer_infos[3] = {&type_u64, -make_big_int<BigInteger>(0xffffffffffffffff), make_big_int<BigInteger>(0xffffffffffffffff)};
-	integer_infos[4] = {&type_s8,  -make_big_int<BigInteger>(0xff),               make_big_int<BigInteger>(0xff)              };
-	integer_infos[5] = {&type_s16, -make_big_int<BigInteger>(0xffff),             make_big_int<BigInteger>(0xffff)            };
-	integer_infos[6] = {&type_s32, -make_big_int<BigInteger>(0xffffffff),         make_big_int<BigInteger>(0xffffffff)        };
-	integer_infos[7] = {&type_s64, -make_big_int<BigInteger>(0xffffffffffffffff), make_big_int<BigInteger>(0xffffffffffffffff)};
-
-	auto init_type = [&](AstStruct &s, String name, s64 size, s64 align) {
-		s.members.allocator = {};
-		s.constants.allocator = {};
-		s.size = size;
-		s.alignment = align;
-		s.type = &type_type;
-		s.location = name;
+	auto init_type = [&](AstStruct *&s, String name, s64 size, s64 align) {
+		s = AstStruct::create();
+		s->members.allocator = {};
+		s->constants.allocator = {};
+		s->size = size;
+		s->alignment = align;
+		s->type = type_type;
+		s->location = name;
 
 		auto definition = AstDefinition::create();
 		definition->is_constant = true;
-		definition->expression = &s;
+		definition->expression = s;
 		definition->location = definition->name = name;
-		definition->type = &type_type;
+		definition->type = type_type;
 
 		definition->built_in = true;
 
-		s.definition = definition;
+		s->definition = definition;
 
 		global_scope.statements.add(definition);
 		global_scope.definitions.get_or_insert(name).add(definition);
 		//typechecked_globals.get_or_insert(name) = definition;
 	};
 
-	init_type(type_void,   "void"str, 0, 0);
 	init_type(type_type,   "type"str, 8, 8);
+	init_type(type_void,   "void"str, 0, 0);
 	init_type(type_bool,   "bool"str, 1, 1);
 	init_type(type_u8,     "u8"str,   1, 1);
 	init_type(type_u16,    "u16"str,  2, 2);
@@ -4822,40 +5037,41 @@ restart_main:
 	init_type(type_unsized_float,  "unsized float"str, 0, 0);
 	init_type(type_noinit, "(noinit)"str, 0, 0);
 
-	type_pointer_to_void.expression = &type_void;
-	type_pointer_to_void.operation = '*';
-	type_pointer_to_void.type = &type_type;
+	type_pointer_to_void = AstUnaryOperator::create();
+	type_pointer_to_void->expression = type_void;
+	type_pointer_to_void->operation = '*';
+	type_pointer_to_void->type = type_type;
 
 	switch (context.register_size) {
 		case 4:
-			type_default_signed_integer = &type_s32;
-			type_default_unsigned_integer = &type_u32;
+			type_default_signed_integer = type_s32;
+			type_default_unsigned_integer = type_u32;
 			break;
 		case 8:
-			type_default_signed_integer = &type_s64;
-			type_default_unsigned_integer = &type_u64;
+			type_default_signed_integer = type_s64;
+			type_default_unsigned_integer = type_u64;
 			break;
 	}
 	type_default_integer = type_default_signed_integer;
-	type_default_float = &type_f64;
+	type_default_float = type_f64;
 
-	add_member(type_u8,  &type_u8,  "min"str, make_integer(0), true, INVALID_MEMBER_OFFSET);
-	add_member(type_u16, &type_u16, "min"str, make_integer(0), true, INVALID_MEMBER_OFFSET);
-	add_member(type_u32, &type_u32, "min"str, make_integer(0), true, INVALID_MEMBER_OFFSET);
-	add_member(type_u64, &type_u64, "min"str, make_integer(0), true, INVALID_MEMBER_OFFSET);
-	add_member(type_u8,  &type_u8,  "max"str, make_integer(0xff), true, INVALID_MEMBER_OFFSET);
-	add_member(type_u16, &type_u16, "max"str, make_integer(0xffff), true, INVALID_MEMBER_OFFSET);
-	add_member(type_u32, &type_u32, "max"str, make_integer(0xffffffff), true, INVALID_MEMBER_OFFSET);
-	add_member(type_u64, &type_u64, "max"str, make_integer(0xffffffffffffffff), true, INVALID_MEMBER_OFFSET);
-	add_member(type_s8,  &type_s8,  "min"str, make_integer(0x80), true, INVALID_MEMBER_OFFSET);
-	add_member(type_s16, &type_s16, "min"str, make_integer(0x8000), true, INVALID_MEMBER_OFFSET);
-	add_member(type_s32, &type_s32, "min"str, make_integer(0x80000000), true, INVALID_MEMBER_OFFSET);
-	add_member(type_s64, &type_s64, "min"str, make_integer(0x8000000000000000), true, INVALID_MEMBER_OFFSET);
-	add_member(type_s8,  &type_s8,  "max"str, make_integer(0x7f), true, INVALID_MEMBER_OFFSET);
-	add_member(type_s16, &type_s16, "max"str, make_integer(0x7fff), true, INVALID_MEMBER_OFFSET);
-	add_member(type_s32, &type_s32, "max"str, make_integer(0x7fffffff), true, INVALID_MEMBER_OFFSET);
-	add_member(type_s64, &type_s64, "max"str, make_integer(0x7fffffffffffffff), true, INVALID_MEMBER_OFFSET);
-	add_member(type_string, make_pointer_type(&type_u8), "data"str, 0, false, 0);
+	add_member(type_u8,  type_u8,  "min"str, make_integer(0), true, INVALID_MEMBER_OFFSET);
+	add_member(type_u16, type_u16, "min"str, make_integer(0), true, INVALID_MEMBER_OFFSET);
+	add_member(type_u32, type_u32, "min"str, make_integer(0), true, INVALID_MEMBER_OFFSET);
+	add_member(type_u64, type_u64, "min"str, make_integer(0), true, INVALID_MEMBER_OFFSET);
+	add_member(type_u8,  type_u8,  "max"str, make_integer(0xff), true, INVALID_MEMBER_OFFSET);
+	add_member(type_u16, type_u16, "max"str, make_integer(0xffff), true, INVALID_MEMBER_OFFSET);
+	add_member(type_u32, type_u32, "max"str, make_integer(0xffffffff), true, INVALID_MEMBER_OFFSET);
+	add_member(type_u64, type_u64, "max"str, make_integer(0xffffffffffffffff), true, INVALID_MEMBER_OFFSET);
+	add_member(type_s8,  type_s8,  "min"str, make_integer(0x80), true, INVALID_MEMBER_OFFSET);
+	add_member(type_s16, type_s16, "min"str, make_integer(0x8000), true, INVALID_MEMBER_OFFSET);
+	add_member(type_s32, type_s32, "min"str, make_integer(0x80000000), true, INVALID_MEMBER_OFFSET);
+	add_member(type_s64, type_s64, "min"str, make_integer(0x8000000000000000), true, INVALID_MEMBER_OFFSET);
+	add_member(type_s8,  type_s8,  "max"str, make_integer(0x7f), true, INVALID_MEMBER_OFFSET);
+	add_member(type_s16, type_s16, "max"str, make_integer(0x7fff), true, INVALID_MEMBER_OFFSET);
+	add_member(type_s32, type_s32, "max"str, make_integer(0x7fffffff), true, INVALID_MEMBER_OFFSET);
+	add_member(type_s64, type_s64, "max"str, make_integer(0x7fffffffffffffff), true, INVALID_MEMBER_OFFSET);
+	add_member(type_string, make_pointer_type(type_u8), "data"str, 0, false, 0);
 	add_member(type_string, type_default_unsigned_integer, "count"str, 0, false, 8);
 
 	auto add_global_alias = [&](String name, AstExpression *expression) {
@@ -4873,65 +5089,77 @@ restart_main:
 	add_global_alias("uint"str, type_default_unsigned_integer);
 	add_global_alias("int"str, type_default_signed_integer);
 
-	built_in_casts.insert({&type_u8 , &type_s8 , /*CastKind::u8_s8  , */false});
-	built_in_casts.insert({&type_u8 , &type_s16, /*CastKind::u8_s16 , */true});
-	built_in_casts.insert({&type_u8 , &type_s32, /*CastKind::u8_s32 , */true});
-	built_in_casts.insert({&type_u8 , &type_s64, /*CastKind::u8_s64 , */true});
-	built_in_casts.insert({&type_u8 , &type_u16, /*CastKind::u8_u16 , */true});
-	built_in_casts.insert({&type_u8 , &type_u32, /*CastKind::u8_u32 , */true});
-	built_in_casts.insert({&type_u8 , &type_u64, /*CastKind::u8_u64 , */true});
-	built_in_casts.insert({&type_u16, &type_s8 , /*CastKind::u16_s8 , */false});
-	built_in_casts.insert({&type_u16, &type_s16, /*CastKind::u16_s16, */false});
-	built_in_casts.insert({&type_u16, &type_s32, /*CastKind::u16_s32, */true});
-	built_in_casts.insert({&type_u16, &type_s64, /*CastKind::u16_s64, */true});
-	built_in_casts.insert({&type_u16, &type_u8 , /*CastKind::u16_u8 , */false});
-	built_in_casts.insert({&type_u16, &type_u32, /*CastKind::u16_u32, */true});
-	built_in_casts.insert({&type_u16, &type_u64, /*CastKind::u16_u64, */true});
-	built_in_casts.insert({&type_u32, &type_s8 , /*CastKind::u32_s8 , */false});
-	built_in_casts.insert({&type_u32, &type_s16, /*CastKind::u32_s16, */false});
-	built_in_casts.insert({&type_u32, &type_s32, /*CastKind::u32_s32, */false});
-	built_in_casts.insert({&type_u32, &type_s64, /*CastKind::u32_s64, */true});
-	built_in_casts.insert({&type_u32, &type_u8 , /*CastKind::u32_u8 , */false});
-	built_in_casts.insert({&type_u32, &type_u16, /*CastKind::u32_u16, */false});
-	built_in_casts.insert({&type_u32, &type_u64, /*CastKind::u32_u64, */true});
-	built_in_casts.insert({&type_u64, &type_s8 , /*CastKind::u64_s8 , */false});
-	built_in_casts.insert({&type_u64, &type_s16, /*CastKind::u64_s16, */false});
-	built_in_casts.insert({&type_u64, &type_s32, /*CastKind::u64_s32, */false});
-	built_in_casts.insert({&type_u64, &type_s64, /*CastKind::u64_s64, */false});
-	built_in_casts.insert({&type_u64, &type_u8 , /*CastKind::u64_u8 , */false});
-	built_in_casts.insert({&type_u64, &type_u16, /*CastKind::u64_u16, */false});
-	built_in_casts.insert({&type_u64, &type_u32, /*CastKind::u64_u32, */false});
-	built_in_casts.insert({&type_s8 , &type_s16, /*CastKind::s8_s16 , */true});
-	built_in_casts.insert({&type_s8 , &type_s32, /*CastKind::s8_s32 , */true});
-	built_in_casts.insert({&type_s8 , &type_s64, /*CastKind::s8_s64 , */true});
-	built_in_casts.insert({&type_s8 , &type_u8 , /*CastKind::s8_u8  , */false});
-	built_in_casts.insert({&type_s8 , &type_u16, /*CastKind::s8_u16 , */false});
-	built_in_casts.insert({&type_s8 , &type_u32, /*CastKind::s8_u32 , */false});
-	built_in_casts.insert({&type_s8 , &type_u64, /*CastKind::s8_u64 , */false});
-	built_in_casts.insert({&type_s16, &type_s8 , /*CastKind::s16_s8 , */false});
-	built_in_casts.insert({&type_s16, &type_s32, /*CastKind::s16_s32, */true});
-	built_in_casts.insert({&type_s16, &type_s64, /*CastKind::s16_s64, */true});
-	built_in_casts.insert({&type_s16, &type_u8 , /*CastKind::s16_u8 , */false});
-	built_in_casts.insert({&type_s16, &type_u16, /*CastKind::s16_u16, */false});
-	built_in_casts.insert({&type_s16, &type_u32, /*CastKind::s16_u32, */false});
-	built_in_casts.insert({&type_s16, &type_u64, /*CastKind::s16_u64, */false});
-	built_in_casts.insert({&type_s32, &type_s8 , /*CastKind::s32_s8 , */false});
-	built_in_casts.insert({&type_s32, &type_s16, /*CastKind::s32_s16, */false});
-	built_in_casts.insert({&type_s32, &type_s64, /*CastKind::s32_s64, */true});
-	built_in_casts.insert({&type_s32, &type_u8 , /*CastKind::s32_u8 , */false});
-	built_in_casts.insert({&type_s32, &type_u16, /*CastKind::s32_u16, */false});
-	built_in_casts.insert({&type_s32, &type_u32, /*CastKind::s32_u32, */false});
-	built_in_casts.insert({&type_s32, &type_u64, /*CastKind::s32_u64, */false});
-	built_in_casts.insert({&type_s64, &type_s8 , /*CastKind::s64_s8 , */false});
-	built_in_casts.insert({&type_s64, &type_s16, /*CastKind::s64_s16, */false});
-	built_in_casts.insert({&type_s64, &type_s32, /*CastKind::s64_s32, */false});
-	built_in_casts.insert({&type_s64, &type_u8 , /*CastKind::s64_u8 , */false});
-	built_in_casts.insert({&type_s64, &type_u16, /*CastKind::s64_u16, */false});
-	built_in_casts.insert({&type_s64, &type_u32, /*CastKind::s64_u32, */false});
-	built_in_casts.insert({&type_s64, &type_u64, /*CastKind::s64_u64, */false});
+	integer_infos[0] = {type_u8,  -make_big_int<BigInteger>(0xff),               make_big_int<BigInteger>(0xff)              };
+	integer_infos[1] = {type_u16, -make_big_int<BigInteger>(0xffff),             make_big_int<BigInteger>(0xffff)            };
+	integer_infos[2] = {type_u32, -make_big_int<BigInteger>(0xffffffff),         make_big_int<BigInteger>(0xffffffff)        };
+	integer_infos[3] = {type_u64, -make_big_int<BigInteger>(0xffffffffffffffff), make_big_int<BigInteger>(0xffffffffffffffff)};
+	integer_infos[4] = {type_s8,  -make_big_int<BigInteger>(0xff),               make_big_int<BigInteger>(0xff)              };
+	integer_infos[5] = {type_s16, -make_big_int<BigInteger>(0xffff),             make_big_int<BigInteger>(0xffff)            };
+	integer_infos[6] = {type_s32, -make_big_int<BigInteger>(0xffffffff),         make_big_int<BigInteger>(0xffffffff)        };
+	integer_infos[7] = {type_s64, -make_big_int<BigInteger>(0xffffffffffffffff), make_big_int<BigInteger>(0xffffffffffffffff)};
 
-	built_in_casts.insert({&type_f64, &type_s64, /*CastKind::f64_s64, */false});
-	built_in_casts.insert({&type_s64, &type_f64, /*CastKind::f64_s64, */false});
+	built_in_casts.insert({type_u8 , type_s8 , /*CastKind::u8_s8  , */false});
+	built_in_casts.insert({type_u8 , type_s16, /*CastKind::u8_s16 , */true});
+	built_in_casts.insert({type_u8 , type_s32, /*CastKind::u8_s32 , */true});
+	built_in_casts.insert({type_u8 , type_s64, /*CastKind::u8_s64 , */true});
+	built_in_casts.insert({type_u8 , type_u16, /*CastKind::u8_u16 , */true});
+	built_in_casts.insert({type_u8 , type_u32, /*CastKind::u8_u32 , */true});
+	built_in_casts.insert({type_u8 , type_u64, /*CastKind::u8_u64 , */true});
+	built_in_casts.insert({type_u16, type_s8 , /*CastKind::u16_s8 , */false});
+	built_in_casts.insert({type_u16, type_s16, /*CastKind::u16_s16, */false});
+	built_in_casts.insert({type_u16, type_s32, /*CastKind::u16_s32, */true});
+	built_in_casts.insert({type_u16, type_s64, /*CastKind::u16_s64, */true});
+	built_in_casts.insert({type_u16, type_u8 , /*CastKind::u16_u8 , */false});
+	built_in_casts.insert({type_u16, type_u32, /*CastKind::u16_u32, */true});
+	built_in_casts.insert({type_u16, type_u64, /*CastKind::u16_u64, */true});
+	built_in_casts.insert({type_u32, type_s8 , /*CastKind::u32_s8 , */false});
+	built_in_casts.insert({type_u32, type_s16, /*CastKind::u32_s16, */false});
+	built_in_casts.insert({type_u32, type_s32, /*CastKind::u32_s32, */false});
+	built_in_casts.insert({type_u32, type_s64, /*CastKind::u32_s64, */true});
+	built_in_casts.insert({type_u32, type_u8 , /*CastKind::u32_u8 , */false});
+	built_in_casts.insert({type_u32, type_u16, /*CastKind::u32_u16, */false});
+	built_in_casts.insert({type_u32, type_u64, /*CastKind::u32_u64, */true});
+	built_in_casts.insert({type_u64, type_s8 , /*CastKind::u64_s8 , */false});
+	built_in_casts.insert({type_u64, type_s16, /*CastKind::u64_s16, */false});
+	built_in_casts.insert({type_u64, type_s32, /*CastKind::u64_s32, */false});
+	built_in_casts.insert({type_u64, type_s64, /*CastKind::u64_s64, */false});
+	built_in_casts.insert({type_u64, type_u8 , /*CastKind::u64_u8 , */false});
+	built_in_casts.insert({type_u64, type_u16, /*CastKind::u64_u16, */false});
+	built_in_casts.insert({type_u64, type_u32, /*CastKind::u64_u32, */false});
+	built_in_casts.insert({type_s8 , type_s16, /*CastKind::s8_s16 , */true});
+	built_in_casts.insert({type_s8 , type_s32, /*CastKind::s8_s32 , */true});
+	built_in_casts.insert({type_s8 , type_s64, /*CastKind::s8_s64 , */true});
+	built_in_casts.insert({type_s8 , type_u8 , /*CastKind::s8_u8  , */false});
+	built_in_casts.insert({type_s8 , type_u16, /*CastKind::s8_u16 , */false});
+	built_in_casts.insert({type_s8 , type_u32, /*CastKind::s8_u32 , */false});
+	built_in_casts.insert({type_s8 , type_u64, /*CastKind::s8_u64 , */false});
+	built_in_casts.insert({type_s16, type_s8 , /*CastKind::s16_s8 , */false});
+	built_in_casts.insert({type_s16, type_s32, /*CastKind::s16_s32, */true});
+	built_in_casts.insert({type_s16, type_s64, /*CastKind::s16_s64, */true});
+	built_in_casts.insert({type_s16, type_u8 , /*CastKind::s16_u8 , */false});
+	built_in_casts.insert({type_s16, type_u16, /*CastKind::s16_u16, */false});
+	built_in_casts.insert({type_s16, type_u32, /*CastKind::s16_u32, */false});
+	built_in_casts.insert({type_s16, type_u64, /*CastKind::s16_u64, */false});
+	built_in_casts.insert({type_s32, type_s8 , /*CastKind::s32_s8 , */false});
+	built_in_casts.insert({type_s32, type_s16, /*CastKind::s32_s16, */false});
+	built_in_casts.insert({type_s32, type_s64, /*CastKind::s32_s64, */true});
+	built_in_casts.insert({type_s32, type_u8 , /*CastKind::s32_u8 , */false});
+	built_in_casts.insert({type_s32, type_u16, /*CastKind::s32_u16, */false});
+	built_in_casts.insert({type_s32, type_u32, /*CastKind::s32_u32, */false});
+	built_in_casts.insert({type_s32, type_u64, /*CastKind::s32_u64, */false});
+	built_in_casts.insert({type_s64, type_s8 , /*CastKind::s64_s8 , */false});
+	built_in_casts.insert({type_s64, type_s16, /*CastKind::s64_s16, */false});
+	built_in_casts.insert({type_s64, type_s32, /*CastKind::s64_s32, */false});
+	built_in_casts.insert({type_s64, type_u8 , /*CastKind::s64_u8 , */false});
+	built_in_casts.insert({type_s64, type_u16, /*CastKind::s64_u16, */false});
+	built_in_casts.insert({type_s64, type_u32, /*CastKind::s64_u32, */false});
+	built_in_casts.insert({type_s64, type_u64, /*CastKind::s64_u64, */false});
+
+	built_in_casts.insert({type_f32, type_s32, false});
+	built_in_casts.insert({type_s32, type_f32, false});
+
+	built_in_casts.insert({type_f64, type_s64, false});
+	built_in_casts.insert({type_s64, type_f64, false});
 
 	current_printer = standard_output_printer;
 
@@ -4940,7 +5168,7 @@ restart_main:
 	{
 		scoped_phase("Parsing");
 
-		auto parsed = parse_file(concatenate(context.executable_directory, "\\libs\\preload.tl"str));
+		auto parsed = parse_file(concatenate(context.compiler_directory, "\\libs\\preload.tl"str));
 		assert_always(parsed->result != ParseResult::read_error);
 		// global_scope.append(parsed->scope);
 
@@ -5061,7 +5289,7 @@ restart_main:
 			context.build_lambda = get_lambda(build_definition->expression);
 			s64 test = 69;
 			// invoke(build_lambda, &test);
-			print("test is {}\n", test);
+			print(Print_error, "test is {}\n", test);
 		}
 	}
 
@@ -5082,12 +5310,12 @@ restart_main:
 		}
 		context.main_lambda = get_lambda(main_definition->expression);
 
-		if (!::is_integer(context.main_lambda->return_parameter->type) && !types_match(context.main_lambda->return_parameter->type, &type_void)) {
+		if (!::is_integer(context.main_lambda->return_parameter->type) && !types_match(context.main_lambda->return_parameter->type, type_void)) {
 			immediate_error(context.main_lambda->return_parameter->type->location.data ? context.main_lambda->return_parameter->type->location : context.main_lambda->location, "Main function can return any type of integer or void, but not {}", type_to_string(context.main_lambda->return_parameter->type));
 			return 1;
 		}
 	} else {
-		print("Entry function was not defined. Exiting.\n");
+		print(Print_error, "Entry function was not defined. Exiting.\n");
 		return 1;
 	}
 
@@ -5097,12 +5325,12 @@ restart_main:
 		bytecode = build_bytecode();
 	}
 
-	if (args.output != "none"str) {
+	if (args.target != "none"str) {
 		scoped_phase("Generating executable");
 
 		auto build = (OutputBuilder)GetProcAddress(lib, "tlang_build_output");
 		if (!build) {
-			print("Failed to load output generator '{}'. There is no build function\n", args.output);
+			print(Print_error, "Failed to load output generator '{}'. There is no build function\n", args.target);
 			return 1;
 		}
 

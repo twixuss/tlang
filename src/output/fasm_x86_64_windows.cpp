@@ -164,15 +164,13 @@ section '.idata' import data readable writeable
 
 	append_format(bat_builder,
 		u8"@echo off\r\n"
-		"{}\\fasm\\fasm.exe -m {} \"{}\"\r\n",
-		context.executable_directory, fasm_max_kilobytes, asm_path);
+		"{}\\fasm\\fasm.exe -m {} \"{}\" \"{}\"\r\n",
+		context.compiler_directory, fasm_max_kilobytes, asm_path, context.output_path);
 
-	auto bat_path = to_pathchars(concatenate(context.executable_directory, u8"\\fasm_build.bat"s));
+	auto bat_path = to_pathchars(concatenate(context.compiler_directory, u8"\\fasm_build.bat"s));
 	write_entire_file(bat_path, as_bytes(to_string(bat_builder)));
 
-	auto includedir = tformat(u8"Include={}\\fasm\\include{}", context.executable_directory, '\0');
-	print("includedir: {}\n", includedir);
-	_wputenv((wchar *)to_utf16(includedir, true).data);
+	_wputenv((wchar *)to_utf16(tformat(u8"Include={}\\fasm\\include{}", context.compiler_directory, '\0'), true).data);
 
 	timed_block(context.profiler, "fasm"s);
 

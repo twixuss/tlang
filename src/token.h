@@ -17,6 +17,7 @@ E(then,     0x200000c) \
 E(simd,     0x200000d) \
 E(autocast, 0x200000e) \
 E(defer,    0x200000f) \
+E(union,    0x2000010) \
 
 #define ENUMERATE_TOKEN_KINDS(E) \
 E(identifier,        0x1000000) \

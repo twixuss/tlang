@@ -579,12 +579,11 @@ inline void append_instruction(StringBuilder &builder, s64 idx, Instruction i) {
 			append_format(builder, "lea {}, {}", i.lea.d, i.lea.s);
 			break;
 
-		case cvt_f64_s64:
-			append(builder, "cvtsd2si rax, [rsp]\nmov [rsp], rax");
-			break;
-		case cvt_s64_f64:
-			append(builder, "cvtsi2sd xmm7, [rsp]\nmovq [rsp], xmm7");
-			break;
+		case cvt_f32_s32: append(builder, "cvtss2si eax, [rsp]\nmov [rsp], eax"); break;
+		case cvt_s32_f32: append(builder, "cvtsi2ss xmm7, [rsp]\nmovd [rsp], xmm7"); break;
+
+		case cvt_f64_s64: append(builder, "cvtsd2si rax, [rsp]\nmov [rsp], rax"); break;
+		case cvt_s64_f64: append(builder, "cvtsi2sd xmm7, [rsp]\nmovq [rsp], xmm7"); break;
 
 		case mov_fr: append_format(builder, "movq {}, {}", i.mov_fr.d, i.mov_fr.s); break;
 	    case mov_rf: append_format(builder, "movq {}, {}", i.mov_rf.d, i.mov_rf.s); break;
