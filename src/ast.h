@@ -522,7 +522,39 @@ struct AstBinaryOperator : AstExpression, ExpressionPool<AstBinaryOperator> {
 	Expression<> right = {};
 };
 
-using UnaryOperation = u32;
+enum class UnaryOperation : u8 {
+	plus,        // +
+	minus,       // -
+	bnot,        // !
+	address_of,  // &
+	dereference, // *
+	count,
+	pointer = dereference,
+};
+
+inline String as_string(UnaryOperation unop) {
+	switch (unop) {
+		using enum UnaryOperation;
+		case plus:        return "+"str;
+		case minus:       return "-"str;
+		case bnot:        return "!"str;
+		case address_of:  return "&"str;
+		case dereference: return "*"str;
+	}
+	invalid_code_path();
+}
+
+inline UnaryOperation as_unary_operation(TokenKind token) {
+	switch (token) {
+		using enum UnaryOperation;
+		case '+': return plus;
+		case '-': return minus;
+		case '!': return bnot;
+		case '&': return address_of;
+		case '*': return dereference;
+	}
+	invalid_code_path();
+}
 
 struct AstUnaryOperator : AstExpression, ExpressionPool<AstUnaryOperator> {
 	AstUnaryOperator() { kind = Ast_unary_operator; }
@@ -686,7 +718,8 @@ inline Optional<BigInteger> get_constant_integer(AstExpression *expression) {
 			auto value = got_value.value_unchecked();
 
 			switch (unop->operation) {
-				case '-': return -value;
+				using enum UnaryOperation;
+				case minus: return -value;
 			}
 			break;
 		}
@@ -735,9 +768,10 @@ inline s64 get_size(AstExpression *type) {
 			return get_size(identifier->definition->expression);
 		}
 		case Ast_unary_operator: {
+			using enum UnaryOperation;
 			auto unop = (AstUnaryOperator *)type;
 			switch (unop->operation) {
-				case '*': return context.stack_word_size;
+				case pointer: return context.stack_word_size;
 				default: invalid_code_path();
 			}
 		}

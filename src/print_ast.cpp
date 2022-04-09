@@ -107,7 +107,7 @@ void print_ast(AstBinaryOperator *node) {
 	tab_count -= 1;
 }
 void print_ast(AstUnaryOperator *node) {
-	print_info("unary - operation: {}, type: {}, uid: {}\n", node->operation, type_to_string(node->type, true), node->uid());
+	print_info("unary - operation: {}, type: {}, uid: {}\n", as_string(node->operation), type_to_string(node->type, true), node->uid());
 	tab_count += 1;
 	print_ast(node->expression);
 	tab_count -= 1;

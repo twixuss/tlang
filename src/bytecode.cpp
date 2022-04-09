@@ -962,7 +962,7 @@ static Optional<Register> load_address_of(Optional<Register> destination, Conver
 		}
 		case Ast_unary_operator: {
 			auto unop = (AstUnaryOperator *)expression;
-			assert(unop->operation == '*');
+			assert(unop->operation == UnaryOperation::pointer);
 			append_to_stack(conv, unop->expression);
 			return {}; // right now result is always on the stack
 		}
@@ -2259,7 +2259,7 @@ static ValueRegisters append(Converter &conv, AstLiteral *literal) {
 				auto f = (f64)(s64)literal->integer;
 				I(push_c, *(s64 *)&f);
 			}
-			else if (literal->type->kind == Ast_unary_operator && ((AstUnaryOperator *)literal->type)->operation == '*')
+			else if (literal->type->kind == Ast_unary_operator && ((AstUnaryOperator *)literal->type)->operation == UnaryOperation::pointer)
 				I(push_c, (s64)literal->integer);
 			else invalid_code_path();
 			break;
@@ -2268,9 +2268,10 @@ static ValueRegisters append(Converter &conv, AstLiteral *literal) {
 	return {};
 }
 static ValueRegisters append(Converter &conv, AstUnaryOperator *unop) {
-	push_comment(conv, format(u8"unary '{}'", operator_string(unop->operation)));
+	push_comment(conv, format(u8"unary '{}'", as_string(unop->operation)));
 	switch (unop->operation) {
-		case '-': {
+		using enum UnaryOperation;
+		case minus: {
 			append_to_stack(conv, unop->expression);
 			auto size = get_size(unop->type);
 			if (::is_integer(unop->type)) {
@@ -2305,12 +2306,12 @@ static ValueRegisters append(Converter &conv, AstUnaryOperator *unop) {
 
 			break;
 		}
-		case '&': {
+		case address_of: {
 			// :PUSH_ADDRESS: TODO: Replace this with load_address_of
 			push_address_of(conv, unop->expression);
 			break;
 		}
-		case '*': {
+		case dereference: {
 			auto size = ceil(get_size(unop->type), context.stack_word_size);
 			I(sub_rc, rs, size);
 			I(push_r, rs);
@@ -2318,7 +2319,7 @@ static ValueRegisters append(Converter &conv, AstUnaryOperator *unop) {
 			append_memory_copy(conv, size, false, unop->expression->location, u8"stack"s);
 			break;
 		}
-		case '!': {
+		case bnot: {
 			append_to_stack(conv, unop->expression);
 			I(pop_r, r0);
 			I(toboolnot_r, r0);

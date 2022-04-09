@@ -1388,7 +1388,7 @@ AstExpression *parse_sub_expression(Parser *parser) {
 			if (is_unary_operator(parser->token->kind)) {
 				auto unop = AstUnaryOperator::create();
 				unop->location = parser->token->string;
-				unop->operation = parser->token->kind;
+				unop->operation = as_unary_operation(parser->token->kind);
 				if (!parser->next_not_end())
 					return 0;
 
@@ -1532,8 +1532,9 @@ void simplify(AstExpression **_expression) {
 				break;
 			}
 			case Ast_unary_operator: {
+				using enum UnaryOperation;
 				auto unop = (AstUnaryOperator *)type;
-				assert(unop->operation == '*');
+				assert(unop->operation == pointer);
 				raw(unop->expression);
 				SIMPLIFY(unop->expression);
 				break;
@@ -1627,6 +1628,7 @@ void simplify(AstExpression **_expression) {
 				break;
 			}
 			case Ast_unary_operator: {
+				using enum UnaryOperation;
 				auto unop = (AstUnaryOperator *)expression;
 
 				SIMPLIFY(unop->expression);
@@ -1637,16 +1639,16 @@ void simplify(AstExpression **_expression) {
 						case LiteralKind::integer: {
 							auto integer = literal->integer;
 							switch (unop->operation) {
-								case '+': return;
-								case '-': expression = make_integer(-integer); return;
+								case plus: return;
+								case minus: expression = make_integer(-integer); return;
 							}
 							break;
 						}
 						case LiteralKind::Float: {
 							auto Float = literal->Float;
 							switch (unop->operation) {
-								case '+': return;
-								case '-': expression = make_float(-Float); return;
+								case plus: return;
+								case minus: expression = make_float(-Float); return;
 							}
 						}
 					}
@@ -2747,11 +2749,12 @@ bool do_all_paths_return(AstLambda *lambda) {
 */
 
 AstExpression *make_pointer_type(AstExpression *type) {
+	using enum UnaryOperation;
 	timed_function(context.profiler);
 	auto unop = AstUnaryOperator::create();
 	unop->expression = type;
 	unop->type = type_type;
-	unop->operation = '*';
+	unop->operation = pointer;
 	return unop;
 }
 
@@ -3006,8 +3009,9 @@ bool ensure_assignable(Reporter *reporter, AstExpression *expression) {
 			return ensure_assignable(reporter, identifier);
 		}
 		case Ast_unary_operator: {
+			using enum UnaryOperation;
 			auto unop = (AstUnaryOperator *)expression;
-			return unop->operation == '*';
+			return unop->operation == pointer;
 		}
 	}
 
@@ -3356,9 +3360,11 @@ AstUnaryOperator *make_address_of(Reporter *reporter, AstExpression *expression)
 	if (!ensure_addressable(reporter, expression))
 		return 0;
 
+	using enum UnaryOperation;
+
 	auto result = AstUnaryOperator::create();
 	result->expression = expression;
-	result->operation = '&';
+	result->operation = address_of;
 	result->location = expression->location;
 	result->type = make_pointer_type(expression->type);
 	return result;
@@ -3965,19 +3971,20 @@ void typecheck(TypecheckState *state, Expression<> &expression) {
 			break;
 		}
 		case Ast_unary_operator: {
+			using enum UnaryOperation;
 			auto unop = (AstUnaryOperator *)expression;
 
 			typecheck(state, unop->expression);
 
 			if (is_type(unop->expression)) {
-				if (unop->operation != '*') {
-					state->reporter.error(unop->location, "Unary operator '{}' can not be applied to a type expression", operator_string(unop->operation));
+				if (unop->operation != pointer) {
+					state->reporter.error(unop->location, "Unary operator '{}' can not be applied to a type expression", as_string(unop->operation));
 					yield(TypecheckResult::fail);
 				}
 				unop->type = type_type;
 			} else {
 				switch (unop->operation) {
-					case '-': {
+					case minus: {
 						if (::is_integer(unop->expression->type)) {
 							unop->type = unop->expression->type;
 						} else if (::is_float(unop->expression->type)) {
@@ -3988,14 +3995,14 @@ void typecheck(TypecheckState *state, Expression<> &expression) {
 						}
 						break;
 					}
-					case '&': {
+					case address_of: {
 						if (!ensure_addressable(&state->reporter, unop->expression)) {
 							yield(TypecheckResult::fail);
 						}
 						unop->type = make_pointer_type(unop->expression->type);
 						break;
 					}
-					case '*': {
+					case dereference: {
 						if (!is_pointer(unop->expression->type)) {
 							state->reporter.error(unop->location, "{} is not a pointer type, can't dereference it", type_to_string(unop->expression->type));
 							yield(TypecheckResult::fail);
@@ -4003,7 +4010,7 @@ void typecheck(TypecheckState *state, Expression<> &expression) {
 						unop->type = ((AstUnaryOperator *)unop->expression->type)->expression;
 						break;
 					}
-					case '!': {
+					case bnot: {
 						// TODO: implicit cast from int to bool? ...
 						if (!types_match(unop->expression->type, type_bool)/* && !::is_integer(unop->expression->type)*/) {
 							state->reporter.error(unop->location, "{} is not a boolean type, can't invert it", type_to_string(unop->expression->type));
@@ -5063,7 +5070,7 @@ restart_main:
 
 	type_pointer_to_void = AstUnaryOperator::create();
 	type_pointer_to_void->expression = type_void;
-	type_pointer_to_void->operation = '*';
+	type_pointer_to_void->operation = UnaryOperation::pointer;
 	type_pointer_to_void->type = type_type;
 
 	switch (context.register_size) {

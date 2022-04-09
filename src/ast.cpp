@@ -168,9 +168,10 @@ void append_type(StringBuilder &builder, AstExpression *type, bool silent_error)
 			break;
 		}
 		case Ast_unary_operator: {
+			using enum UnaryOperation;
 			auto unop = (AstUnaryOperator *)type;
-			ensure(unop->operation == '*');
-			append(builder, '*');
+			ensure(unop->operation == pointer);
+			append(builder, as_string(unop->operation));
 			append_type(builder, unop->expression, silent_error);
 			break;
 		}
@@ -228,7 +229,8 @@ s64 get_align(AstExpression *type) {
 		case Ast_unary_operator: {
 			auto unop = (AstUnaryOperator *)type;
 			switch (unop->operation) {
-				case '*': return 8;
+				using enum UnaryOperation;
+				case pointer: return 8;
 				default: invalid_code_path();
 			}
 		}
@@ -499,13 +501,13 @@ bool is_pointer(AstExpression *type) {
 	if (type->kind == Ast_identifier) {
 		return is_pointer(((AstIdentifier *)type)->definition->expression);
 	}
-	return type->kind == Ast_unary_operator && ((AstUnaryOperator *)type)->operation == '*';
+	return type->kind == Ast_unary_operator && ((AstUnaryOperator *)type)->operation == UnaryOperation::pointer;
 }
 bool is_pointer_internally(AstExpression *type) {
 	if (type->kind == Ast_identifier) {
 		return is_pointer(((AstIdentifier *)type)->definition->expression);
 	}
-	return type->kind == Ast_lambda || (type->kind == Ast_unary_operator && ((AstUnaryOperator *)type)->operation == '*');
+	return type->kind == Ast_lambda || (type->kind == Ast_unary_operator && ((AstUnaryOperator *)type)->operation == UnaryOperation::pointer);
 }
 
 AstLiteral *get_literal(AstExpression *expression) {
