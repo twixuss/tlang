@@ -148,12 +148,9 @@ section '.idata' import data readable writeable
 
 	auto asm_path = format(u8"{}.asm", output_path_base);
 
-	{
-		auto file = open_file(asm_path, {.write = true});
-		defer { close(file); };
+	write_entire_file(asm_path, as_bytes(to_string(builder)));
+	defer { delete_file(asm_path); };
 
-		write(file, as_bytes(to_string(builder)));
-	}
 
 	builder.clear();
 	auto &bat_builder = builder;
@@ -169,6 +166,7 @@ section '.idata' import data readable writeable
 
 	auto bat_path = to_pathchars(concatenate(context.compiler_directory, u8"\\fasm_build.bat"s));
 	write_entire_file(bat_path, as_bytes(to_string(bat_builder)));
+	defer { delete_file(bat_path); };
 
 	_wputenv((wchar *)to_utf16(tformat(u8"Include={}\\fasm\\include{}", context.compiler_directory, '\0'), true).data);
 

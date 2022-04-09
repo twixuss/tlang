@@ -4852,7 +4852,10 @@ s32 run(Span<Span<utf8>> arguments) {
 #endif
 #if TL_ENABLE_PROFILER
 	context.profiler.init();
-	defer { context.profiler.deinit(); };
+	defer {
+		write_entire_file("profile.tmd"s, context.profiler.output_for_timed());
+		context.profiler.deinit();
+	};
 #endif
 
 #if 0
@@ -4887,8 +4890,6 @@ s32 run(Span<Span<utf8>> arguments) {
 		});
 	};
 #endif
-
-	defer { write_entire_file("profile.tmd"s, context.profiler.output_for_timed()); };
 
 	timed_function(context.profiler);
 
