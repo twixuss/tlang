@@ -182,7 +182,7 @@ SourceFileInfo &get_source_info(utf8 *location) {
 
 HeapString where(utf8 *location) {
 	if (location) {
-		return format<MyAllocator>(u8"{}:{}:{}", get_source_info(location).path, get_line_number(location), get_column_number(location));
+		return format<MyAllocator>(u8"{}:{}:{}", parse_path(get_source_info(location).path).name_and_extension(), get_line_number(location), get_column_number(location));
 	} else {
 		return {};
 	}

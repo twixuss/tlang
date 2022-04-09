@@ -19,7 +19,7 @@ main :: fn (): int {
 	wc.lpszClassName = class_name;
 	wc.hCursor = LoadCursorA(null, IDC_ARROW);
     
-    print_string(if RegisterClassExA(&wc) != 0 then "Class created!\n" else "Class Failed!\n");
+    print(if RegisterClassExA(&wc) != 0 then "Class created!\n" else "Class Failed!\n");
 	
 	test := wc;
 	
@@ -28,7 +28,7 @@ main :: fn (): int {
 		CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, null, null, hInstance, null
 	);
 	
-	print_string(if window != null then "Window Success!\n" else "Window Fail!\n");
+	print(if window != null then "Window Success!\n" else "Window Fail!\n");
 	
 	msg : MSG;
 	

@@ -1,5 +1,5 @@
 import "windows.tl"
-main :: fn () -> uint {
+main :: fn (): uint {
     f := WriteConsoleA;
     handle := GetStdHandle(STD_OUTPUT_HANDLE);
     data := "Hello\n".data;

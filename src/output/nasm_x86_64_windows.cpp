@@ -19,7 +19,7 @@ static Span<utf8> locate_msvc() {
 		for (auto supported_version : supported_versions) {
 			for (auto found_version : found_versions) {
 				if (found_version.kind == FileItem_directory) {
-					auto name = to_utf8(found_version.name);
+					auto name = found_version.name;
 					if (name == supported_version) {
 						return format(u8"{}{}", path, name);
 					}
@@ -37,7 +37,7 @@ static Span<utf8> locate_msvc() {
 		for (auto supported_edition : supported_editions) {
 			for (auto found_edition : found_editions) {
 				if (found_edition.kind == FileItem_directory) {
-					auto name = to_utf8(found_edition.name);
+					auto name = found_edition.name;
 					if (name == supported_edition) {
 						return format(u8"{}\\{}\\VC\\Tools\\MSVC\\", path, name);
 					}
@@ -61,7 +61,7 @@ static Span<utf8> locate_msvc() {
 	if (!found_builds.count) {
 		return {};
 	}
-	path = format(u8"{}{}\\bin\\Hostx64\\x64\\", path, to_utf8(found_builds.back().name));
+	path = format(u8"{}{}\\bin\\Hostx64\\x64\\", path, found_builds.back().name);
 
 	return path;
 }
@@ -79,7 +79,7 @@ static Span<utf8> locate_wkits() {
 		for (auto supported_version : supported_versions) {
 			for (auto found_version : found_versions) {
 				if (found_version.kind == FileItem_directory) {
-					auto name = to_utf8(found_version.name);
+					auto name = found_version.name;
 					if (name == supported_version) {
 						return format(u8"{}{}\\Lib\\", path, name);
 					}
@@ -98,7 +98,8 @@ static Span<utf8> locate_wkits() {
 	if (!found_builds.count) {
 		return {};
 	}
-	path = format(u8"{}{}\\um\\x64", path, to_utf8(found_builds.back().name)); // NO SLASH AT THE END BECAUSE LINK.EXE IS ...
+	// NOTE: no slash at the end because link.exe does not understand that
+	path = format(u8"{}{}\\um\\x64", path, found_builds.back().name);
 
 	return path;
 }

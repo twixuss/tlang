@@ -165,6 +165,9 @@ using StatementPool = DefaultAllocatable<T>;
 template <class T>
 using Statement = T *;
 
+template <class T>
+forceinline T *raw(T *pointer) { return pointer; }
+
 #else
 template <class Tag, class T>
 struct Pool32Allocatable {
@@ -182,14 +185,13 @@ template <class T>
 using StatementPool = Pool32Allocatable<AstStatement, T>;
 template <class T>
 using Statement = Pool32<AstStatement>::Ptr<T>;
-#endif
 
 template <class T>
-forceinline T *raw(T *pointer) { return pointer; }
+forceinline T *raw(Expression<T> expression) { return expression.raw(); }
 
-template <class Tag, class T>
-forceinline T *raw(typename Pool32<Tag>::template Ptr<T> pointer) { return pointer.raw(); }
-
+template <class T>
+forceinline T *raw(Statement<T> statement) { return statement.raw(); }
+#endif
 
 using DefinitionList = List<AstDefinition *, MyAllocator, u32>;
 

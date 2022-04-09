@@ -1,1 +1,1 @@
-main :: fn () int => 12 + 30;
+main :: fn (): int => 12 + 30;

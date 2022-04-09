@@ -76,7 +76,11 @@ struct CompilerContext {
 	Profiler profiler;
     List<PreciseTimer> phase_timers;
 	int tabs = 0;
-	List<SourceFileInfo> sources;
+
+	// Need pointer stability.
+	// Maybe use different data structure.
+	LinkedList<SourceFileInfo> sources;
+
 	s64 stack_word_size = 0;
 	s64 register_size = 0;
 	s64 general_purpose_register_count = 0;

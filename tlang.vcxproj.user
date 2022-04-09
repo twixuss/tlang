@@ -20,9 +20,9 @@
     <RemoteDebuggerCommandArguments>a.tl</RemoteDebuggerCommandArguments>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
-    <LocalDebuggerCommandArguments>a.tl</LocalDebuggerCommandArguments>
+    <LocalDebuggerCommandArguments>performance_test.tl</LocalDebuggerCommandArguments>
     <DebuggerFlavor>WindowsLocalDebugger</DebuggerFlavor>
     <LocalDebuggerWorkingDirectory>$(ProjectDir)bin</LocalDebuggerWorkingDirectory>
-    <RemoteDebuggerCommandArguments>a.tl</RemoteDebuggerCommandArguments>
+    <RemoteDebuggerCommandArguments>performance_test.tl</RemoteDebuggerCommandArguments>
   </PropertyGroup>
 </Project>

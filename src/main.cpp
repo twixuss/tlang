@@ -12,14 +12,21 @@
 #include <charconv>
 
 #define CORO_IMPL
-#define CORO_MALLOC(x) ::tl::page_allocator.allocate_uninitialized(x)
-#define CORO_FREE(x)   ::tl::page_allocator.free(x)
 #pragma push_macro("assert")
 #include <coro.h>
 #pragma pop_macro("assert")
 
+#define USE_FIBERS 1
+
+#if USE_FIBERS
+void* main_fiber;
+size_t fiber_result;
+#define yield(x) (_ReadWriteBarrier(), fiber_result = (size_t)(x), SwitchToFiber(main_fiber))
+#else
 #define YIELD_STATE state->coro
+// #define yield(x) (_ReadWriteBarrier(), ::tl::print("remaining stack size: {}\n", (u8 *)YIELD_STATE->sp - (u8 *)YIELD_STATE->buffer_base), ::coro_yield(YIELD_STATE, (size_t)x))
 #define yield(x) (_ReadWriteBarrier(), ::coro_yield(YIELD_STATE, (size_t)x))
+#endif
 
 #define USE_SLABS 0
 
@@ -285,7 +292,7 @@ bool lexer_function(Lexer *lexer) {
 				if (next_char()) {
 					if (c == '/') {
 						while (next_char()) {
-							if (c == '\n') {
+							if (c == '\n' || c == '\0') {
 								break;
 							}
 						}
@@ -1527,6 +1534,7 @@ void simplify(AstExpression **_expression) {
 			case Ast_unary_operator: {
 				auto unop = (AstUnaryOperator *)type;
 				assert(unop->operation == '*');
+				raw(unop->expression);
 				SIMPLIFY(unop->expression);
 				break;
 			}
@@ -1647,7 +1655,6 @@ void simplify(AstExpression **_expression) {
 				break;
 			}
 			case Ast_identifier: {
-				/*
 				auto identifier = (AstIdentifier *)expression;
 				if (identifier->definition) {
 					if (identifier->definition->is_constant) {
@@ -1655,7 +1662,6 @@ void simplify(AstExpression **_expression) {
 						assert(expression->kind == Ast_literal);
 					}
 				}
-				*/
 				break;
 			}
 			case Ast_cast: {
@@ -2471,7 +2477,8 @@ struct TypecheckState {
 
 	bool finished = false;
 
-	coro_state *coro = 0;
+	CoroState *coro = 0;
+	void *fiber = 0;
 
 	u32 no_progress_counter = 0;
 };
@@ -3216,15 +3223,19 @@ void typecheck(TypecheckState *state, AstStatement *statement) {
 			test_params.state = state;
 			test_params.test = test;
 
-			auto typechecker = [](coro_state *, size_t param) -> size_t {
+			auto typechecker = [](CoroState *, size_t param) -> size_t {
 				auto test_params = (TestParams *)param;
 				auto state = test_params->state;
 				typecheck_scope(&test_params->test->scope);
 				return (size_t)TypecheckResult::success;
 			};
 
-			coro_state *corostate;
-			assert(coro_init(&corostate, typechecker, 1024*1024));
+			CoroState *corostate;
+			auto init_result = coro_init(&corostate, typechecker, 1024*1024);
+			if (init_result.is_error) {
+				state->reporter.error(test->location, init_result.error.message);
+				yield(TypecheckResult::fail);
+			}
 			defer { coro_free(&corostate); };
 
 			auto original_coro = state->coro;
@@ -3526,7 +3537,8 @@ void typecheck(TypecheckState *state, Expression<> &expression) {
 				auto lambda = match.lambda;
 				call->type = lambda->return_parameter->type;
 			} else {
-				invalid_code_path();
+				state->reporter.error(call->location, "NOT IMPLEMENTED: Right now you can call identifiers only");
+				yield(TypecheckResult::fail);
 			}
 			break;
 		}
@@ -4284,13 +4296,32 @@ void typecheck(TypecheckState *state, Expression<> &expression) {
 	}
 }
 
-void *typecheck_global(coro_state *corostate, TypecheckState *state) {
+void stack_overflow() {
+	stack_overflow();
+}
+
+void typecheck_global(CoroState *corostate, TypecheckState *state) {
 	{
 		push_scope(&global_scope);
 		typecheck(state, state->statement);
 	}
 	yield(TypecheckResult::success);
+}
+void layer(CoroState *corostate, TypecheckState *state) {
+	CORO_BEGIN
+	// stack_overflow();
+	typecheck_global(corostate, state);
+	CORO_END
+}
+umm typecheck_coroutine(CoroState *corostate, umm param) {
+	layer(corostate, (TypecheckState *)param);
 	return 0;
+}
+
+
+VOID WINAPI typecheck_fiber(LPVOID lpFiberParameter) {
+	// stack_overflow();
+	typecheck_global(0, (TypecheckState *)lpFiberParameter);
 }
 
 bool typecheck_finished;
@@ -4552,14 +4583,7 @@ ParsedArguments parse_arguments(Span<Span<utf8>> arguments) {
 
 	ParsedArguments result = {};
 
-	{
-		List<utf16> temp;
-		temp.allocator = temporary_allocator;
-		temp.reserve(512);
-		temp.count = GetModuleFileNameW(0, (wchar *)temp.data, temp.capacity);
-
-		context.compiler_path = (String)to_utf8(temp);
-	}
+	context.compiler_path = (String)get_executable_path();
 
 	auto parsed = parse_path(context.compiler_path);
 	context.compiler_name = parsed.name;
@@ -4742,7 +4766,7 @@ auto slab_allocator_func(AllocatorMode mode, void *data, umm old_size, umm new_s
 
 #include <tl/tracking_allocator.h>
 
-s32 tl_main(Span<Span<utf8>> arguments) {
+s32 run(Span<Span<utf8>> arguments) {
 	defer { print(""); }; // to reset console color
 
 	construct(context);
@@ -5199,6 +5223,10 @@ restart_main:
 
 		timed_block(context.profiler, "typecheck"str);
 
+#if USE_FIBERS
+		main_fiber = ConvertThreadToFiber(0);
+#endif
+
 		Span<TypecheckState> typecheck_states;
 		typecheck_states.count = count(global_scope.statements, [&](AstStatement *statement) { return !(statement->kind == Ast_definition && ((AstDefinition *)statement)->built_in); });
 		if (typecheck_states.count) {
@@ -5218,7 +5246,8 @@ restart_main:
 						if (result == TypecheckResult::fail) {
 							fail = true;
 						}
-						coro_free(&state.coro);
+						DeleteFiber(state.fiber);
+						// coro_free(&state.coro);
 						break;
 					case TypecheckResult::wait:
 						break;
@@ -5232,7 +5261,20 @@ restart_main:
 
 				auto &state = typecheck_states[state_index];
 				state.statement = statement;
-				coro_init(&state.coro, (coroutine_t)typecheck_global, 1024*1024);
+
+#if USE_FIBERS
+				state.fiber = CreateFiber(4096, typecheck_fiber, &state);
+				if (!state.fiber) {
+					immediate_error(statement->location, "INTERNAL COMPILER ERROR: Failed to create fiber");
+					return -1;
+				}
+#else
+				auto init_result = coro_init(&state.coro, typecheck_coroutine, 4096);
+				if (init_result.is_error) {
+					immediate_error(statement->location, "INTERNAL COMPILER ERROR: {}", init_result.error.message);
+					return -1;
+				}
+#endif
 				++state_index;
 			}
 			if (fail)
@@ -5247,10 +5289,14 @@ restart_main:
 					auto &state = typecheck_states[i];
 					if (state.finished)
 						continue;
-
+#if USE_FIBERS
+					SwitchToFiber(state.fiber);
+					auto result = (TypecheckResult)fiber_result;
+#else
 #undef YIELD_STATE
 #define YIELD_STATE state.coro
 					auto result = (TypecheckResult)(int)yield(&state);
+#endif
 					switch (process_coroutine_result(state, result)) {
 						//case TypecheckResult::fail:
 						//	goto typecheck_break;
@@ -5340,3 +5386,6 @@ restart_main:
 	return 0;
 }
 
+s32 tl_main(Span<Span<utf8>> arguments) {
+	return run(arguments);
+}

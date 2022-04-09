@@ -8,7 +8,7 @@ AStruct :: struct {
 	count : uint;
 }
 
-main :: fn () -> s32 {
+main :: fn (): s32 {
     standard_output_handle = GetStdHandle(STD_OUTPUT_HANDLE);
 
     str : string = "Hello World!\n";
