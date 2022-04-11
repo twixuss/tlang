@@ -8,7 +8,15 @@
     },
     {
       "Id": "95f8981e-c7f3-4752-b466-c63af2094358",
-      "Command": "--print-ast"
+      "Command": "--print-ast parse"
+    },
+    {
+      "Id": "559e844f-0714-49ef-97a8-508f82d0d449",
+      "Command": "--print-ast type"
+    },
+    {
+      "Id": "0d3ae6b8-68bd-43f4-beb6-89adc881ed4e",
+      "Command": "--keep-temp"
     },
     {
       "Id": "f72602c8-3a4c-4bb4-aa2d-767527649a92",

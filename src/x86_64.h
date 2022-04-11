@@ -607,6 +607,7 @@ inline void append_instruction(StringBuilder &builder, s64 idx, Instruction i) {
 
 		case tobool_r:    { auto d = part1b(i.tobool_r.d);    append_format(builder, "test {}, {}\nsetnz {}", d, d, d); break; }
 		case toboolnot_r: { auto d = part1b(i.toboolnot_r.d); append_format(builder, "test {}, {}\nsetz {}" , d, d, d); break; }
+		case not_r: append_format(builder, "not {}", i.not_r.d); break;
 		case noop: break;
 
 		case debug_break: append(builder, "int3"s); break;

@@ -56,15 +56,10 @@ e(while) \
 e(subscript) \
 e(block) \
 e(tuple) \
-e(cast) \
-e(sizeof) \
 e(test) \
 e(ifx) \
 e(assert) \
-e(typeof) \
-e(print) \
 e(import) \
-e(autocast) \
 e(defer) \
 
 enum AstKind : u8 {
@@ -265,7 +260,7 @@ enum class LiteralKind : u8 {
 	type,
 };
 
-using BigInteger = tl::impl::BigInt<u64, List<u64, MyAllocator, u32>>;
+using BigInteger = tl::impl::BigInt<List<u64, MyAllocator, u32>>;
 
 struct AstLiteral : AstExpression, ExpressionPool<AstLiteral> {
 
@@ -510,9 +505,11 @@ enum class BinaryOperation {
     borass,  // |=
     bslass,  // <<=
     bsrass,  // >>=
+	as,      // as
     count,
 };
 
+// NOTE: Cast operator's right expression is it's type. So right expression pointer is wasted space...
 struct AstBinaryOperator : AstExpression, ExpressionPool<AstBinaryOperator> {
 	AstBinaryOperator() { kind = Ast_binary_operator; }
 
@@ -528,8 +525,13 @@ enum class UnaryOperation : u8 {
 	bnot,        // !
 	address_of,  // &
 	dereference, // *
+	pointer,     // *
+	print,       // #print
+	autocast,    // autocast
+	Sizeof,      // #sizeof
+	typeof,      // #typeof
 	count,
-	pointer = dereference,
+	pointer_or_dereference,
 };
 
 inline String as_string(UnaryOperation unop) {
@@ -539,21 +541,34 @@ inline String as_string(UnaryOperation unop) {
 		case minus:       return "-"str;
 		case bnot:        return "!"str;
 		case address_of:  return "&"str;
+		case pointer:     return "*"str;
 		case dereference: return "*"str;
+		case autocast:    return "autocast"str;
+		case print:       return "#print"str;
+		case Sizeof:      return "#sizeof"str;
+		case typeof:      return "#typeof"str;
+		case pointer_or_dereference: return "pointer_or_dereference"str;
 	}
 	invalid_code_path();
 }
 
-inline UnaryOperation as_unary_operation(TokenKind token) {
-	switch (token) {
+inline Optional<UnaryOperation> as_unary_operation(Token token) {
+	switch (token.kind) {
 		using enum UnaryOperation;
 		case '+': return plus;
 		case '-': return minus;
 		case '!': return bnot;
 		case '&': return address_of;
-		case '*': return dereference;
+		case '*': return pointer_or_dereference;
+		case Token_autocast:
+			return autocast;
+		case Token_directive:
+			if (token.string == "#print") return print;
+			if (token.string == "#sizeof") return Sizeof;
+			if (token.string == "#typeof") return typeof;
+			break;
 	}
-	invalid_code_path();
+	return {};
 }
 
 struct AstUnaryOperator : AstExpression, ExpressionPool<AstUnaryOperator> {
@@ -573,36 +588,6 @@ struct AstSubscript : AstExpression, ExpressionPool<AstSubscript> {
 
 	bool is_prefix : 1 = false;
 	// bool is_simd   : 1 = false;
-};
-
-struct AstPrint : AstStatement, StatementPool<AstPrint> {
-	AstPrint() {kind = Ast_print;}
-	Expression<> expression = {};
-};
-
-struct AstCast : AstExpression, ExpressionPool<AstCast> {
-	AstCast() { kind = Ast_cast; }
-
-	Expression<> expression = {};
-	// TODO: user defined casts
-	// AstLambda *lambda = 0; // non null for user defined casts
-};
-
-struct AstAutocast : AstExpression, ExpressionPool<AstAutocast> {
-	AstAutocast() { kind = Ast_autocast; }
-	Expression<> expression = {};
-};
-
-struct AstSizeof : AstExpression, ExpressionPool<AstSizeof> {
-	AstSizeof() { kind = Ast_sizeof; }
-
-	Expression<> expression = {};
-};
-
-struct AstTypeof : AstExpression, ExpressionPool<AstTypeof> {
-	AstTypeof() { kind = Ast_typeof; }
-
-	Expression<> expression = {};
 };
 
 struct AstTest : AstStatement, StatementPool<AstTest> {
@@ -730,13 +715,13 @@ inline Optional<BigInteger> get_constant_integer(AstExpression *expression) {
 				case add: return get_constant_integer(binop->left) + get_constant_integer(binop->right);
 				case sub: return get_constant_integer(binop->left) - get_constant_integer(binop->right);
 				case mul: return get_constant_integer(binop->left) * get_constant_integer(binop->right);
-				case div: print("constexpr / not implemented\n"); return {};// return get_constant_integer(binop->left) / get_constant_integer(binop->right);
-				case mod: print("constexpr % not implemented\n"); return {};// return get_constant_integer(binop->left) % get_constant_integer(binop->right);
+				case div: return get_constant_integer(binop->left) / get_constant_integer(binop->right);
+				case mod: return get_constant_integer(binop->left) % get_constant_integer(binop->right);
 				case bxor: return get_constant_integer(binop->left) ^ get_constant_integer(binop->right);
 				case band: return get_constant_integer(binop->left) & get_constant_integer(binop->right);
 				case bor: return get_constant_integer(binop->left) | get_constant_integer(binop->right);
-				case bsl: print("constexpr << not implemented\n"); return {};// return get_constant_integer(binop->left) << get_constant_integer(binop->right);
-				case bsr: print("constexpr >> not implemented\n"); return {};// return get_constant_integer(binop->left) >> get_constant_integer(binop->right);
+				case bsl: return get_constant_integer(binop->left) << get_constant_integer(binop->right);
+				case bsr: return {}; //return get_constant_integer(binop->left) >> get_constant_integer(binop->right);
 				case eq:
 				case ne:
 				case dot:
@@ -772,6 +757,7 @@ inline s64 get_size(AstExpression *type) {
 			auto unop = (AstUnaryOperator *)type;
 			switch (unop->operation) {
 				case pointer: return context.stack_word_size;
+				case typeof:  return get_size(unop->expression->type);
 				default: invalid_code_path();
 			}
 		}
@@ -785,10 +771,6 @@ inline s64 get_size(AstExpression *type) {
 		}
 		case Ast_lambda: {
 			return context.stack_word_size;
-		}
-		case Ast_typeof: {
-			auto typeof = (AstTypeof *)type;
-			return get_size(typeof->expression->type);
 		}
 		case Ast_call: {
 			auto call = (AstCall *)type;

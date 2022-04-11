@@ -192,9 +192,9 @@ void print_report(Report r) {
 	if (r.where.count)
 		print("{}: ", r.where);
 	switch (r.kind) {
-		case ReportKind::info:    print(Print_info,    u8"Info"s);  break;
-		case ReportKind::warning: print(Print_warning, u8"Warning"s); break;
-		case ReportKind::error:	  print(Print_error,   u8"Error"s);	  break;
+		case ReportKind::info:    print(Print_info,    strings.info);  break;
+		case ReportKind::warning: print(Print_warning, strings.warning); break;
+		case ReportKind::error:	  print(Print_error,   strings.error);	  break;
 		default: invalid_code_path();
 	}
 	print(": {}\n", r.message);
@@ -354,3 +354,42 @@ HeapString unescape_string(String string) {
 	}
 	return new_string;
 }
+
+Strings strings = {};
+const Strings strings_en = {
+	.usage =
+		u8"Usage:\n"
+        "    {} <path> [options]\n"
+        "Option               Description\n"
+        "--print-ast <when>   Print the abstract syntax tree of the program\n"
+        "    when variants:\n"
+		"        parse        After parsing\n"
+		"        type         After typechecking\n"
+        "--keep-temp          Keep temporary files (build.bat, *.asm, etc)\n"
+        "--output <path>      Specify pathname of resulting executable.\n"
+        "--target <toolchain> Generate the executable using specified toolchain.\n"
+        "    toolchain variants:\n"
+        "        fasm_x86_64_windows (default)\n"
+        "        nasm_x86_64_windows\n",
+	.no_source_path_received = u8"No source path received.",
+	.error = u8"Error",
+	.warning = u8"Warning",
+	.info = u8"Info",
+};
+const Strings strings_ru = {
+	.usage =
+		u8"Использование:\n"
+        "    {} <путь> [опции]\n"
+        "Опция                Описание\n"
+        "--print-ast          Вывести дерево программы\n"
+        "--keep-temp          Сохранить временные файлы (build.bat, *.asm, etc)\n"
+        "--output <path>      Путь к выходному исполняемому файлу.\n"
+        "--target <toolchain> Генератор исполняемого файла.\n"
+        "    варианты:\n"
+        "        fasm_x86_64_windows (по умолчанию)\n"
+        "        nasm_x86_64_windows\n",
+	.no_source_path_received = u8"Не указан путь к исходному файлу.",
+	.error = u8"Ошибка",
+	.warning = u8"Предупреждение",
+	.info = u8"Информация",
+};

@@ -1,5 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <AutoVisualizer xmlns="http://schemas.microsoft.com/vstudio/debugger/natvis/2010">
+    <Type Name="AstNode" Inheritable="true">
+        <DisplayString>{location}</DisplayString>
+    </Type>
     <Type Name="AstNode" Inheritable="false">
         <Expand>
             <Item Name="[value]" Condition="kind==Ast_definition          " Optional="true">*(AstDefinition         *)this</Item>
@@ -17,6 +20,7 @@
             <Item Name="[value]" Condition="kind==Ast_subscript           " Optional="true">*(AstSubscript          *)this</Item>
             <Item Name="[value]" Condition="kind==Ast_block               " Optional="true">*(AstBlock              *)this</Item>
             <Item Name="[value]" Condition="kind==Ast_cast                " Optional="true">*(AstCast               *)this</Item>
+            <Item Name="[value]" Condition="kind==Ast_tuple               " Optional="true">*(AstTuple              *)this</Item>
         </Expand>
     </Type>
     <Type Name="Token">

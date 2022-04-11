@@ -264,7 +264,7 @@ s32 tl_main(Span<Span<utf8>> arguments) {
 //	}
 
 	StringBuilder command_builder;
-	append_format(command_builder, "del *.pdb && del *.exe && del *.ilk && del *.obj"s);
+	append_format(command_builder, "del *.pdb && del *.exe && del *.ilk && del *.obj && del *.asm"s);
 	auto command = as_utf8(to_string(command_builder));
 	print("{}\n", command);
 	_wsystem((wchar *)to_utf16(command, true).data);

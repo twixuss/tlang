@@ -189,6 +189,8 @@ enum class InstructionKind : u8 {
 	mod_mc,
 	mod_mr,
 
+	not_r,
+
 	or_rc,
 	or_rr,
 	or_rm,
@@ -387,6 +389,8 @@ struct Instruction {
 		struct { Register d; Address  s; } mod_rm;
 		struct { Address  d; s64      s; } mod_mc;
 		struct { Address  d; Register s; } mod_mr;
+
+		struct { Register d; } not_r;
 
 		struct { Register d; s64      s; } or_rc;
 		struct { Register d; Register s; } or_rr;

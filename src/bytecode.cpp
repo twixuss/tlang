@@ -4,6 +4,9 @@
 
 #define OPTIMIZE_BYTECODE 1
 
+using enum Register;
+using enum XRegister;
+
 struct Relocation {
 	umm instruction_index;
 	AstLambda *lambda;
@@ -22,42 +25,54 @@ struct RegistersState {
 };
 
 struct StackState {
-	inline static constexpr u64 unknown = (u64)-1;
 	List<Optional<s64>> data;
 	s64 cursor = 1; // included return address pushed by `call` instruction
 
 	void push(Optional<s64> v) {
-		if (cursor == unknown)
-			return;
 		data.resize(cursor + 1);
 		data[cursor] = v;
 		cursor++;
 	}
 	Optional<s64> pop() {
-		if (cursor == unknown)
-			return null_opt;
 		assert(cursor);
 		return data[--cursor];
 	}
+	// amount in bytes
 	// positive amount shrinks the stack,
-	// negative - grows
+	// negative grows
 	void offset(s64 amount) {
-		if (cursor == unknown)
-			return;
+		assert(amount % 8 == 0);
+		amount /= 8;
 		if (amount > 0) {
 			assert(cursor >= amount);
 		}
 		cursor -= amount;
 	}
 	Optional<s64> top() {
-		if (cursor == unknown)
-			return null_opt;
 		return data[cursor-1];
 	}
+	// If that address contains known value, return it.
+	// Use this function to optimize reads from stack memory.
+	Optional<s64> get_value_at(Address addr) {
+		if (addr.base == rs) {
+			if (addr.c % context.stack_word_size == 0) {
+				auto offset = cursor - 1 - addr.c / context.stack_word_size;
+				if (0 <= offset && offset < data.count) {
+					return data[offset];
+				}
+			}
+		} else if (addr.base == rb) {
+			if (addr.c % context.stack_word_size == 0) {
+				auto offset = -addr.c / context.stack_word_size + 1;
+				if (0 <= offset && offset < data.count) {
+					return data[offset];
+				}
+			}
+		}
 
-	void make_unknown() {
-		cursor = unknown;
+		return {};
 	}
+
 };
 
 struct RegisterSet {
@@ -118,9 +133,6 @@ Optional<Register> allocate_register(Converter &conv) {
 void free_register(Converter &conv, Register reg) {
 	conv.ls->available_registers.push(reg);
 }
-
-using enum Register;
-using enum XRegister;
 
 s64 allocate_data(StringBuilder &conv, Span<u8> string) {
 	auto result = conv.count();
@@ -183,31 +195,6 @@ void remove_last_instruction(Converter &conv) {
 }
 #endif
 
-// If that address contains known value, return it.
-// Use this function to optimize reads from stack memory.
-Optional<s64> get_value_at(Converter &conv, Address addr) {
-	auto &ls = *conv.ls;
-	auto &stack_state = ls.stack_state;
-
-	if (addr.base == rs) {
-		if (addr.c % context.stack_word_size == 0) {
-			auto offset = stack_state.cursor - 1 - addr.c / context.stack_word_size;
-			if (0 <= offset && offset < stack_state.data.count) {
-				return stack_state.data[offset];
-			}
-		}
-	} else if (addr.base == rb) {
-		if (addr.c % context.stack_word_size == 0) {
-			auto offset = -addr.c / context.stack_word_size + 1;
-			if (0 <= offset && offset < stack_state.data.count) {
-				return stack_state.data[offset];
-			}
-		}
-	}
-
-	return {};
-}
-
 Instruction *add_instruction(Converter &conv, Instruction next) {
 	auto &ls = *conv.ls;
 	auto &stack_state = ls.stack_state;
@@ -223,7 +210,6 @@ Instruction *add_instruction(Converter &conv, Instruction next) {
 
 			stack_state.push(next.s);
 			break;
-			break;
 		}
 		case push_r: {
 			REDECLARE_REF(next, next.push_r);
@@ -234,7 +220,7 @@ Instruction *add_instruction(Converter &conv, Instruction next) {
 		case push_m: {
 			REDECLARE_REF(next, next.push_m);
 #if OPTIMIZE_BYTECODE
-			auto value = get_value_at(conv, next.s);
+			auto value = stack_state.get_value_at(next.s);
 			if (value) {
 				return II(push_c, value.value_unchecked());
 			}
@@ -255,10 +241,11 @@ Instruction *add_instruction(Converter &conv, Instruction next) {
 			register_state[next.d] = stack_state.pop();
 			if (next.d == rs) {
 				invalid_code_path("need to keep track of the stack here");
-				stack_state.make_unknown();
 			}
 
 #if OPTIMIZE_BYTECODE
+			// NOTE: We don't use memory after stack pointer.
+			// It is safe to do these optimizations.
 			auto back = body_builder.back();
 			switch (back.kind) {
 				case push_c: {
@@ -326,7 +313,7 @@ Instruction *add_instruction(Converter &conv, Instruction next) {
 
 			if (next.d == rs) {
 				assert((next.s % context.stack_word_size) == 0);
-				stack_state.offset(next.s / context.stack_word_size);
+				stack_state.offset(next.s);
 			}
 
 #if OPTIMIZE_BYTECODE
@@ -366,7 +353,7 @@ Instruction *add_instruction(Converter &conv, Instruction next) {
 
 			if (next.d == rs) {
 				assert((next.s % context.stack_word_size) == 0);
-				stack_state.offset(-next.s / context.stack_word_size);
+				stack_state.offset(-next.s);
 			}
 
 #if OPTIMIZE_BYTECODE
@@ -432,7 +419,7 @@ Instruction *add_instruction(Converter &conv, Instruction next) {
 			REDECLARE_REF(next, next.mov8_rm);
 
 #if OPTIMIZE_BYTECODE
-			auto value = get_value_at(conv, next.s);
+			auto value = stack_state.get_value_at(next.s);
 			if (value) {
 				return II(mov_rc, next.d, value.value_unchecked());
 			}
@@ -441,8 +428,14 @@ Instruction *add_instruction(Converter &conv, Instruction next) {
 				REDECLARE_REF(back, back.lea);
 
 				if (next.s.is(back.d)) {
+					// This would be fine if we knew that r1 isn't used later...
+#if 0
+					// lea r1, [rs+16]  =>  mov r0, [rs+16]
+					// mov r0, [r1]
+
 					remove_last_instruction(conv);
 					return II(mov8_rm, next.d, back.s);
+#endif
 				}
 			}
 #endif
@@ -513,7 +506,7 @@ Instruction *add_instruction(Converter &conv, Instruction next) {
 
 			if (next.add_rc.d == rs) {
 				assert((next.add_rc.s % 8) == 0);
-				conv.stack_state.offset(next.add_rc.s/8);
+				conv.stack_state.offset(next.add_rc.s);
 			}
 
 			auto back = conv.body_builder->back();
@@ -542,7 +535,7 @@ Instruction *add_instruction(Converter &conv, Instruction next) {
 
 			if (next.sub_rc.d == rs) {
 				assert((next.sub_rc.s % 8) == 0);
-				conv.stack_state.offset(-next.sub_rc.s/8);
+				conv.stack_state.offset(-next.sub_rc.s);
 			}
 
 			auto back = conv.body_builder->back();
@@ -674,7 +667,6 @@ ValueRegisters value_registers(Register a, Register b) {
 [[nodiscard]] static ValueRegisters append(Converter &, AstBinaryOperator *);
 [[nodiscard]] static ValueRegisters append(Converter &, AstUnaryOperator *);
 [[nodiscard]] static ValueRegisters append(Converter &, AstSubscript *);
-[[nodiscard]] static ValueRegisters append(Converter &, AstCast *);
 [[nodiscard]] static ValueRegisters append(Converter &, AstLambda *, bool push_address);
 [[nodiscard]] static ValueRegisters append(Converter &, AstIfx *);
 
@@ -686,7 +678,6 @@ ValueRegisters value_registers(Register a, Register b) {
 		case Ast_binary_operator:      return append(conv, (AstBinaryOperator*)expression);
 		case Ast_unary_operator:       return append(conv, (AstUnaryOperator*)expression);
 		case Ast_subscript:            return append(conv, (AstSubscript*)expression);
-		case Ast_cast:                 return append(conv, (AstCast*)expression);
 		case Ast_lambda:               return append(conv, (AstLambda*)expression, true);
 		case Ast_ifx:                  return append(conv, (AstIfx*)expression);
 		default: invalid_code_path();
@@ -727,7 +718,6 @@ static void append(Converter &conv, AstStatement *statement) {
 			return;
 		}
 		case Ast_assert:
-		case Ast_print:
 		case Ast_import:
 		case Ast_test:                 return;
 		default: invalid_code_path();
@@ -1112,33 +1102,27 @@ static void append_memory_copy(Converter &conv, Optional<Register> _dst, Optiona
 	auto dst = _dst ? _dst.value_unchecked() : (I(pop_r, r1), r1);
 
 	if (bytes_to_copy <= context.register_size) {
+		constexpr auto tmp = r2;
 		switch (bytes_to_copy) {
 			case 1:
-			case 2:
-			case 4:
-			case 8: {
-				constexpr auto tmp = r2;
-				if (bytes_to_copy == 8) {
-					I(mov8_rm, tmp, src);
-					I(mov8_mr, dst, tmp);
-				} else if (bytes_to_copy == 4) {
-					I(mov4_rm, tmp, src);
-					I(mov4_mr, dst, tmp);
-				} else if (bytes_to_copy == 2) {
-					I(mov2_rm, tmp, src);
-					I(mov2_mr, dst, tmp);
-				} else if (bytes_to_copy == 1) {
-					I(mov1_rm, tmp, src);
-					I(mov1_mr, dst, tmp);
-				}
+				I(mov1_rm, tmp, src);
+				I(mov1_mr, dst, tmp);
 				return;
-			}
-			default:
-				break;
+			case 2:
+				I(mov2_rm, tmp, src);
+				I(mov2_mr, dst, tmp);
+				return;
+			case 4:
+				I(mov4_rm, tmp, src);
+				I(mov4_mr, dst, tmp);
+				return;
+			case 8:
+				I(mov8_rm, tmp, src);
+				I(mov8_mr, dst, tmp);
+				return;
 		}
 	}
 
-	// TODO: FIXME: BUG: it is likely that the same register will be used for different things here
 	if (reverse) {
 		I(copyb_mmc, dst, src, bytes_to_copy);
 	} else {
@@ -1631,6 +1615,141 @@ static ValueRegisters append(Converter &conv, AstBinaryOperator *bin) {
 				break;
 			}
 		}
+	} else if (bin->operation == as) {
+		auto cast = bin;
+		append_to_stack(conv, cast->left);
+
+		if (is_pointer_internally(cast->left->type) && is_pointer_internally(cast->type)) {
+			return {};
+		}
+
+		AstStruct *from = 0;
+		AstStruct *to = 0;
+
+		if (is_pointer_internally(cast->left->type))
+			from = type_u64;
+		else
+			from = get_struct(cast->left->type);
+
+		if (is_pointer_internally(cast->type))
+			to = type_u64;
+		else
+			to = get_struct(cast->type);
+
+
+		// Here are integer cases
+		//   source to    size destination operation
+		// unsigned to  bigger    unsigned zero extend
+		// unsigned to    same    unsigned noop
+		// unsigned to smaller    unsigned noop
+		// unsigned to  bigger      signed zero extend
+		// unsigned to    same      signed noop
+		// unsigned to smaller      signed noop
+		//   signed to  bigger    unsigned sign extend
+		//   signed to    same    unsigned noop
+		//   signed to smaller    unsigned noop
+		//   signed to  bigger      signed sign extend
+		//   signed to    same      signed noop
+		//   signed to smaller      signed noop
+
+		if (false) {
+		} else if (from == type_u8) {
+			if (false) {}
+			else if (to == type_u8) {}
+			else if (to == type_u16) { I(and_mc, rs, 0xff); } // discard bits that could be garbage
+			else if (to == type_u32) { I(and_mc, rs, 0xff); }
+			else if (to == type_u64) { I(and_mc, rs, 0xff); }
+			else if (to == type_s8) {}
+			else if (to == type_s16) { I(and_mc, rs, 0xff); }
+			else if (to == type_s32) { I(and_mc, rs, 0xff); }
+			else if (to == type_s64) { I(and_mc, rs, 0xff); }
+			else invalid_code_path();
+		} else if (from == type_u16) {
+			if (false) {}
+			else if (to == type_u8) {}
+			else if (to == type_u16) {}
+			else if (to == type_u32) { I(and_mc, rs, 0xffff); }
+			else if (to == type_u64) { I(and_mc, rs, 0xffff); }
+			else if (to == type_s8) {}
+			else if (to == type_s16) {}
+			else if (to == type_s32) { I(and_mc, rs, 0xffff); }
+			else if (to == type_s64) { I(and_mc, rs, 0xffff); }
+			else invalid_code_path();
+		} else if (from == type_u32) {
+			if (false) {}
+			else if (to == type_u8) {}
+			else if (to == type_u16) {}
+			else if (to == type_u32) {}
+			else if (to == type_u64) { I(and_mc, rs, 0xffffffff); }
+			else if (to == type_s8) {}
+			else if (to == type_s16) {}
+			else if (to == type_s32) {}
+			else if (to == type_s64) { I(and_mc, rs, 0xffffffff); }
+			else invalid_code_path();
+		} else if (from == type_u64) {
+			if (false) {}
+			else if (to == type_u8) {}
+			else if (to == type_u16) {}
+			else if (to == type_u32) {}
+			else if (to == type_u64) {}
+			else if (to == type_s8) {}
+			else if (to == type_s16) {}
+			else if (to == type_s32) {}
+			else if (to == type_s64) {}
+			else invalid_code_path();
+		} else if (from == type_s8) {
+			if (false) {}
+			else if (to == type_u8) {}
+			else if (to == type_u16) { I(movsx21_rm, r0, rs); I(mov2_mr, rs, r0); } // discard bits that could be garbage
+			else if (to == type_u32) { I(movsx41_rm, r0, rs); I(mov4_mr, rs, r0); }
+			else if (to == type_u64) { I(movsx81_rm, r0, rs); I(mov8_mr, rs, r0); }
+			else if (to == type_s8) {}
+			else if (to == type_s16) { I(movsx21_rm, r0, rs); I(mov2_mr, rs, r0); }
+			else if (to == type_s32) { I(movsx41_rm, r0, rs); I(mov4_mr, rs, r0); }
+			else if (to == type_s64) { I(movsx81_rm, r0, rs); I(mov8_mr, rs, r0); }
+			else invalid_code_path();
+		} else if (from == type_s16) {
+			if (false) {}
+			else if (to == type_u8) {}
+			else if (to == type_u16) {}
+			else if (to == type_u32) { I(movsx42_rm, r0, rs); I(mov4_mr, rs, r0); }
+			else if (to == type_u64) { I(movsx82_rm, r0, rs); I(mov8_mr, rs, r0); }
+			else if (to == type_s8) {}
+			else if (to == type_s16) {}
+			else if (to == type_s32) { I(movsx42_rm, r0, rs); I(mov4_mr, rs, r0); }
+			else if (to == type_s64) { I(movsx82_rm, r0, rs); I(mov8_mr, rs, r0); }
+			else invalid_code_path();
+		} else if (from == type_s32) {
+			if (false) {}
+			else if (to == type_u8) {}
+			else if (to == type_u16) {}
+			else if (to == type_u32) {}
+			else if (to == type_u64) { I(movsx84_rm, r0, rs); I(mov8_mr, rs, r0); }
+			else if (to == type_s8) {}
+			else if (to == type_s16) {}
+			else if (to == type_s32) {}
+			else if (to == type_s64) { I(movsx84_rm, r0, rs); I(mov8_mr, rs, r0); }
+			else if (to == type_f32) { I(cvt_s32_f32); }
+			else invalid_code_path();
+		} else if (from == type_s64) {
+			if (false) {}
+			else if (to == type_u8) {}
+			else if (to == type_u16) {}
+			else if (to == type_u32) {}
+			else if (to == type_u64) {}
+			else if (to == type_s8) {}
+			else if (to == type_s16) {}
+			else if (to == type_s32) {}
+			else if (to == type_s64) {}
+			else if (to == type_f64) { I(cvt_s64_f64); }
+			else invalid_code_path();
+		} else if (from == type_f64) {
+			if (false) {}
+			else if (to == type_s64) { I(cvt_f64_s64); }
+			else invalid_code_path();
+		}
+		else invalid_code_path();
+		return {};
 	} else {
 		switch (bin->operation) {
 			case add:
@@ -2322,7 +2441,7 @@ static ValueRegisters append(Converter &conv, AstUnaryOperator *unop) {
 		case bnot: {
 			append_to_stack(conv, unop->expression);
 			I(pop_r, r0);
-			I(toboolnot_r, r0);
+			I(not_r, r0);
 			I(push_r, r0);
 			break;
 		}
@@ -2395,143 +2514,6 @@ static ValueRegisters append(Converter &conv, AstSubscript *subscript) {
 		I(push_r, r0);// source
 		append_memory_copy(conv, element_size, false, subscript->location, u8"stack"s);
 	}
-	return {};
-}
-static ValueRegisters append(Converter &conv, AstCast *cast) {
-	push_comment(conv, format(u8"cast from '{}' to '{}'", type_to_string(cast->expression->type), type_to_string(cast->type)));
-
-	append_to_stack(conv, cast->expression);
-
-	if (is_pointer_internally(cast->expression->type) && is_pointer_internally(cast->type)) {
-		return {};
-	}
-
-	AstStruct *from = 0;
-	AstStruct *to = 0;
-
-	if (is_pointer_internally(cast->expression->type))
-		from = type_u64;
-	else
-		from = get_struct(cast->expression->type);
-
-	if (is_pointer_internally(cast->type))
-		to = type_u64;
-	else
-		to = get_struct(cast->type);
-
-
-	// Here are integer cases
-	//   source to    size destination operation
-	// unsigned to  bigger    unsigned zero extend
-	// unsigned to    same    unsigned noop
-	// unsigned to smaller    unsigned noop
-	// unsigned to  bigger      signed zero extend
-	// unsigned to    same      signed noop
-	// unsigned to smaller      signed noop
-	//   signed to  bigger    unsigned sign extend
-	//   signed to    same    unsigned noop
-	//   signed to smaller    unsigned noop
-	//   signed to  bigger      signed sign extend
-	//   signed to    same      signed noop
-	//   signed to smaller      signed noop
-
-	if (false) {
-	} else if (from == type_u8) {
-		if (false) {}
-		else if (to == type_u8) {}
-		else if (to == type_u16) { I(and_mc, rs, 0xff); } // discard bits that could be garbage
-		else if (to == type_u32) { I(and_mc, rs, 0xff); }
-		else if (to == type_u64) { I(and_mc, rs, 0xff); }
-		else if (to == type_s8) {}
-		else if (to == type_s16) { I(and_mc, rs, 0xff); }
-		else if (to == type_s32) { I(and_mc, rs, 0xff); }
-		else if (to == type_s64) { I(and_mc, rs, 0xff); }
-		else invalid_code_path();
-	} else if (from == type_u16) {
-		if (false) {}
-		else if (to == type_u8) {}
-		else if (to == type_u16) {}
-		else if (to == type_u32) { I(and_mc, rs, 0xffff); }
-		else if (to == type_u64) { I(and_mc, rs, 0xffff); }
-		else if (to == type_s8) {}
-		else if (to == type_s16) {}
-		else if (to == type_s32) { I(and_mc, rs, 0xffff); }
-		else if (to == type_s64) { I(and_mc, rs, 0xffff); }
-		else invalid_code_path();
-	} else if (from == type_u32) {
-		if (false) {}
-		else if (to == type_u8) {}
-		else if (to == type_u16) {}
-		else if (to == type_u32) {}
-		else if (to == type_u64) { I(and_mc, rs, 0xffffffff); }
-		else if (to == type_s8) {}
-		else if (to == type_s16) {}
-		else if (to == type_s32) {}
-		else if (to == type_s64) { I(and_mc, rs, 0xffffffff); }
-		else invalid_code_path();
-	} else if (from == type_u64) {
-		if (false) {}
-		else if (to == type_u8) {}
-		else if (to == type_u16) {}
-		else if (to == type_u32) {}
-		else if (to == type_u64) {}
-		else if (to == type_s8) {}
-		else if (to == type_s16) {}
-		else if (to == type_s32) {}
-		else if (to == type_s64) {}
-		else invalid_code_path();
-	} else if (from == type_s8) {
-		if (false) {}
-		else if (to == type_u8) {}
-		else if (to == type_u16) { I(movsx21_rm, r0, rs); I(mov2_mr, rs, r0); } // discard bits that could be garbage
-		else if (to == type_u32) { I(movsx41_rm, r0, rs); I(mov4_mr, rs, r0); }
-		else if (to == type_u64) { I(movsx81_rm, r0, rs); I(mov8_mr, rs, r0); }
-		else if (to == type_s8) {}
-		else if (to == type_s16) { I(movsx21_rm, r0, rs); I(mov2_mr, rs, r0); }
-		else if (to == type_s32) { I(movsx41_rm, r0, rs); I(mov4_mr, rs, r0); }
-		else if (to == type_s64) { I(movsx81_rm, r0, rs); I(mov8_mr, rs, r0); }
-		else invalid_code_path();
-	} else if (from == type_s16) {
-		if (false) {}
-		else if (to == type_u8) {}
-		else if (to == type_u16) {}
-		else if (to == type_u32) { I(movsx42_rm, r0, rs); I(mov4_mr, rs, r0); }
-		else if (to == type_u64) { I(movsx82_rm, r0, rs); I(mov8_mr, rs, r0); }
-		else if (to == type_s8) {}
-		else if (to == type_s16) {}
-		else if (to == type_s32) { I(movsx42_rm, r0, rs); I(mov4_mr, rs, r0); }
-		else if (to == type_s64) { I(movsx82_rm, r0, rs); I(mov8_mr, rs, r0); }
-		else invalid_code_path();
-	} else if (from == type_s32) {
-		if (false) {}
-		else if (to == type_u8) {}
-		else if (to == type_u16) {}
-		else if (to == type_u32) {}
-		else if (to == type_u64) { I(movsx84_rm, r0, rs); I(mov8_mr, rs, r0); }
-		else if (to == type_s8) {}
-		else if (to == type_s16) {}
-		else if (to == type_s32) {}
-		else if (to == type_s64) { I(movsx84_rm, r0, rs); I(mov8_mr, rs, r0); }
-		else if (to == type_f32) { I(cvt_s32_f32); }
-		else invalid_code_path();
-	} else if (from == type_s64) {
-		if (false) {}
-		else if (to == type_u8) {}
-		else if (to == type_u16) {}
-		else if (to == type_u32) {}
-		else if (to == type_u64) {}
-		else if (to == type_s8) {}
-		else if (to == type_s16) {}
-		else if (to == type_s32) {}
-		else if (to == type_s64) {}
-		else if (to == type_f64) { I(cvt_s64_f64); }
-		else invalid_code_path();
-	} else if (from == type_f64) {
-		if (false) {}
-		else if (to == type_s64) { I(cvt_f64_s64); }
-		else invalid_code_path();
-	}
-	else invalid_code_path();
 	return {};
 }
 static ValueRegisters append(Converter &conv, AstLambda *lambda, bool push_address) {

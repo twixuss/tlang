@@ -28,11 +28,11 @@ void print_ast(AstWhile *node);
 void print_ast(AstExpressionStatement *node);
 void print_ast(AstUnaryOperator *node);
 void print_ast(AstSubscript *node);
-void print_ast(AstCast*node);
 void print_ast(AstTuple*node);
+void print_ast(AstAssert*node);
 void print_ast(AstNode *node) {
 	print_tabs();
-	print("'{}'\n", node->location);
+	print("{}\n", node->location);
 	switch (node->kind) {
 		case Ast_definition: return print_ast((AstDefinition *)node);
 		case Ast_lambda:     return print_ast((AstLambda     *)node);
@@ -47,8 +47,8 @@ void print_ast(AstNode *node) {
 		case Ast_struct: return print_ast((AstStruct *)node);
 		case Ast_unary_operator: return print_ast((AstUnaryOperator *)node);
 		case Ast_subscript: return print_ast((AstSubscript *)node);
-		case Ast_cast : return print_ast((AstCast*)node);
 		case Ast_tuple: return print_ast((AstTuple*)node);
+		case Ast_assert: return print_ast((AstAssert*)node);
 		default:
 			print_info("unknown - uid: {}\n", node->uid());
 			break;
@@ -132,10 +132,11 @@ void print_ast(AstLiteral *node) {
 		else invalid_code_path();
 	} else {
 		switch (node->literal_kind) {
-			case LiteralKind::integer: print_info("integer literal - value: {}, uid: {}\n", (s64)node->integer, node->uid()); break;
-			case LiteralKind::boolean: print_info("boolean literal - value: {}, uid: {}\n", node->Bool, node->uid()); break;
-			case LiteralKind::string:  print_info( "string literal - value: {}, uid: {}\n", node->location, node->uid()); break;
-			case LiteralKind::Float:   print_info(  "float literal - value: {}, uid: {}\n", node->Float, node->uid()); break;
+			case LiteralKind::integer:   print_info(  "integer literal - value: {}, uid: {}\n", (s64)node->integer, node->uid()); break;
+			case LiteralKind::boolean:   print_info(  "boolean literal - value: {}, uid: {}\n", node->Bool, node->uid()); break;
+			case LiteralKind::string:    print_info(   "string literal - value: {}, uid: {}\n", node->location, node->uid()); break;
+			case LiteralKind::Float:     print_info(    "float literal - value: {}, uid: {}\n", node->Float, node->uid()); break;
+			case LiteralKind::character: print_info("character literal - value: {}, uid: {}\n", node->character, node->uid()); break;
 			default: invalid_code_path();
 		}
 	}
@@ -211,16 +212,18 @@ void print_ast(AstWhile *node) {
 	tab_count -= 1;
 	tab_count -= 1;
 }
-void print_ast(AstCast*cast) {
-	print_info("cast - type: {}, uid: {}\n", type_to_string(cast->type), cast->uid());
-	print_ast(cast->expression);
-}
 void print_ast(AstTuple*tuple) {
 	print_info("tuple - type: {}, uid: {}\n", type_to_string(tuple->type), tuple->uid());
 	tab_count += 1;
 	for (auto experssion : tuple->expressions) {
 		print_ast(experssion);
 	}
+	tab_count -= 1;
+}
+void print_ast(AstAssert* assert) {
+	print_info("assert - uid: {}\n", assert->uid());
+	tab_count += 1;
+	print_ast(assert->condition);
 	tab_count -= 1;
 }
 

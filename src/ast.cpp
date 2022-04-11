@@ -98,14 +98,25 @@ bool can_be_global(AstStatement *statement) {
 	switch (statement->kind) {
 		case Ast_expression_statement: {
 			auto expression = ((AstExpressionStatement *)statement)->expression;
-			return expression->kind == Ast_import;
+			switch (expression->kind) {
+				case Ast_import:
+					return true;
+				case Ast_unary_operator: {
+					auto unop = (AstUnaryOperator *)expression;
+					switch (unop->operation) {
+						using enum UnaryOperation;
+						case print:
+							return true;
+					}
+				}
+			}
+			return false;
 		}
 		case Ast_if: {
 			auto If = (AstIf *)statement;
 			return If->is_constant;
 		}
 		case Ast_definition:
-		case Ast_print:
 		case Ast_assert:
 			return true;
 
@@ -139,6 +150,7 @@ void append_type(StringBuilder &builder, AstExpression *type, bool silent_error)
 	switch (type->kind) {
 		case Ast_struct: {
 			auto Struct = (AstStruct *)type;
+			ensure(Struct->definition);
 			append(builder, Struct->definition->name);
 			break;
 		}
@@ -197,10 +209,12 @@ HeapString type_to_string(AstExpression *type, bool silent_error) {
 	StringBuilder builder;
 	append_type(builder, type, silent_error);
 	auto d = direct(type);
-	if (d->location != type->location) {
-		append(builder, " (aka "s);
-		append_type(builder, d, silent_error);
-		append(builder, ')');
+	if (d) {
+		if (d->location != type->location) {
+			append(builder, " (aka "s);
+			append_type(builder, d, silent_error);
+			append(builder, ')');
+		}
 	}
 	return (HeapString)to_string<MyAllocator>(builder);
 }
@@ -322,7 +336,8 @@ AstExpression *direct(AstExpression *type) {
 		case Ast_identifier: {
 			do {
 				auto identifier = (AstIdentifier *)type;
-				assert(identifier->definition);
+				if (!identifier->definition)
+					return 0;
 				type = identifier->definition->expression;
 			} while (type->kind == Ast_identifier);
 			break;
@@ -422,6 +437,7 @@ String operator_string(BinaryOperation op) {
 		case bxorass: return u8"^="s;
 		case bsrass: return u8">>="s;
 		case bslass: return u8"<<="s;
+		case as: return u8"as"s;
 	}
 	invalid_code_path();
 	return {};
@@ -498,16 +514,25 @@ void operator delete(void *data, umm size) {
 #endif
 
 bool is_pointer(AstExpression *type) {
-	if (type->kind == Ast_identifier) {
-		return is_pointer(((AstIdentifier *)type)->definition->expression);
+	switch (type->kind) {
+		case Ast_identifier: {
+			auto ident = (AstIdentifier *)type;
+			return is_pointer(ident->definition->expression);
+		}
+		case Ast_unary_operator: {
+			auto unop = (AstUnaryOperator *)type;
+			if (unop->operation == UnaryOperation::pointer_or_dereference) {
+				// This fails at parse time.
+				// assert(is_type(unop->expression));
+				return true;
+			}
+			return unop->operation == UnaryOperation::pointer;
+		}
 	}
-	return type->kind == Ast_unary_operator && ((AstUnaryOperator *)type)->operation == UnaryOperation::pointer;
+	return false;
 }
 bool is_pointer_internally(AstExpression *type) {
-	if (type->kind == Ast_identifier) {
-		return is_pointer(((AstIdentifier *)type)->definition->expression);
-	}
-	return type->kind == Ast_lambda || (type->kind == Ast_unary_operator && ((AstUnaryOperator *)type)->operation == UnaryOperation::pointer);
+	return type->kind == Ast_lambda || is_pointer(type);
 }
 
 AstLiteral *get_literal(AstExpression *expression) {

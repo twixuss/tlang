@@ -1,10 +1,11 @@
 #pragma once
+#pragma warning(error: 4715) // not all path return a value
 
 #define TRACK_ALLOCATIONS 0
 
 #ifdef NDEBUG
 #define TL_DEBUG 0
-#define assert(...)
+// #define assert(...) // uncomment this to remove assert from release build
 #else
 #define TL_DEBUG 1
 #endif
@@ -16,9 +17,15 @@ inline bool operator==(std::source_location a, std::source_location b) {
 	return a.column() == b.column() && a.line() == b.line() && strcmp(a.file_name(), b.file_name()) == 0;
 }
 
+void tlang_assertion_failed(char const *cause, char const *file, int line, char const *expression, char const *function);
+
 #include <tl/console.h>
 #undef ASSERTION_FAILURE
-#define ASSERTION_FAILURE(cause_string, expression, ...) (::tl::print("Assertion failed: {}\n{}:{}: {} at {}\n", cause_string, __FILE__, __LINE__, expression, __FUNCSIG__), debug_break())
+#if TL_DEBUG
+#define ASSERTION_FAILURE(cause_string, expression, ...) (::tl::print(Print_error, "Assertion failed: "), ::tl::print("{}\n{}:{}: {} at {}\n", expression, __FILE__, __LINE__, cause_string, __FUNCSIG__), debug_break())
+#else
+#define ASSERTION_FAILURE(cause_string, expression, ...) tlang_assertion_failed(cause_string, __FILE__, __LINE__, expression, __FUNCSIG__)
+#endif
 #include <tl/common.h>
 #include <tl/file.h>
 #include <tl/thread.h>
@@ -30,6 +37,7 @@ inline bool operator==(std::source_location a, std::source_location b) {
 #include <tl/time.h>
 #include <tl/ram.h>
 #include <tl/pool32.h>
+#include <tl/debug.h>
 using namespace tl;
 
 #define REDECLARE_VAL(name, expr) auto _##name = expr; auto name = _##name;
@@ -85,6 +93,7 @@ struct CompilerContext {
 	s64 register_size = 0;
 	s64 general_purpose_register_count = 0;
 	bool do_profile = false;
+	bool keep_temp = false;
 };
 extern CompilerContext context;
 
@@ -133,8 +142,11 @@ inline bool operator==(String a, char const *b) {
 	return as_chars(a) == as_span(b);
 }
 
-template <class ...Args>
-Report make_report(ReportKind kind, String location, char const *format_string, Args const &...args) {
+template <class Char>
+concept CChar = is_char<Char>;
+
+template <class ...Args, CChar Char>
+Report make_report(ReportKind kind, String location, Char const *format_string, Args const &...args) {
 	Report r;
 	r.location = location;
 	r.kind = kind;
@@ -145,23 +157,48 @@ Report make_report(ReportKind kind, String location, char const *format_string, 
 	return r;
 }
 
-template <class ...Args>
-void immediate_info(String location, char const *format_string, Args const &...args) {
+template <class ...Args, class Char>
+void immediate_info(String location, Char const *format_string, Args const &...args) {
 	print_report(make_report(ReportKind::info, location, format_string, args...));
 }
-template <class ...Args>
-void immediate_info(char const *format_string, Args const &...args) {
+template <class ...Args, class Char>
+void immediate_info(Char const *format_string, Args const &...args) {
 	immediate_info(String{}, format_string, args...);
 }
 
-template <class ...Args>
-void immediate_error(String location, char const *format_string, Args const &...args) {
+template <class ...Args, class Char>
+void immediate_error(String location, Char const *format_string, Args const &...args) {
 	print_report(make_report(ReportKind::error, location, format_string, args...));
 }
-template <class ...Args>
-void immediate_error(char const *format_string, Args const &...args) {
+template <class ...Args, class Char>
+void immediate_error(Char const *format_string, Args const &...args) {
 	immediate_error(String{}, format_string, args...);
 }
 
 HeapString escape_string(String string);
 HeapString unescape_string(String string);
+
+struct Strings {
+	utf8 const *_start_marker = (utf8 *)-1;
+
+	utf8 const *usage = 0;
+	utf8 const *no_source_path_received = 0;
+	utf8 const *error = 0;
+	utf8 const *warning = 0;
+	utf8 const *info = 0;
+
+	utf8 const *_end_marker = (utf8 *)-1;
+};
+
+extern Strings strings;
+extern const Strings strings_en;
+extern const Strings strings_ru;
+
+inline void tlang_assertion_failed(char const *cause, char const *file, int line, char const *expression, char const *function) {
+	::tl::print(Print_error, "Assertion failed: ");
+	::tl::print("{}\n{}:{}: {} at {}\n", expression, file, line, cause, function);
+	if (debugger_attached())
+		debug_break();
+	else
+		exit(-1);
+}
