@@ -101,14 +101,6 @@ bool can_be_global(AstStatement *statement) {
 			switch (expression->kind) {
 				case Ast_import:
 					return true;
-				case Ast_unary_operator: {
-					auto unop = (AstUnaryOperator *)expression;
-					switch (unop->operation) {
-						using enum UnaryOperation;
-						case print:
-							return true;
-					}
-				}
 			}
 			return false;
 		}

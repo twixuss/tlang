@@ -19,6 +19,10 @@
       "Command": "--keep-temp"
     },
     {
+      "Id": "d01c7e85-2a38-456c-84a8-776068fabe29",
+      "Command": "--profile"
+    },
+    {
       "Id": "f72602c8-3a4c-4bb4-aa2d-767527649a92",
       "Command": "a.tl"
     },

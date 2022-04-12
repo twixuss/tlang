@@ -718,6 +718,7 @@ static void append(Converter &conv, AstStatement *statement) {
 			return;
 		}
 		case Ast_assert:
+		case Ast_print:
 		case Ast_import:
 		case Ast_test:                 return;
 		default: invalid_code_path();
@@ -1515,7 +1516,6 @@ static void append(Converter &conv, AstExpressionStatement *es) {
 			}
 			break;
 		}
-
 		case Ast_call: {
 			// discard return value
 			auto call = (AstCall *)es->expression;

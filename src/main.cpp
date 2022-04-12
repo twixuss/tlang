@@ -809,7 +809,6 @@ inline AstUnaryOperator *make_unary(UnaryOperation operation) {
 	return unop;
 }
 inline AstUnaryOperator *make_autocast() { return make_unary(UnaryOperation::autocast); }
-inline AstUnaryOperator *make_print() { return make_unary(UnaryOperation::print); }
 inline AstUnaryOperator *make_sizeof() { return make_unary(UnaryOperation::Sizeof); }
 inline AstUnaryOperator *make_typeof() { return make_unary(UnaryOperation::typeof); }
 
@@ -2027,7 +2026,12 @@ AstDefinition *parse_definition(Parser *parser) {
 }
 
 bool is_statement(AstExpression *expression) {
-	return expression->kind == Ast_call || expression->kind == Ast_import;
+	switch (expression->kind) {
+		case Ast_call:
+		case Ast_import:
+			return true;
+	}
+	return false;
 }
 
 AstExpressionStatement *make_statement(AstExpression *expression) {
@@ -2221,6 +2225,15 @@ void parse_statement(Parser *parser, AstStatement *&result) {
 				auto assert = AstAssert::create();
 				assert->condition = expression;
 				result = assert;
+				return;
+			} else if (parser->token->string == "#print"str) {
+				auto print = AstPrint::create();
+				print->location = parser->token->string;
+				if (!parser->next_not_end()) {
+					return;
+				}
+				print->expression = parse_expression(parser);
+				result = print;
 				return;
 			} else {
 				parser->reporter->error(parser->token->string, "Unknown statement level directive.");
@@ -3396,6 +3409,33 @@ void typecheck(TypecheckState *state, AstStatement *statement) {
 
 			break;
 		}
+		case Ast_print: {
+			auto print = (AstPrint *)statement;
+			typecheck(state, print->expression);
+
+			auto result = evaluate(state, print->expression);
+			if (!result) {
+				yield(TypecheckResult::fail);
+			}
+
+			switch (result->literal_kind) {
+				case LiteralKind::type: {
+					state->reporter.info(print->expression->location, "{}", type_to_string(result->type_value));
+					break;
+				}
+				case LiteralKind::string: {
+					state->reporter.info(print->expression->location, "{}", result->string);
+					break;
+				}
+				case LiteralKind::integer: {
+					state->reporter.info(print->expression->location, "{}", (s64)result->integer); // TODO: print the full number
+					break;
+				}
+				default:
+					invalid_code_path("not implemented");
+			}
+			break;
+		}
 		default: {
 			invalid_code_path("invalid statement kind in typecheck");
 		}
@@ -4138,33 +4178,6 @@ void typecheck(TypecheckState *state, Expression<> &expression) {
 
 					state->reporter.error(unop->location, "Can not apply bitwise not to {}", type_to_string(unop->expression->type));
 					yield(TypecheckResult::fail);
-					break;
-				}
-				case print: {
-					auto print = unop;
-					typecheck(state, print->expression);
-
-					auto result = evaluate(state, print->expression);
-					if (!result) {
-						yield(TypecheckResult::fail);
-					}
-
-					switch (result->literal_kind) {
-						case LiteralKind::type: {
-							state->reporter.info(print->expression->location, "{}", type_to_string(result->type_value));
-							break;
-						}
-						case LiteralKind::string: {
-							state->reporter.info(print->expression->location, "{}", result->string);
-							break;
-						}
-						case LiteralKind::integer: {
-							state->reporter.info(print->expression->location, "{}", (s64)result->integer); // TODO: print the full number
-							break;
-						}
-						default:
-							invalid_code_path("not implemented");
-					}
 					break;
 				}
 				case Sizeof: {

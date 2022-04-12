@@ -61,6 +61,7 @@ e(ifx) \
 e(assert) \
 e(import) \
 e(defer) \
+e(print) \
 
 enum AstKind : u8 {
 #define e(name) Ast_ ## name,
@@ -526,7 +527,6 @@ enum class UnaryOperation : u8 {
 	address_of,  // &
 	dereference, // *
 	pointer,     // *
-	print,       // #print
 	autocast,    // autocast
 	Sizeof,      // #sizeof
 	typeof,      // #typeof
@@ -544,7 +544,6 @@ inline String as_string(UnaryOperation unop) {
 		case pointer:     return "*"str;
 		case dereference: return "*"str;
 		case autocast:    return "autocast"str;
-		case print:       return "#print"str;
 		case Sizeof:      return "#sizeof"str;
 		case typeof:      return "#typeof"str;
 		case pointer_or_dereference: return "pointer_or_dereference"str;
@@ -563,7 +562,6 @@ inline Optional<UnaryOperation> as_unary_operation(Token token) {
 		case Token_autocast:
 			return autocast;
 		case Token_directive:
-			if (token.string == "#print") return print;
 			if (token.string == "#sizeof") return Sizeof;
 			if (token.string == "#typeof") return typeof;
 			break;
@@ -615,6 +613,13 @@ struct AstAssert : AstStatement, StatementPool<AstAssert> {
 		kind = Ast_assert;
 	}
 	Expression<> condition = {};
+};
+
+struct AstPrint : AstStatement, StatementPool<AstPrint> {
+	AstPrint() {
+		kind = Ast_print;
+	}
+	Expression<> expression = {};
 };
 
 /*
