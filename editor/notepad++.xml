@@ -24,7 +24,7 @@
             <Keywords name="Folders in comment, open"></Keywords>
             <Keywords name="Folders in comment, middle"></Keywords>
             <Keywords name="Folders in comment, close"></Keywords>
-            <Keywords name="Keywords1">null fn extern true false import struct as autocast is defer union</Keywords>
+            <Keywords name="Keywords1">null fn extern true false import struct as autocast is defer union implicit explicit operator</Keywords>
             <Keywords name="Keywords2">if then return else while</Keywords>
             <Keywords name="Keywords3">void Type u8 u16 u32 u64 s8 s16 s32 s64 int sint uint string bool f32 f64 float float32 float64&#x000D;&#x000A;smm umm allocator type</Keywords>
             <Keywords name="Keywords4">#</Keywords>

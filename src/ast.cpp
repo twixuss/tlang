@@ -38,6 +38,10 @@ AstStruct *type_default_integer;
 AstStruct *type_default_float;
 AstUnaryOperator *type_pointer_to_void;
 
+AstIdentifier *type_int;
+AstIdentifier *type_sint;
+AstIdentifier *type_uint;
+
 bool struct_is_built_in(AstStruct *type) {
 	return
 		type == type_bool   ||
@@ -109,6 +113,7 @@ bool can_be_global(AstStatement *statement) {
 			return If->is_constant;
 		}
 		case Ast_definition:
+		case Ast_operator_definition:
 		case Ast_assert:
 			return true;
 
@@ -194,20 +199,31 @@ void append_type(StringBuilder &builder, AstExpression *type, bool silent_error)
 #undef ensure
 }
 
+// TODO FIXME extremely inefficient on allocations.
 HeapString type_to_string(AstExpression *type, bool silent_error) {
 	if (!type)
 		return (HeapString)to_list<MyAllocator>(u8"null"s);
 
 	StringBuilder builder;
 	append_type(builder, type, silent_error);
+	auto type_str = to_string(builder);
+	builder.clear();
+
 	auto d = direct(type);
 	if (d) {
-		if (d->location != type->location) {
+		append_type(builder, d, silent_error);
+		auto d_str = to_string(builder);
+		builder.clear();
+
+		if (d_str != type_str) {
+			append(builder, type_str);
 			append(builder, " (aka "s);
-			append_type(builder, d, silent_error);
+			append(builder, d_str);
 			append(builder, ')');
+			return (HeapString)to_string<MyAllocator>(builder);
 		}
 	}
+	append(builder, type_str);
 	return (HeapString)to_string<MyAllocator>(builder);
 }
 
@@ -602,7 +618,7 @@ Comparison comparison_from_binary_operation(BinaryOperation operation) {
 	}
 	invalid_code_path();
 }
-
+/*
 List<Expression<> *> get_arguments_addresses(AstCall *call) {
 	switch (call->argument->kind) {
 		case Ast_tuple:
@@ -617,6 +633,7 @@ List<Expression<>> get_arguments(AstCall *call) {
 		default: invalid_code_path();
 	}
 }
+*/
 
 bool is_sized_array(AstExpression *type) {
 	return type->kind == Ast_subscript;

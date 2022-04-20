@@ -14,7 +14,7 @@ Span<utf8> token_kind_to_string(TokenKind kind) {
 	}
 
 	static thread_local auto double_char_tokens = []() {
-		HashMap<TokenKind, Span<utf8>> result;
+		Map<TokenKind, Span<utf8>> result;
 
 #define X(x) result.get_or_insert(#x[1] | (#x[0] << 8)) = u8#x##s;
 
@@ -40,7 +40,7 @@ Span<utf8> token_kind_to_string(TokenKind kind) {
 	}();
 
 	if (kind < 0x10000) {
-		return *double_char_tokens.find(kind);
+		return double_char_tokens.find(kind)->value;
 	}
 
 	switch (kind) {

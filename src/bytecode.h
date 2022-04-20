@@ -190,6 +190,7 @@ enum class InstructionKind : u8 {
 	mod_mr,
 
 	not_r,
+	not_m,
 
 	or_rc,
 	or_rr,
@@ -275,9 +276,14 @@ enum class InstructionKind : u8 {
 
 	debug_break,
 
+	jmp_label,
+
 	noop,
 
 	align_stack_before_call,
+
+	push_used_registers,
+	pop_used_registers,
 
 	count,
 };
@@ -391,6 +397,7 @@ struct Instruction {
 		struct { Address  d; Register s; } mod_mr;
 
 		struct { Register d; } not_r;
+		struct { Address d; } not_m;
 
 		struct { Register d; s64      s; } or_rc;
 		struct { Register d; Register s; } or_rr;
@@ -474,14 +481,17 @@ struct Instruction {
 		struct { Register d; } tobool_r;
 		struct { Register d; } toboolnot_r;
 
+		struct {} jmp_label;
 		struct {} noop;
 
 		// struct { AstLambda *lambda; } align_stack_before_call;
 
+		struct { u64 mask; } push_used_registers;
+		struct { u64 mask; } pop_used_registers;
+
 		struct {} debug_break;
 	};
 	InstructionKind kind;
-	bool labeled : 1;
 #if BYTECODE_DEBUG
 	utf8 *comment;
 	u64 line;
@@ -490,7 +500,7 @@ struct Instruction {
 
 #pragma pack(pop)
 
-using ExternLibraries = HashMap<Span<utf8>, List<Span<utf8>>>;
+using ExternLibraries = Map<Span<utf8>, List<Span<utf8>>>;
 
 using InstructionList = BlockList<Instruction>;
 

@@ -2,7 +2,9 @@
 #include "ast.h"
 #include "x86_64.h"
 
-#define OPTIMIZE_BYTECODE 1
+// I don't know how optimizations will work with loading lambda parameters' addresses...
+// TODO: Figure this out.
+#define OPTIMIZE_BYTECODE 0
 
 using enum Register;
 using enum XRegister;
@@ -19,21 +21,56 @@ struct StringInfo {
 	bool constant;
 };
 
+enum class KnownValueKind {
+	constant,
+	stack_offset,
+};
+
+struct KnownValue {
+	KnownValueKind kind;
+	union {
+		s64 constant;
+		s64 stack_offset;
+	};
+};
+
+KnownValue known_constant(s64 constant) { return KnownValue{.kind = KnownValueKind::constant, .constant = constant}; }
+KnownValue known_stack_offset(s64 stack_offset) { return KnownValue{.kind = KnownValueKind::stack_offset, .stack_offset = stack_offset}; }
+
 struct RegistersState {
-	Optional<s64> state[(u32)Register::count];
-	Optional<s64> &operator[](Register reg) { return state[(u8)reg]; }
+	Optional<KnownValue> state[(u32)Register::count];
+	Optional<KnownValue> &operator[](Register reg) { return state[(u8)reg]; }
 };
 
 struct StackState {
-	List<Optional<s64>> data;
-	s64 cursor = 1; // included return address pushed by `call` instruction
+	List<Optional<KnownValue>> data;
+	s64 cursor = -1;
+	s64 rb_offset = -1;
 
-	void push(Optional<s64> v) {
+	void init(s64 return_type_size) {
+		// include return value and return address pushed by `call` instruction
+		rb_offset = cursor = ceil(return_type_size, 8ll) / 8 + 1;
+	}
+
+	void push(Optional<KnownValue> v) {
 		data.resize(cursor + 1);
 		data[cursor] = v;
 		cursor++;
 	}
-	Optional<s64> pop() {
+	void push(Optional<s64> v) {
+		if (v) {
+			push(KnownValue{
+				.kind = KnownValueKind::constant,
+				.constant = v.value_unchecked()
+			});
+		} else {
+			push(Optional<KnownValue>{});
+		}
+	}
+	void push_unknown() {
+		push(Optional<KnownValue>{});
+	}
+	Optional<KnownValue> pop() {
 		assert(cursor);
 		return data[--cursor];
 	}
@@ -47,32 +84,38 @@ struct StackState {
 			assert(cursor >= amount);
 		}
 		cursor -= amount;
+		data.resize(cursor);
 	}
-	Optional<s64> top() {
+	Optional<KnownValue> top() {
 		return data[cursor-1];
 	}
 	// If that address contains known value, return it.
 	// Use this function to optimize reads from stack memory.
-	Optional<s64> get_value_at(Address addr) {
+	Optional<KnownValue> *get_value_address_at(Address addr) {
 		if (addr.base == rs) {
 			if (addr.c % context.stack_word_size == 0) {
 				auto offset = cursor - 1 - addr.c / context.stack_word_size;
 				if (0 <= offset && offset < data.count) {
-					return data[offset];
+					return &data[offset];
 				}
 			}
 		} else if (addr.base == rb) {
 			if (addr.c % context.stack_word_size == 0) {
-				auto offset = -addr.c / context.stack_word_size + 1;
+				auto offset = rb_offset - addr.c / context.stack_word_size;
 				if (0 <= offset && offset < data.count) {
-					return data[offset];
+					return &data[offset];
 				}
 			}
 		}
 
+		return 0;
+	}
+	Optional<KnownValue> get_value_at(Address addr) {
+		auto address = get_value_address_at(addr);
+		if (address)
+			return *address;
 		return {};
 	}
-
 };
 
 struct RegisterSet {
@@ -98,6 +141,10 @@ struct LambdaState {
 	RegistersState register_state = {};
 	StackState stack_state = {};
 	Scope *current_scope = 0;
+	decltype(Instruction::push_used_registers) *push_used_registers = 0;
+	decltype(Instruction::pop_used_registers) *pop_used_registers = 0;
+	u64 used_registers_mask = 0;
+	List<Instruction *> parameter_load_offsets;
 
 	void init() {
 		for (int i = 5; i < min((int)Register::r8, context.general_purpose_register_count); ++i) {
@@ -128,7 +175,10 @@ struct Converter {
 };
 
 Optional<Register> allocate_register(Converter &conv) {
-	return conv.ls->available_registers.pop();
+	auto r = conv.ls->available_registers.pop();
+	if (r.has_value())
+		conv.ls->used_registers_mask |= 1 << (u64)r.value_unchecked();
+	return r;
 }
 void free_register(Converter &conv, Register reg) {
 	conv.ls->available_registers.push(reg);
@@ -205,6 +255,16 @@ Instruction *add_instruction(Converter &conv, Instruction next) {
 
 	// keep track of the stack and registers
 	switch (next.kind) {
+		case jmp_label:
+		case jmp: {
+			for (auto &val : stack_state.data) {
+				val = null_opt;
+			}
+			for (auto &reg : register_state.state) {
+				reg = null_opt;
+			}
+			break;
+		}
 		case push_c: {
 			REDECLARE_REF(next, next.push_c);
 
@@ -222,17 +282,20 @@ Instruction *add_instruction(Converter &conv, Instruction next) {
 #if OPTIMIZE_BYTECODE
 			auto value = stack_state.get_value_at(next.s);
 			if (value) {
-				return II(push_c, value.value_unchecked());
+				REDECLARE_REF(value, value.value_unchecked());
+				if (value.kind == KnownValueKind::constant) {
+					return II(push_c, value.constant);
+				}
 			}
 #endif
-			stack_state.push(null_opt);
+			stack_state.push_unknown();
 			break;
 		}
 		case push_a:
 		case push_d:
 		case push_u:
 		case push_t: {
-			stack_state.push(null_opt);
+			stack_state.push_unknown();
 			break;
 		}
 		case pop_r: {
@@ -388,7 +451,7 @@ Instruction *add_instruction(Converter &conv, Instruction next) {
 		case mov_rc: {
 			REDECLARE_REF(next, next.mov_rc);
 
-			register_state[next.d] = next.s;
+			register_state[next.d] = known_constant(next.s);
 			break;
 		}
 		case mov_rr: {
@@ -421,7 +484,13 @@ Instruction *add_instruction(Converter &conv, Instruction next) {
 #if OPTIMIZE_BYTECODE
 			auto value = stack_state.get_value_at(next.s);
 			if (value) {
-				return II(mov_rc, next.d, value.value_unchecked());
+				REDECLARE_REF(value, value.value_unchecked());
+				switch (value.kind) {
+					case KnownValueKind::constant:
+						return II(mov_rc, next.d, value.constant);
+					case KnownValueKind::stack_offset:
+						return II(lea, next.d, rb+value.stack_offset);
+				}
 			}
 			auto &back = body_builder.back();
 			if (back.kind == lea) {
@@ -429,18 +498,90 @@ Instruction *add_instruction(Converter &conv, Instruction next) {
 
 				if (next.s.is(back.d)) {
 					// This would be fine if we knew that r1 isn't used later...
-#if 0
-					// lea r1, [rs+16]  =>  mov r0, [rs+16]
-					// mov r0, [r1]
+					// It will not be used if we assing it to itself
+					if (next.s.is(next.d)) {
+						// lea r1, [rs+16]  =>  mov r1, [rs+16]
+						// mov r1, [r1]
 
-					remove_last_instruction(conv);
-					return II(mov8_rm, next.d, back.s);
-#endif
+						remove_last_instruction(conv);
+						return II(mov8_rm, next.d, back.s);
+					}
 				}
 			}
 #endif
 
 			register_state[next.d].reset();
+			break;
+		}
+		case mov8_mc: {
+			REDECLARE_REF(next, next.mov8_mc);
+			auto stack_address = stack_state.get_value_address_at(next.d);
+			if (stack_address) {
+				*stack_address = known_constant(next.s);
+			}
+			break;
+		}
+		case mov1_mr: {
+			REDECLARE_REF(next, next.mov1_mr);
+
+			auto stack_address = stack_state.get_value_address_at(next.d);
+			if (stack_address) {
+				*stack_address = null_opt;
+			}
+
+			break;
+		}
+		case mov2_mr: {
+			REDECLARE_REF(next, next.mov2_mr);
+
+			auto stack_address = stack_state.get_value_address_at(next.d);
+			if (stack_address) {
+				*stack_address = null_opt;
+			}
+
+			break;
+		}
+		case mov4_mr: {
+			REDECLARE_REF(next, next.mov4_mr);
+
+			auto stack_address = stack_state.get_value_address_at(next.d);
+			if (stack_address) {
+				*stack_address = null_opt;
+			}
+
+			break;
+		}
+		case mov8_mr: {
+			REDECLARE_REF(next, next.mov8_mr);
+
+#if OPTIMIZE_BYTECODE
+			auto value = register_state[next.s];
+			if (value) {
+				REDECLARE_REF(value, value.value_unchecked());
+				switch (value.kind) {
+					case KnownValueKind::constant:
+						return II(mov8_mc, next.d, value.constant);
+				}
+			}
+#endif
+
+			auto stack_address = stack_state.get_value_address_at(next.d);
+			if (stack_address) {
+				*stack_address = null_opt;
+			}
+
+			break;
+		}
+		case lea: {
+			REDECLARE_REF(next, next.lea);
+			if (next.s.base == rb) {
+				if (next.s.r1_scale_index == 0) {
+					if (next.s.r2_scale == 0) {
+						// lea r0, [rb+x]
+						register_state[next.d] = known_stack_offset(next.s.c);
+					}
+				}
+			}
 			break;
 		}
 	}
@@ -463,7 +604,7 @@ Instruction *add_instruction(Converter &conv, Instruction next) {
 		case push_u:
 		case push_t:
 		case push_e: {
-			conv.stack_state.push(null_opt);
+			conv.stack_state.push_unknown();
 			break;
 		}
 		case pop_r: {
@@ -654,6 +795,13 @@ ValueRegisters value_registers(Register a) {
 	return result;
 }
 
+ValueRegisters value_registers(Optional<Register> a) {
+	ValueRegisters result;
+	if (a)
+		result.add(a.value_unchecked());
+	return result;
+}
+
 ValueRegisters value_registers(Register a, Register b) {
 	ValueRegisters result;
 	result.add(a);
@@ -711,6 +859,7 @@ static void append(Converter &conv, AstStatement *statement) {
 		case Ast_expression_statement: return append(conv, (AstExpressionStatement*)statement);
 		case Ast_while:                return append(conv, (AstWhile*)statement);
 		case Ast_block:                return append(conv, (AstBlock*)statement);
+		case Ast_operator_definition:      append(conv, ((AstOperatorDefinition*)statement)->lambda, false); return;
 		case Ast_defer: {
 			// defer is appended later, after appending a block.
 			auto Defer = (AstDefer *)statement;
@@ -720,6 +869,7 @@ static void append(Converter &conv, AstStatement *statement) {
 		case Ast_assert:
 		case Ast_print:
 		case Ast_import:
+		case Ast_parse:
 		case Ast_test:                 return;
 		default: invalid_code_path();
 	}
@@ -766,6 +916,96 @@ static void push_address_of(Converter &conv, AstExpression *expression);
 #include <optional>
 
 static Optional<Register> load_address_of(Converter &conv, AstExpression *expression);
+static Optional<Register> load_address_of(Converter &conv, AstDefinition *definition);
+
+static Optional<Register> load_address_of(Optional<Register> destination, Converter &conv, AstDefinition *definition) {
+	if (!destination)
+		destination = allocate_register(conv);
+	s64 definition_size = ceil(get_size(definition->type), context.stack_word_size);
+
+	if (definition->parent_block) {
+		if (definition->parent_block->kind == Ast_lambda) {
+			auto parent_lambda = (AstLambda *)definition->parent_block;
+
+			s64 offset = 0;
+
+			// ret0
+			// ret1
+			// ret2
+			// ret3
+			// arg0
+			// arg1
+			// arg2
+			// arg3
+			// return address
+			// rbp <- rbp
+			// local0
+			// local1
+			// local2
+			// local3
+
+			s64 const stack_base_register_size = context.stack_word_size;
+			s64 const return_address_size = context.stack_word_size;
+			s64 const parameters_end_offset = stack_base_register_size + return_address_size + parent_lambda->parameters_size;
+			s64 const return_parameters_start_offset = parameters_end_offset;
+
+			if (definition->is_parameter) {
+				// Function Parameter
+				// Arguments are pushed from left to right
+				offset = parameters_end_offset - definition_size - definition->bytecode_offset;
+			} else if (definition->is_return_parameter) {
+				// Return parameter
+				offset = return_parameters_start_offset;
+			} else {
+				// Local
+				offset = -definition_size - definition->bytecode_offset;
+			}
+
+			Instruction *offset_instr = 0;
+			if (destination) {
+				offset_instr = II(lea, destination.value_unchecked(), rb + offset);
+			} else {
+				I(push_r, rb);
+				offset_instr = II(add_mc, rs, offset);
+			}
+
+			// Due to saving caller's register BEFORE pushing rb, we don't know the offsets of parameters, because
+			// we don't know beforehand how much registers will be allocated in this lambda. So we need to record every load
+			// of parameter and patch the offset later.
+			if (definition->is_parameter || definition->is_return_parameter) {
+				conv.ls->parameter_load_offsets.add(offset_instr);
+			}
+		} else {
+			invalid_code_path();
+		}
+	} else {
+
+		// Global constants and variables
+
+		//
+		// TODO_OFFSET: Remove this AND PIECE ABOVE after
+		// It would be better to get rid of append here
+		// by calculating global variables' offsets at typecheck time
+		//
+		if (definition->bytecode_offset == INVALID_DATA_OFFSET) {
+			append(conv, definition);
+			assert(definition->bytecode_offset != INVALID_DATA_OFFSET);
+		}
+		if (definition->is_constant) {
+			if (destination) I(mov_ra, destination.value_unchecked(), definition->bytecode_offset);
+			else             I(push_a, definition->bytecode_offset);
+		} else {
+			if (definition->expression) {
+				if (destination) I(mov_rd, destination.value_unchecked(), definition->bytecode_offset);
+				else             I(push_d, definition->bytecode_offset);
+			} else {
+				if (destination) I(mov_ru, destination.value_unchecked(), definition->bytecode_offset);
+				else             I(push_u, definition->bytecode_offset);
+			}
+		}
+	}
+	return destination;
+}
 
 // loads address into a register if there is one available and returns it
 // or pushes the address onto the stack and returns empty optional
@@ -804,84 +1044,7 @@ static Optional<Register> load_address_of(Optional<Register> destination, Conver
 				goto push_address_of_lambda;
 
 			} else {
-				if (!destination)
-					destination = allocate_register(conv);
-				s64 definition_size = ceil(get_size(definition->type), context.stack_word_size);
-
-				if (definition->parent_block) {
-					if (definition->parent_block->kind == Ast_lambda) {
-						auto parent_lambda = (AstLambda *)definition->parent_block;
-
-						s64 offset = 0;
-
-						// ret0
-						// ret1
-						// ret2
-						// ret3
-						// arg0
-						// arg1
-						// arg2
-						// arg3
-						// return address
-						// rbp <- rbp
-						// local0
-						// local1
-						// local2
-						// local3
-
-						s64 const stack_base_register_size = context.stack_word_size;
-						s64 const return_address_size = context.stack_word_size;
-						s64 const parameters_end_offset = stack_base_register_size + return_address_size + parent_lambda->parameters_size;
-						s64 const return_parameters_start_offset = parameters_end_offset;
-
-						if (definition->is_parameter) {
-							// Function Parameter
-							// Arguments are pushed from left to right
-							offset = parameters_end_offset - definition_size - definition->bytecode_offset;
-						} else if (definition->is_return_parameter) {
-							// Return parameter
-							offset = return_parameters_start_offset;
-						} else {
-							// Local
-							offset = -definition_size - definition->bytecode_offset;
-						}
-
-						if (destination) {
-							I(lea, destination.value_unchecked(), rb + offset);
-						} else {
-							I(push_r, rb);
-							I(add_mc, rs, offset);
-						}
-					} else {
-						invalid_code_path();
-					}
-				} else {
-
-					// Global constants and variables
-
-					//
-					// TODO_OFFSET: Remove this AND PIECE ABOVE after
-					// It would be better to get rid of append here
-					// by calculating global variables' offsets at typecheck time
-					//
-					if (definition->bytecode_offset == INVALID_DATA_OFFSET) {
-						append(conv, definition);
-						assert(definition->bytecode_offset != INVALID_DATA_OFFSET);
-					}
-					if (definition->is_constant) {
-						if (destination) I(mov_ra, destination.value_unchecked(), definition->bytecode_offset);
-						else             I(push_a, definition->bytecode_offset);
-					} else {
-						if (definition->expression) {
-							if (destination) I(mov_rd, destination.value_unchecked(), definition->bytecode_offset);
-							else             I(push_d, definition->bytecode_offset);
-						} else {
-							if (destination) I(mov_ru, destination.value_unchecked(), definition->bytecode_offset);
-							else             I(push_u, definition->bytecode_offset);
-						}
-					}
-				}
-				return destination;
+				return load_address_of(conv, definition);
 			}
 			break;
 		}
@@ -953,7 +1116,7 @@ static Optional<Register> load_address_of(Optional<Register> destination, Conver
 		}
 		case Ast_unary_operator: {
 			auto unop = (AstUnaryOperator *)expression;
-			assert(unop->operation == UnaryOperation::pointer);
+			assert(unop->operation == UnaryOperation::dereference);
 			append_to_stack(conv, unop->expression);
 			return {}; // right now result is always on the stack
 		}
@@ -965,6 +1128,10 @@ static Optional<Register> load_address_of(Optional<Register> destination, Conver
 
 static Optional<Register> load_address_of(Converter &conv, AstExpression *expression) {
 	return load_address_of({}, conv, expression);
+}
+
+static Optional<Register> load_address_of(Converter &conv, AstDefinition *definition) {
+	return load_address_of({}, conv, definition);
 }
 
 
@@ -1092,42 +1259,64 @@ static void push_address_of(Converter &conv, AstExpression *expression) {
 // if source      is not provided, it is popped from the stack
 // if destination is not provided, it is popped from the stack
 // So if both adresses are on the stack, first you should push destination, then source
-static void append_memory_copy(Converter &conv, Optional<Register> _dst, Optional<Register> _src, s64 bytes_to_copy, bool reverse, Span<utf8> from_name, Span<utf8> to_name) {
+static void append_memory_copy(Converter &conv, Optional<Register> dst, Optional<Register> src, s64 bytes_to_copy, bool reverse, Span<utf8> from_name, Span<utf8> to_name) {
 	if (bytes_to_copy == 0)
 		return;
 
 	push_comment(conv, format(u8"copy {} bytes from {} into {}, reverse={}"s, bytes_to_copy, from_name, to_name, reverse));
 
-	// r0, r1 and r2 are not allocatable, so we can use them
-	auto src = _src ? _src.value_unchecked() : (I(pop_r, r0), r0);
-	auto dst = _dst ? _dst.value_unchecked() : (I(pop_r, r1), r1);
-
-	if (bytes_to_copy <= context.register_size) {
-		constexpr auto tmp = r2;
-		switch (bytes_to_copy) {
-			case 1:
-				I(mov1_rm, tmp, src);
-				I(mov1_mr, dst, tmp);
-				return;
-			case 2:
-				I(mov2_rm, tmp, src);
-				I(mov2_mr, dst, tmp);
-				return;
-			case 4:
-				I(mov4_rm, tmp, src);
-				I(mov4_mr, dst, tmp);
-				return;
-			case 8:
-				I(mov8_rm, tmp, src);
-				I(mov8_mr, dst, tmp);
-				return;
+	// Load addresses into registers if they weren't already
+	if (src) {
+		if (dst) {
+			// Address are passed in registers. Nothing to do.
+		} else {
+			// Load destination address into register different from source address register.
+			dst = src.value_unchecked() == r0 ? r1 : r0;
+			I(pop_r, dst.value_unchecked());
+		}
+	} else {
+		if (dst) {
+			// Load source address into register different from destination address register.
+			src = dst.value_unchecked() == r0 ? r1 : r0;
+			I(pop_r, src.value_unchecked());
+		} else {
+			// Pop both addresses into different registers.
+			src = (I(pop_r, r0), r0);
+			dst = (I(pop_r, r1), r1);
 		}
 	}
 
-	if (reverse) {
-		I(copyb_mmc, dst, src, bytes_to_copy);
-	} else {
-		I(copyf_mmc, dst, src, bytes_to_copy);
+	{
+		REDECLARE_REF(src, src.value());
+		REDECLARE_REF(dst, dst.value());
+
+		if (bytes_to_copy <= context.register_size) {
+			constexpr auto tmp = r2;
+			switch (bytes_to_copy) {
+				case 1:
+					I(mov1_rm, tmp, src);
+					I(mov1_mr, dst, tmp);
+					return;
+				case 2:
+					I(mov2_rm, tmp, src);
+					I(mov2_mr, dst, tmp);
+					return;
+				case 4:
+					I(mov4_rm, tmp, src);
+					I(mov4_mr, dst, tmp);
+					return;
+				case 8:
+					I(mov8_rm, tmp, src);
+					I(mov8_mr, dst, tmp);
+					return;
+			}
+		}
+
+		if (reverse) {
+			I(copyb_mmc, dst, src, bytes_to_copy);
+		} else {
+			I(copyf_mmc, dst, src, bytes_to_copy);
+		}
 	}
 }
 
@@ -1150,8 +1339,21 @@ static void append_memory_copy_a(Converter &conv, Address dst, Address src, s64 
 		case 1:
 		case 2:
 		case 4:
-		case 8: {
-			if (bytes_to_copy == 8) {
+		case 8:
+		case 16: {
+			if (bytes_to_copy == 16) {
+				if (reverse) {
+					I(mov8_rm, intermediary, src+8);
+					I(mov8_mr, dst+8, intermediary);
+					I(mov8_rm, intermediary, src);
+					I(mov8_mr, dst, intermediary);
+				} else {
+					I(mov8_rm, intermediary, src);
+					I(mov8_mr, dst, intermediary);
+					I(mov8_rm, intermediary, src+8);
+					I(mov8_mr, dst+8, intermediary);
+				}
+			} else if (bytes_to_copy == 8) {
 				I(mov8_rm, intermediary, src);
 				I(mov8_mr, dst, intermediary);
 			} else if (bytes_to_copy == 4) {
@@ -1340,39 +1542,44 @@ static void append(Converter &conv, AstReturn *ret) {
 
 	if (ret->expression) {
 		auto expression_registers = append(conv, ret->expression);
-		if (expression_registers.count) {
+
+		auto return_parameter_address = load_address_of(conv, ret->lambda->return_parameter);
+		if (!return_parameter_address) {
+			return_parameter_address = r0;
+			I(pop_r, return_parameter_address.value_unchecked());
+		}
+
+		{
+			REDECLARE_REF(return_parameter_address, return_parameter_address.value_unchecked());
+
+			defer {
+				if (return_parameter_address != r0)
+					free_register(conv, return_parameter_address);
+				if (expression_registers.count && expression_registers[0] != r1) {
+					for (auto r : expression_registers) {
+						free_register(conv, r);
+					}
+				}
+			};
+
 			auto size = get_size(ret->expression->type);
-
-			// :PUSH_ADDRESS: TODO: replace this with load_address_of
 			if (size <= 8) {
-				assert(context.stack_word_size == 8); // TODO: implement for x86 32 bit
-				I(mov8_mr, rb+(context.stack_word_size*2+lambda->parameters_size), expression_registers[0]);
-			} else {
-				invalid_code_path("not implemented");
-			}
-
-			for (auto r : expression_registers) {
-				free_register(conv, r);
-			}
-		} else {
-			auto size = get_size(ret->expression->type);
-
-			// :PUSH_ADDRESS: TODO: replace this with load_address_of
-			if (size <= 8) {
-				I(pop_r, r0);
+				if (expression_registers.count != 0) {
+					assert(expression_registers.count == 1);
+				} else {
+					expression_registers = {r1};
+					I(pop_r, expression_registers[0]);
+				}
 
 				assert(context.stack_word_size == 8); // TODO: implement for x86 32 bit
-				I(mov8_mr, rb+(16+lambda->parameters_size), r0);
+				I(mov8_mr, return_parameter_address, expression_registers[0]);
 			} else {
-				// destination
-				I(push_r, rb);
-				I(add_mc, rs, context.stack_word_size*2 + lambda->parameters_size);
-
-				// source
-				I(push_r, rs);
-				I(add_mc, rs, context.stack_word_size);
-
-				append_memory_copy(conv, size, false, u8"expression"s, u8"parameter"s);
+				if (expression_registers.count) {
+					// Move multiple registers to [return_parameter_address]
+					invalid_code_path("not implemented");
+				} else {
+					append_memory_copy(conv, return_parameter_address, rs, size, false, u8"expression"s, u8"parameter"s);
+				}
 			}
 		}
 	}
@@ -1428,9 +1635,7 @@ static void append(Converter &conv, AstIf *If) {
 
 	auto false_start = count_of(conv.ls->body_builder);
 
-	// :DUMMYNOOP:
-	// also acts as optimization barrier
-	II(noop)->labeled = true;
+	I(jmp_label);
 
 	append(conv, If->false_scope);
 
@@ -1441,10 +1646,7 @@ static void append(Converter &conv, AstIf *If) {
 	I(add_rc, rs, allocated_size_false);
 	auto false_end = count_of(conv.ls->body_builder);
 
-	// :DUMMYNOOP:
-	// Next instruction after else block must be labeled,
-	// but we don't have it yet. So we add a noop so we can label it.
-	II(noop)->labeled = true;
+	I(jmp_label);
 
 	jz->offset = false_start - true_start + 1;
 	jmp->offset = false_end - false_start + 1;
@@ -1453,6 +1655,7 @@ static void append(Converter &conv, AstWhile *While) {
 	auto start_offset = conv.lambda->offset_accumulator;
 
 	auto count_before_condition = count_of(conv.ls->body_builder);
+	I(jmp_label);
 	append_to_stack(conv, While->condition);
 
 	I(pop_r, r0);
@@ -1469,13 +1672,7 @@ static void append(Converter &conv, AstWhile *While) {
 	auto count_after_body = count_of(conv.ls->body_builder);
 	I(jmp, .offset=0)->offset = (s64)count_before_condition - (s64)count_after_body;
 
-	conv.ls->body_builder[count_before_condition].labeled = true;
-
-	// :DUMMYNOOP:
-	// Next instruction after else block must be labeled,
-	// but we don't have it yet. So we add a noop so we can label it.
-	II(noop)->labeled = true;
-
+	I(jmp_label);
 
 	jz->offset = (s64)count_after_body - (s64)count_after_condition + 2;
 }
@@ -2009,15 +2206,7 @@ static ValueRegisters append(Converter &conv, AstIdentifier *identifier) {
 						I(push_m, addr);
 						return {};
 				}
-#if 0
-				// debug_break();
 				return value_registers(addr);
-#else
-				I(push_r, addr);
-				// runtime crashes with this TODO fix
-				// free_register(conv, addr);
-				return {};
-#endif
 			} else {
 				// NOTE: load_address_of failed to allocate a register.
 				// I think there is no way there is an available one.
@@ -2059,7 +2248,7 @@ static ValueRegisters append(Converter &conv, AstCall *call) {
 	if (lambda->has_body)
 		ensure_present_in_bytecode(conv, lambda);
 
-	auto arguments = get_arguments(call);
+	auto &arguments = call->arguments;
 	bool lambda_is_constant = is_constant(call->callable);
 
 	assert(lambda_is_constant);
@@ -2071,9 +2260,6 @@ static ValueRegisters append(Converter &conv, AstCall *call) {
 		auto actual_size = (conv.ls->stack_state.cursor - start_stack_size) * 8;
 		assert(expected_size == actual_size);
 	};
-
-	//if (lambda->definition->name == u8"print_string"s)
-	//	debug_break();
 
 	switch (lambda->convention) {
 		case CallingConvention::tlang: {
@@ -2099,7 +2285,7 @@ static ValueRegisters append(Converter &conv, AstCall *call) {
 
 
 			bool stack_was_realigned = false;
-			if ((conv.ls->stack_state.cursor * 8 + bytes_pushed_before_call) % 16 != 0) {
+			if (((conv.ls->stack_state.cursor - conv.ls->stack_state.rb_offset + 1) * 8 + bytes_pushed_before_call) % 16 != 0) {
 				push_comment(conv, u8"align the stack to 16 bytes"s);
 				I(sub_rc, rs, 8);
 				stack_was_realigned = true;
@@ -2109,7 +2295,7 @@ static ValueRegisters append(Converter &conv, AstCall *call) {
 			I(sub_rc, rs, return_parameters_size_on_stack);
 
 			for (auto argument : arguments) {
-				append_to_stack(conv, argument);
+				append_to_stack(conv, argument.expression);
 			}
 
 			if (lambda_is_constant) {
@@ -2146,7 +2332,7 @@ static ValueRegisters append(Converter &conv, AstCall *call) {
 
 
 			bool stack_was_realigned = false;
-			if ((conv.ls->stack_state.cursor * 8 + bytes_pushed_before_call) % 16 != 0) {
+			if (((conv.ls->stack_state.cursor - conv.ls->stack_state.rb_offset + 1) * 8 + bytes_pushed_before_call) % 16 != 0) {
 				push_comment(conv, u8"align the stack to 16 bytes"s);
 				I(sub_rc, rs, 8);
 				stack_was_realigned = true;
@@ -2155,8 +2341,8 @@ static ValueRegisters append(Converter &conv, AstCall *call) {
 
 
 			for (auto argument : arguments) {
-				assert(get_size(argument->type) <= 8);
-				append_to_stack(conv, argument);
+				assert(get_size(argument.expression->type) <= 8);
+				append_to_stack(conv, argument.expression);
 			}
 
 			// we have this:
@@ -2233,6 +2419,8 @@ static ValueRegisters append(Converter &conv, AstCall *call) {
 
 			break;
 		}
+		default:
+			invalid_code_path();
 	}
 	return {};
 }
@@ -2391,66 +2579,106 @@ static ValueRegisters append(Converter &conv, AstUnaryOperator *unop) {
 	switch (unop->operation) {
 		using enum UnaryOperation;
 		case minus: {
-			append_to_stack(conv, unop->expression);
-			auto size = get_size(unop->type);
-			if (::is_integer(unop->type)) {
-				switch (size) {
-					case 1: I(negi8_m,  rs); break;
-					case 2: I(negi16_m, rs); break;
-					case 4: I(negi32_m, rs); break;
-					case 8: I(negi64_m, rs); break;
-					default: invalid_code_path();
+			auto registers = append(conv, unop->expression);
+			if (registers.count == 0) {
+				auto size = get_size(unop->type);
+				if (::is_integer(unop->type)) {
+					switch (size) {
+						case 1: I(negi8_m,  rs); break;
+						case 2: I(negi16_m, rs); break;
+						case 4: I(negi32_m, rs); break;
+						case 8: I(negi64_m, rs); break;
+						default: invalid_code_path();
+					}
+				} else if (::is_float(unop->type)) {
+					switch (size) {
+						case 4:
+							I(pop_f, x0);
+							I(mov_rc, r0, (s64)0x8000'0000);
+							I(mov_fr, x1, r0);
+							I(xor_ff, x0, x1);
+							I(push_f, x0);
+							break;
+						case 8:
+							I(pop_f, x0);
+							I(mov_rc, r0, (s64)0x8000'0000'0000'0000);
+							I(mov_fr, x1, r0);
+							I(xor_ff, x0, x1);
+							I(push_f, x0);
+							break;
+						default: invalid_code_path();
+					}
+				} else {
+					invalid_code_path();
 				}
-			} else if (::is_float(unop->type)) {
-				switch (size) {
-					case 4:
-						I(pop_f, x0);
-						I(mov_rc, r0, (s64)0x8000'0000);
-						I(mov_fr, x1, r0);
-						I(xor_ff, x0, x1);
-						I(push_f, x0);
-						break;
-					case 8:
-						I(pop_f, x0);
-						I(mov_rc, r0, (s64)0x8000'0000'0000'0000);
-						I(mov_fr, x1, r0);
-						I(xor_ff, x0, x1);
-						I(push_f, x0);
-						break;
-					default: invalid_code_path();
+			} else if (registers.count == 1) {
+				auto size = get_size(unop->type);
+				if (::is_integer(unop->type)) {
+					I(negi_r, registers[0]);
+				} else if (::is_float(unop->type)) {
+					switch (size) {
+						case 4:
+							I(mov_fr, x0, registers[0]);
+							I(mov_rc, r0, (s64)0x8000'0000);
+							I(mov_fr, x1, r0);
+							I(xor_ff, x0, x1);
+							I(mov_rf, registers[0], x0);
+							break;
+						case 8:
+							I(mov_fr, x0, registers[0]);
+							I(mov_rc, r0, (s64)0x8000'0000'0000'0000);
+							I(mov_fr, x1, r0);
+							I(xor_ff, x0, x1);
+							I(mov_rf, registers[0], x0);
+							break;
+						default: invalid_code_path();
+					}
+				} else {
+					invalid_code_path();
 				}
 			} else {
 				invalid_code_path();
 			}
 
-			break;
+			return registers;
 		}
 		case address_of: {
-			// :PUSH_ADDRESS: TODO: Replace this with load_address_of
-			push_address_of(conv, unop->expression);
-			break;
+			return value_registers(load_address_of(conv, unop->expression));
 		}
 		case dereference: {
 			auto size = ceil(get_size(unop->type), context.stack_word_size);
-			I(sub_rc, rs, size);
-			I(push_r, rs);
-			append_to_stack(conv, unop->expression);
-			append_memory_copy(conv, size, false, unop->expression->location, u8"stack"s);
+			if (size <= 8) {
+				auto registers = append(conv, unop->expression);
+				assert(registers.count == 1);
+				switch (size) {
+					case 1: I(mov1_rm, registers[0], registers[0]); break;
+					case 2: I(mov2_rm, registers[0], registers[0]); break;
+					case 4: I(mov4_rm, registers[0], registers[0]); break;
+					case 8: I(mov8_rm, registers[0], registers[0]); break;
+				}
+				return registers;
+			} else {
+				I(sub_rc, rs, size);
+				I(push_r, rs);
+				append_to_stack(conv, unop->expression);
+				append_memory_copy(conv, size, false, unop->expression->location, u8"stack"s);
+				return {};
+			}
 			break;
 		}
 		case bnot: {
-			append_to_stack(conv, unop->expression);
-			I(pop_r, r0);
-			I(not_r, r0);
-			I(push_r, r0);
-			break;
-		}
-		default: {
-			invalid_code_path();
-			break;
+			auto registers = append(conv, unop->expression);
+			if (registers.count == 0) {
+				I(not_m, rs);
+			} else if (registers.count == 1) {
+				I(not_r, registers[0]);
+			} else {
+				invalid_code_path();
+			}
+			return registers;
 		}
 	}
-	return {};
+	invalid_code_path();
 }
 static ValueRegisters append(Converter &conv, AstSubscript *subscript) {
 	push_comment(conv, format(u8"subscript"));
@@ -2517,6 +2745,7 @@ static ValueRegisters append(Converter &conv, AstSubscript *subscript) {
 	return {};
 }
 static ValueRegisters append(Converter &conv, AstLambda *lambda, bool push_address) {
+	lambda->return_parameter->bytecode_offset = 0;
 
 	s64 parameter_size_accumulator = 0;
 	for (auto parameter : lambda->parameters) {
@@ -2536,6 +2765,7 @@ static ValueRegisters append(Converter &conv, AstLambda *lambda, bool push_addre
 
 		LambdaState ls;
 		ls.init();
+		ls.stack_state.init(get_size(lambda->return_parameter->type));
 
 		ls.current_scope = &lambda->body_scope;
 
@@ -2550,8 +2780,7 @@ static ValueRegisters append(Converter &conv, AstLambda *lambda, bool push_addre
 		conv.lambda = lambda;
 		defer { conv.lambda = old_lambda; };
 
-		lambda->first_instruction = &conv.ls->body_builder.add(MI(noop));
-		lambda->first_instruction->labeled = true;
+		lambda->first_instruction = &conv.ls->body_builder.add(MI(jmp_label));
 
 		if (lambda->definition) {
 			push_comment(conv, format(u8"lambda {}", lambda->definition->name));
@@ -2623,13 +2852,16 @@ static ValueRegisters append(Converter &conv, AstLambda *lambda, bool push_addre
 			}
 			push_comment(conv, u8"dummy return address"s);
 			I(sub_rc, rs, 8);
+		} else {
+			ls.push_used_registers = I(push_used_registers);
 		}
 
 		I(push_r, rb);
 		I(mov_rr, rb, rs);
 
 		push_comment(conv, u8"zero out the return value"s);
-		append_memory_set(conv, rb + context.stack_word_size * 2 + lambda->parameters_size, 0, return_value_size);
+		auto address = load_address_of(conv, lambda->return_parameter);
+		append_memory_set(conv, address.value(), 0, return_value_size);
 
 		append(conv, lambda->body_scope);
 
@@ -2644,7 +2876,8 @@ static ValueRegisters append(Converter &conv, AstLambda *lambda, bool push_addre
 			}
 		}
 
-		II(mov_rr, rs, rb)->labeled = true;
+		I(jmp_label);
+		I(mov_rr, rs, rb);
 		I(pop_r, rb);
 
 		if (lambda->convention == CallingConvention::stdcall) {
@@ -2652,8 +2885,35 @@ static ValueRegisters append(Converter &conv, AstLambda *lambda, bool push_addre
 			I(add_rc, rs, context.stack_word_size + (s64)lambda->parameters.count * context.stack_word_size);
 			push_comment(conv, u8"put return value into rax"s);
 			I(pop_r, x86_64::to_bc_register(x86_64::Register64::rax));
+		} else {
+			ls.pop_used_registers = I(pop_used_registers);
+
+			ls.push_used_registers->mask =
+			ls. pop_used_registers->mask = ls.used_registers_mask;
+
+			s64 additional_rb_parameter_offset = ceil(count_bits(ls.used_registers_mask)*8, 16u); // :DEBUG:
+
+			for (auto instr : ls.parameter_load_offsets) {
+				switch (instr->kind) {
+					using enum InstructionKind;
+					// These are used for loading parameter address
+					case lea:
+						instr->lea.s.c += additional_rb_parameter_offset;
+						break;
+					case add_mc:
+						instr->add_mc.s += additional_rb_parameter_offset;
+						break;
+					// This is used to zero out return parameter.
+					case mov8_mc:
+						instr->mov8_mc.s += additional_rb_parameter_offset;
+						break;
+					default:
+						invalid_code_path();
+				}
+			}
 		}
 		I(ret);
+
 
 		lambda->location_in_bytecode = count_of(conv.builder);
 #if 1
@@ -2708,6 +2968,8 @@ static ValueRegisters append(Converter &conv, AstIfx *If) {
 
 	conv.ls->stack_state.cursor = initial_stack_size;
 
+	I(jmp_label);
+
 	auto false_expression = append(conv, If->false_expression);
 	for (auto r : reverse(false_expression)) {
 		I(push_r, r);
@@ -2716,12 +2978,7 @@ static ValueRegisters append(Converter &conv, AstIfx *If) {
 
 	auto count_after_false = count_of(conv.ls->body_builder);
 
-	conv.ls->body_builder[count_after_true].labeled = true;
-
-	// :DUMMYNOOP:
-	// Next instruction after else block must be labeled,
-	// but we don't have it yet. So we add a noop so we can label it.
-	II(noop)->labeled = true;
+	I(jmp_label);
 
 	jz->offset = count_after_true - count_before_true + 1;
 	jmp->offset = count_after_false - count_after_true + 1;

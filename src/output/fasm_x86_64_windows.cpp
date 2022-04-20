@@ -23,7 +23,7 @@ static void append_instructions(CompilerContext &context, StringBuilder &builder
 
 	s64 idx = 0;
 	for (auto i : instructions) {
-		if (i.labeled)
+		if (i.kind == InstructionKind::jmp_label)
 			append_format(builder, ".{}: ", instruction_address(idx));
 
 		// Override some of default instruction printing
@@ -67,81 +67,85 @@ section '.idata' import data readable writeable
 	*/
 
 
-
-	append(builder, "format PE64 console\nentry main\ninclude 'win64a.inc'\n");
-
-	append_instructions(context, builder, bytecode.instructions);
-
-	if (bytecode.constant_data.count) {
-		append(builder, "section '.rodata' data readable\nconstants db ");
-		append_format(builder, "{}", bytecode.constant_data[0]);
-		bytecode.constant_data.data += 1;
-		bytecode.constant_data.count -= 1;
-		defer {
-			bytecode.constant_data.data -= 1;
-			bytecode.constant_data.count += 1;
-		};
-		for (auto byte : bytecode.constant_data) {
-			append_format(builder, ",{}", byte);
-		}
-		append(builder, '\n');
-	}
-	if (bytecode.data.count) {
-		append(builder, "section '.data' data readable writeable\nrwdata db ");
-		append_format(builder, "{}", bytecode.data[0]);
-		bytecode.data.data += 1;
-		bytecode.data.count -= 1;
-		defer {
-			bytecode.data.data -= 1;
-			bytecode.data.count += 1;
-		};
-		for (auto byte : bytecode.data) {
-			append_format(builder, ",{}", byte);
-		}
-		append(builder, '\n');
-	}
-	if (bytecode.zero_data_size) {
-		append_format(builder, "section '.bss' data readable writeable\nzeros rb {}\n", bytecode.zero_data_size);
-	}
-
 	{
-		append(builder, "section '.idata' import data readable writeable\n");
+		scoped_phase("Writing fasm");
 
 
-		// TODO: import kernel32 even when windows.tl is not included
-		//if (!find_if(bytecode.extern_libraries, [](auto lib, auto) { return equals_case_insensitive(lib, u8"kernel32"s); })) {
-		//	append(builder, "library kernel32,'kernel32.dll'\nimport kernel32,ExitProcess,'ExitProcess'\n");
-		//}
+		append(builder, "format PE64 console\nentry main\ninclude 'win64a.inc'\n");
 
-		if (is_empty(bytecode.extern_libraries)) {
-			append(builder, "library kernel32,'kernel32.dll'\nimport kernel32,ExitProcess,'ExitProcess'\n");
-		} else {
-			u32 library_index = 0;
-			append(builder, "library ");
-			for_each(bytecode.extern_libraries, [&](auto library, auto functions) {
-				if (library_index != 0)
-					append(builder, ",\\\n\t");
-				append_format(builder, "{},'{}.dll'", library, library);
-				library_index += 1;
-			});
+		append_instructions(context, builder, bytecode.instructions);
 
+		if (bytecode.constant_data.count) {
+			append(builder, "section '.rodata' data readable\nconstants db ");
+			append_format(builder, "{}", bytecode.constant_data[0]);
+			bytecode.constant_data.data += 1;
+			bytecode.constant_data.count -= 1;
+			defer {
+				bytecode.constant_data.data -= 1;
+				bytecode.constant_data.count += 1;
+			};
+			for (auto byte : bytecode.constant_data) {
+				append_format(builder, ",{}", byte);
+			}
 			append(builder, '\n');
+		}
+		if (bytecode.data.count) {
+			append(builder, "section '.data' data readable writeable\nrwdata db ");
+			append_format(builder, "{}", bytecode.data[0]);
+			bytecode.data.data += 1;
+			bytecode.data.count -= 1;
+			defer {
+				bytecode.data.data -= 1;
+				bytecode.data.count += 1;
+			};
+			for (auto byte : bytecode.data) {
+				append_format(builder, ",{}", byte);
+			}
+			append(builder, '\n');
+		}
+		if (bytecode.zero_data_size) {
+			append_format(builder, "section '.bss' data readable writeable\nzeros rb {}\n", bytecode.zero_data_size);
+		}
 
-			for_each(bytecode.extern_libraries, [&](auto library, auto functions) {
-				append_format(builder, "import {}", library);
-				for (auto function : functions) {
-					append_format(builder, ",\\\n\t{},'{}'", function, function);
-				}
-				if (library == u8"kernel32"s) {
-					if (!find(functions, u8"ExitProcess"s)) {
-						append(builder, ",\\\n\tExitProcess,'ExitProcess'");
-					}
-				}
+		{
+			append(builder, "section '.idata' import data readable writeable\n");
+
+
+			// TODO: import kernel32 even when windows.tl is not included
+			//if (!find_if(bytecode.extern_libraries, [](auto lib, auto) { return equals_case_insensitive(lib, u8"kernel32"s); })) {
+			//	append(builder, "library kernel32,'kernel32.dll'\nimport kernel32,ExitProcess,'ExitProcess'\n");
+			//}
+
+			if (is_empty(bytecode.extern_libraries)) {
+				append(builder, "library kernel32,'kernel32.dll'\nimport kernel32,ExitProcess,'ExitProcess'\n");
+			} else {
+				u32 library_index = 0;
+				append(builder, "library ");
+				for_each(bytecode.extern_libraries, [&](auto library, auto functions) {
+					if (library_index != 0)
+						append(builder, ",\\\n\t");
+					append_format(builder, "{},'{}.dll'", library, library);
+					library_index += 1;
+				});
 
 				append(builder, '\n');
-			});
-		}
 
+				for_each(bytecode.extern_libraries, [&](auto library, auto functions) {
+					append_format(builder, "import {}", library);
+					for (auto function : functions) {
+						append_format(builder, ",\\\n\t{},'{}'", function, function);
+					}
+					if (library == u8"kernel32"s) {
+						if (!find(functions, u8"ExitProcess"s)) {
+							append(builder, ",\\\n\tExitProcess,'ExitProcess'");
+						}
+					}
+
+					append(builder, '\n');
+				});
+			}
+
+		}
 	}
 
 	auto output_path_base = format("{}\\{}", context.current_directory, parse_path(context.source_path).name);

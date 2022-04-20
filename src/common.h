@@ -3,11 +3,14 @@
 
 #define TRACK_ALLOCATIONS 0
 
-#ifdef NDEBUG
-#define TL_DEBUG 0
-// #define assert(...) // uncomment this to remove assert from release build
-#else
-#define TL_DEBUG 1
+#if BUILD_CONFIG==0 // Debug
+	#define TL_DEBUG 1
+#elif BUILD_CONFIG==1 // Release
+	#define TL_DEBUG 0
+#elif BUILD_CONFIG==2 // UltraSpeed
+	#define TL_DEBUG 0
+	#define assert(...)
+	#define bounds_check(...)
 #endif
 #define TL_PARENT_SOURCE_LOCATION TRACK_ALLOCATIONS
 #define TL_ENABLE_PROFILER 0
@@ -59,6 +62,82 @@ using Ptr32 = typename Pool32<T>::template Ptr<T>;
 using String = Span<utf8, u32>;
 using HeapString = List<utf8, MyAllocator, u32>;
 
+// std::unordered_map is just a bit (10-15%) slower than tl::HashMap
+#if 1
+#include <xhash>
+namespace std {
+template <>
+struct hash<String> {
+	size_t operator()(String const &str) const {
+		return get_hash(str);
+	}
+};
+template <>
+struct hash<Span<utf8>> {
+	size_t operator()(Span<utf8> const &str) const {
+		return get_hash(str);
+	}
+};
+}
+
+#include <unordered_map>
+template <class Key, class Value, class Traits = DefaultHashTraits<Key, Value>>
+struct StdHashMap {
+	using Hasher = typename Traits::Hasher;
+	using CellState = ContiguousHashMapCellState;
+
+	std::unordered_map<Key, Value> map;
+
+    Value &get_or_insert(Key key) {
+		return map[key];
+	}
+
+    Value *find(Key key) {
+		auto found = map.find(key);
+        return found == map.end() ? 0 : &found->second;
+    }
+
+	void clear() {
+		map.clear();
+	}
+};
+
+template <class Key, class Value, class Traits>
+bool is_empty(StdHashMap<Key, Value, Traits> map) {
+	return map.map.empty();
+}
+
+
+template <class Key, class Value, class Traits>
+umm count_of(StdHashMap<Key, Value, Traits> map) {
+	return map.map.size();
+}
+
+
+template <class Key, class Value, class Traits, class Fn>
+void for_each(StdHashMap<Key, Value, Traits> map, Fn &&fn) {
+    for (auto &[k, v] : map.map) {
+		fn(k, v);
+    }
+}
+#endif
+
+#if 0
+template <class K, class V>
+struct DebugHashTraits : DefaultHashTraits<K, V> {
+	inline static constexpr void on_collision(K a, K b) {
+		print("COLLISION: '{}' and '{}'\n", a, b);
+	}
+};
+
+template <class K, class V>
+using Map = ContiguousHashMap<K, V, DebugHashTraits<K, V>>;
+#else
+template <class K, class V>
+using Map = HashMap<K, V>;
+//using Map = ContiguousHashMap<K, V>;
+#endif
+
 #pragma warning(disable: 4455)
 inline constexpr String operator""str(char const *string, umm count) { return String((utf8 *)string, (String::Size)count); }
 inline constexpr String operator""str(utf8 const *string, umm count) { return String((utf8 *)string, (String::Size)count); }
@@ -98,7 +177,7 @@ struct CompilerContext {
 extern CompilerContext context;
 
 #define scoped_phase(message) \
-		/*sleep_milliseconds(1000); */\
+		/*sleep_milliseconds(1000);*/ \
 		timed_block(context.profiler, as_utf8(as_span(message))); \
         context.phase_timers.add(create_precise_timer()); \
 		++context.tabs; \
@@ -176,7 +255,7 @@ void immediate_error(Char const *format_string, Args const &...args) {
 }
 
 HeapString escape_string(String string);
-HeapString unescape_string(String string);
+Optional<HeapString> unescape_string(String string);
 
 struct Strings {
 	utf8 const *_start_marker = (utf8 *)-1;

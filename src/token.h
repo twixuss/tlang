@@ -18,6 +18,9 @@ E(simd,     0x200000d) \
 E(autocast, 0x200000e) \
 E(defer,    0x200000f) \
 E(union,    0x2000010) \
+E(operator, 0x2000011) \
+E(implicit, 0x2000012) \
+E(explicit, 0x2000013) \
 
 #define ENUMERATE_TOKEN_KINDS(E) \
 E(identifier,        0x1000000) \
@@ -38,6 +41,6 @@ enum : TokenKind {
 Span<utf8> token_kind_to_string(TokenKind kind);
 
 struct Token {
-	Span<utf8, u32> string;
+	String string;
 	TokenKind kind;
 };

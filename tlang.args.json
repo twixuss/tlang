@@ -7,6 +7,10 @@
       "Command": "--target nasm_x86_64_windows"
     },
     {
+      "Id": "82901a7f-d4b3-44a9-8fc9-eaf9c99a3485",
+      "Command": "--target none"
+    },
+    {
       "Id": "95f8981e-c7f3-4752-b466-c63af2094358",
       "Command": "--print-ast parse"
     },

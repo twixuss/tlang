@@ -191,6 +191,8 @@ HeapString where(utf8 *location) {
 void print_report(Report r) {
 	if (r.where.count)
 		print("{}: ", r.where);
+	else
+		print(" ================ ");
 	switch (r.kind) {
 		case ReportKind::info:    print(Print_info,    strings.info);  break;
 		case ReportKind::warning: print(Print_warning, strings.warning); break;
@@ -218,7 +220,7 @@ u32 debug_allocation_blocks = 0;
 void new_my_block() {
 	AllocationBlock block;
 	block.size = ast_allocation_block_size;
-	block.cursor = block.base = os_allocator.allocate<u8>(ast_allocation_block_size);
+	block.cursor = block.base = page_allocator.allocate_uninitialized<u8>(ast_allocation_block_size);
 	assert(block.cursor);
 	ast_allocation_blocks.add(block);
 	last_allocation_block_index += 1;
@@ -303,10 +305,10 @@ HeapString escape_string(String string) {
 	return new_string;
 }
 
-HeapString unescape_string(String string) {
+Optional<HeapString> unescape_string(String string) {
 
 	if (!string.count)
-		return {};
+		return HeapString{};
 
 	if (string.front() == '"') {
 		assert(string.back() == '"');
@@ -319,7 +321,7 @@ HeapString unescape_string(String string) {
 	}
 
 	if (!string.count)
-		return {};
+		return HeapString{};
 
 	HeapString new_string;
 	new_string.reserve(string.count);
@@ -357,37 +359,43 @@ HeapString unescape_string(String string) {
 
 Strings strings = {};
 const Strings strings_en = {
-	.usage =
-		u8"Usage:\n"
-        "    {} <path> [options]\n"
-        "Option               Description\n"
-        "--print-ast <when>   Print the abstract syntax tree of the program\n"
-        "    when variants:\n"
-		"        parse        After parsing\n"
-		"        type         After typechecking\n"
-        "--keep-temp          Keep temporary files (build.bat, *.asm, etc)\n"
-        "--output <path>      Specify pathname of resulting executable.\n"
-        "--target <toolchain> Generate the executable using specified toolchain.\n"
-        "    toolchain variants:\n"
-        "        fasm_x86_64_windows (default)\n"
-        "        nasm_x86_64_windows\n",
+	.usage = u8R"(Usage:
+    {} <path> [options]
+Option                             Description
+--print-ast <when>                 Print the abstract syntax tree of the program
+when variants:
+    parse                          After parsing
+    type                           After typechecking
+--keep-temp                        Keep temporary files (build.bat, *.asm, etc)
+--output <path>                    Specify pathname of resulting executable.
+--target <toolchain>               Generate the executable using specified toolchain.
+toolchain variants:
+    none
+    fasm_x86_64_windows (default)
+    nasm_x86_64_windows
+--debug-path                       Print paths)",
 	.no_source_path_received = u8"No source path received.",
 	.error = u8"Error",
 	.warning = u8"Warning",
 	.info = u8"Info",
 };
 const Strings strings_ru = {
-	.usage =
-		u8"Использование:\n"
-        "    {} <путь> [опции]\n"
-        "Опция                Описание\n"
-        "--print-ast          Вывести дерево программы\n"
-        "--keep-temp          Сохранить временные файлы (build.bat, *.asm, etc)\n"
-        "--output <path>      Путь к выходному исполняемому файлу.\n"
-        "--target <toolchain> Генератор исполняемого файла.\n"
-        "    варианты:\n"
-        "        fasm_x86_64_windows (по умолчанию)\n"
-        "        nasm_x86_64_windows\n",
+	.usage =u8R"(Использование:
+    {} <путь> [опции]
+Опция                Описание
+--print-ast <когда>  Вывести дерево программы
+    варианты:
+        parse        После парсинга
+        type         После проверки типов
+--keep-temp          Сохранить временные файлы (build.bat, *.asm, etc)
+--output <путь>      Путь к выходному исполняемому файлу.
+--target <генератор> Генератор исполняемого файла.
+    варианты:
+        none
+        fasm_x86_64_windows (по умолчанию)
+        nasm_x86_64_windows
+--debug-path         Вывести пути
+)",
 	.no_source_path_received = u8"Не указан путь к исходному файлу.",
 	.error = u8"Ошибка",
 	.warning = u8"Предупреждение",

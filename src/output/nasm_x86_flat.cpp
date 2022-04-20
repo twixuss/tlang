@@ -22,7 +22,7 @@ static void append_instructions(CompilerContext &context, StringBuilder &builder
 
 	s64 idx = 0;
 	for (auto i : instructions) {
-		if (i.labeled)
+		if (i.kind == InstructionKind::jmp_label)
 			append_format(builder, ".{}: ", instruction_address(idx));
 		switch (i.kind) {
 			using enum Register32;

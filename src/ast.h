@@ -62,6 +62,8 @@ e(assert) \
 e(import) \
 e(defer) \
 e(print) \
+e(operator_definition) \
+e(parse) \
 
 enum AstKind : u8 {
 #define e(name) Ast_ ## name,
@@ -197,7 +199,7 @@ struct Scope : DefaultAllocatable<Scope> {
 	u32 level = 0;
 	List<Scope *> children;
 	List<AstStatement *> statements;
-	HashMap<String, DefinitionList> definitions; // multiple definitions for a single name in case of function overloading
+	Map<String, DefinitionList> definitions; // multiple definitions for a single name in case of function overloading
 	List<AstDefer *> bytecode_defers;
 
 	void append(Scope &that) {
@@ -248,6 +250,7 @@ struct AstExpressionStatement : AstStatement, StatementPool<AstExpressionStateme
 
 struct AstExpression : AstNode {
 	Expression<> type = {};
+	bool is_parenthesized : 1 = false;
 };
 
 enum class LiteralKind : u8 {
@@ -366,11 +369,13 @@ struct AstLambda : AstExpression, ExpressionPool<AstLambda> {
 	List<AstReturn *> return_statements;
 	Statement<AstDefinition> return_parameter = {};
 
+	Statement<AstReturn> return_statement_type_deduced_from = {};
+
 	// body_scope is a child of parameter_scope to avoid parameter redefinition
 	Scope parameter_scope;
 	Scope body_scope;
 
-	DefinitionList parameters; // This will be small most of the time, so no need in hashmap
+	DefinitionList parameters;
 
 	//DefinitionList return_parameters;
 
@@ -378,7 +383,7 @@ struct AstLambda : AstExpression, ExpressionPool<AstLambda> {
 
 	Expression<AstLambda> parent_lambda = {};
 
-	// HashMap<String, AstDefinition *> local_definitions;
+	// Map<String, AstDefinition *> local_definitions;
 
 	bool has_body                   : 1 = true;
 	bool is_type                    : 1 = false;
@@ -412,11 +417,16 @@ struct AstTuple : AstExpression, ExpressionPool<AstTuple> {
 	List<Expression<>> expressions;
 };
 
+struct CallArgument {
+	Expression<> expression;
+	String name;
+};
+
 struct AstCall : AstExpression, ExpressionPool<AstCall> {
 	AstCall() { kind = Ast_call; }
 
 	Expression<> callable = {};
-	Expression<> argument = {};
+	List<CallArgument> arguments = {};
 
 };
 
@@ -622,6 +632,13 @@ struct AstPrint : AstStatement, StatementPool<AstPrint> {
 	Expression<> expression = {};
 };
 
+struct AstParse : AstStatement, StatementPool<AstParse> {
+	AstParse() {
+		kind = Ast_parse;
+	}
+	Expression<> expression = {};
+};
+
 /*
 // MYTYPEISME
 struct AstImport : AstExpression, ExpressionPool<AstImport> {
@@ -641,6 +658,15 @@ struct AstDefer : AstStatement, StatementPool<AstDefer> {
 	}
 
 	Scope scope;
+};
+
+struct AstOperatorDefinition : AstStatement, StatementPool<AstOperatorDefinition> {
+	AstOperatorDefinition() { kind = Ast_operator_definition; }
+
+	Expression<AstLambda> lambda = {};
+
+	TokenKind operation = {};
+	bool is_implicit : 1 = false;
 };
 
 extern AstStruct *type_type; // These can be referenced by user programmer
@@ -668,13 +694,17 @@ extern AstStruct *type_default_unsigned_integer;
 extern AstStruct *type_default_integer;
 extern AstStruct *type_default_float;
 
+extern AstIdentifier *type_int;
+extern AstIdentifier *type_sint;
+extern AstIdentifier *type_uint;
+
 extern Scope global_scope;
 
 extern Mutex global_scope_mutex;
 void lock(Scope *scope);
 void unlock(Scope *scope);
 
-extern HashMap<String, AstDefinition *> names_not_available_for_globals;
+extern Map<String, AstDefinition *> names_not_available_for_globals;
 
 bool needs_semicolon(AstExpression *node);
 bool can_be_global(AstStatement *statement);
@@ -801,6 +831,10 @@ AstExpression *get_definition_expression(AstExpression *expression);
 String operator_string(u64 op);
 String operator_string(BinaryOperation op);
 
+inline umm append(StringBuilder &builder, BinaryOperation op) {
+	return append(builder, operator_string(op));
+}
+
 bool is_integer(AstExpression *type);
 bool is_signed(AstExpression *type);
 bool is_float(AstExpression *type);
@@ -830,8 +864,10 @@ bool type_is_built_in(AstExpression *type);
 
 Comparison comparison_from_binary_operation(BinaryOperation operation);
 
+/*
 List<Expression<> *> get_arguments_addresses(AstCall *call);
 List<Expression<>> get_arguments(AstCall *call);
+*/
 
 bool is_sized_array(AstExpression *type);
 bool same_argument_and_return_types(AstLambda *a, AstLambda *b);

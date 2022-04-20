@@ -30,6 +30,7 @@ void print_ast(AstUnaryOperator *node);
 void print_ast(AstSubscript *node);
 void print_ast(AstTuple*node);
 void print_ast(AstAssert*node);
+void print_ast(AstParse* parse);
 void print_ast(AstNode *node) {
 	print_tabs();
 	print("{}\n", node->location);
@@ -49,6 +50,7 @@ void print_ast(AstNode *node) {
 		case Ast_subscript: return print_ast((AstSubscript *)node);
 		case Ast_tuple: return print_ast((AstTuple*)node);
 		case Ast_assert: return print_ast((AstAssert*)node);
+		case Ast_parse: return print_ast((AstParse*)node);
 		default:
 			print_info("unknown - uid: {}\n", node->uid());
 			break;
@@ -67,7 +69,7 @@ void print_ast(AstDefinition *node) {
 	}
 }
 void print_ast(AstLambda *node) {
-	print_info("lambda - return_type: {}, uid: {}\n", type_to_string(node->return_parameter->type, true), node->uid());
+	print_info("lambda - return_type: {}, uid: {}\n", node->return_parameter ? type_to_string(node->return_parameter->type, true) : "(not defined)"str, node->uid());
 	tab_count += 1;
 	for (auto statement : node->body_scope.statements) {
 		print_ast(statement);
@@ -86,7 +88,9 @@ void print_ast(AstCall *node) {
 		tab_count -= 1;
 		print_label("arguments:\n");
 		tab_count += 1;
-			print_ast(node->argument);
+		for (auto argument : node->arguments) {
+			print_ast(argument.expression);
+		}
 		tab_count -= 1;
 	tab_count -= 1;
 }
@@ -224,6 +228,12 @@ void print_ast(AstAssert* assert) {
 	print_info("assert - uid: {}\n", assert->uid());
 	tab_count += 1;
 	print_ast(assert->condition);
+	tab_count -= 1;
+}
+void print_ast(AstParse* parse) {
+	print_info("parse - uid: {}\n", parse->uid());
+	tab_count += 1;
+	print_ast(parse->expression);
 	tab_count -= 1;
 }
 
