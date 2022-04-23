@@ -232,6 +232,7 @@ enum class InstructionKind : u8 {
 
 	jmp,
 	jz_cr, // jump to constant offset if boolean in register is zero
+	jnz_cr,
 
 	copyf_mmc,
 	copyb_mmc,
@@ -344,7 +345,7 @@ struct Instruction {
 		struct { Register d; s64 s; } mov_rd;
 		struct { Register d; s64 s; } mov_ru;
 		struct { Register d; s64 s; } mov_rt;
-		struct { Register d; utf8 *s_data; s32 s_count; } mov_re;
+		struct { Register d; String s; } mov_re;
 
 
 		struct { Register  d; } pop_r;
@@ -439,6 +440,7 @@ struct Instruction {
 
 		struct { s64 offset; } jmp;
 		struct { s64 offset; Register reg; } jz_cr;
+		struct { s64 offset; Register reg; } jnz_cr;
 
 		struct { Register d, s; s64 size; } copyf_mmc;
 		struct { Register d, s; s64 size; } copyb_mmc;

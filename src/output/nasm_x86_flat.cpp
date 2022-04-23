@@ -27,7 +27,7 @@ static void append_instructions(CompilerContext &context, StringBuilder &builder
 		switch (i.kind) {
 			using enum Register32;
 			using enum InstructionKind;
-			case mov_re: append_format(builder, "mov {}, {}", i.mov_re.d, Span(i.mov_re.s_data, i.mov_re.s_count)); break;
+			case mov_re: append_format(builder, "mov {}, {}", i.mov_re.d, i.mov_re.s); break;
 			case mov_rr: append_format(builder, "mov {}, {}", i.mov_rr.d, i.mov_rr.s); break;
 			case mov_rc: append_format(builder, "mov {}, {}", i.mov_rc.d, i.mov_rc.s); break;
 

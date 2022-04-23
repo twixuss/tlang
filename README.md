@@ -1,5 +1,6 @@
 # tlang
 ## Mini tutorial
+[Skip](#types)
 ### Hello world!
 ```rs
 import "std.tl"
@@ -104,36 +105,63 @@ Windows uses stdcall convention, so #stdcall directive says to use stdcall calli
 #stdcall
 ```
 This directive says to use stdcall calling convention for ALL following functions. if you want to restore language default calling convention, use #tlangcall directive.
-
-So that's the basics of the language.
-
-## Current features
-### Functions
-Named return parameters:
+# Types
+## optional
 ```rs
-test :: fn (): (named_return_value: int) {
-  named_return_value = 42;
-  return;
+func :: fn (a: ?string) {
+  print(if a then *a else "a is empty");
 }
 ```
-Functions always initialize the return value
+# Functions
+## Return type deduction
+```rs
+get_string :: () { // no need to put `:string` in gere
+  return "what's up";
+}
+```
+## Functions always initialize the return value.
 ```rs
 forgot_to_return :: fn (): int {
   // oops. no return statement! no worries. this will always return 0.
+  // compiler will warn you if you forget to explicitly return.
 }
 ```
-A bit of syntactic sugar:
+## Named return parameters
 ```rs
-sweet :: fn (): string => "YEP";
-// this is equivalent to
-sweet :: fn (): string { return "YEP"; }
+test :: fn (): named_return_value: int {
+  named_return_value = 42; // this is the same as return 42;
+}
 ```
-A pointer to a function:
+Named return parameters are useful when you need to do something with the value right before returning from the function:
 ```rs
-ptr : * #type fn (): int; // the same syntax is used for types. so to distinguish a value from a type we have to use #type directive.
+process :: (data: Data): result: ProcessedData  {
+  defer do_something(result);
+  return if condition then process1(data) else process2(data);
+}
+```
+## Polymorphic functions
+```rs
+poly :: fn (x) {
+  print(x);
+  #print #typeof x; // will print int and string
+}
+main :: fn () {
+  poly(123);  
+  poly("Hello!");
+}
+```
+## A bit of syntactic sugar:
+```rs
+sweet :: fn () => "YEP";
+// this is equivalent to
+sweet :: fn () { return "YEP"; }
+```
+## A pointer to a function:
+```rs
+ptr : * #type fn (): int; // the same syntax is used for types. so to distinguish a type from a value we have to use #type directive.
 ```
 
-### General features
+# Features
 * Compiled
 * Compile time execution (only basic operations are supported for now)
 * Compile time string printing
@@ -146,10 +174,6 @@ ptr : * #type fn (): int; // the same syntax is used for types. so to distinguis
 main :: fn () => print(X);
 X :: 1337;
 ```
-* Almost everyting is an expression
-```rs
-print(if true then "Hello" else "World");
-```
 * Foreign function interface
 ```rs
 // Definitions of windows' functions
@@ -159,9 +183,9 @@ ExitProcess :: fn (ret: u32);
 ```
 * Source location constants
 ```rs
-print(#file); // a.tl
+print(#file); // source.tl
 print(#line); // 2
-print(#location); // a.tl:3:14
+print(#location); // source.tl:3:14
 ```
 * Module importing
 * Function overloading
@@ -170,7 +194,7 @@ import "std.tl"
 foo :: fn (a: int) => print("int");
 foo :: fn (a: bool) => print("bool");
 main :: fn () {
-  foo(true);
+  foo(true); // prints bool
 }
 ```
 * Literals are unlimited in size
@@ -181,10 +205,8 @@ a :: 999999999999999999999999999 * 123456789;
 * Nested comments `/* /* /* */ */ */`
 
 ## TODO
-* Functions with polymorphic arguments
 * Member functions
 * Builtin types
-  * optional
   * union
   * variant
 * More useful standard library

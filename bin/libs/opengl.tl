@@ -488,3 +488,5 @@ glViewport :: fn (x: GLint, y: GLint, width: GLsizei, height: GLsizei);
 glBegin :: fn (mode: u32);
 glEnd   :: fn ();
 glFlush :: fn ();
+
+glGenBuffers_t :: #type fn (n: GLsizei, buffers: *GLuint);

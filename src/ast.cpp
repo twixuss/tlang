@@ -31,6 +31,8 @@ AstStruct *type_string;
 AstStruct *type_noinit;
 AstStruct *type_unsized_integer;
 AstStruct *type_unsized_float;
+AstStruct *type_unknown;
+AstStruct *type_poly;
 AstStruct *type_void;
 AstStruct *type_default_signed_integer;
 AstStruct *type_default_unsigned_integer;
@@ -165,23 +167,31 @@ void append_type(StringBuilder &builder, AstExpression *type, bool silent_error)
 				}
 				append_type(builder, parameter->type, silent_error);
 			}
-			append(builder, ") -> ");
-			append_type(builder, lambda->return_parameter->type, silent_error);
+			if (lambda->is_poly && !lambda->return_parameter) {
+				append(builder, ")");
+			} else {
+				append(builder, ") -> ");
+				append_type(builder, lambda->return_parameter->type, silent_error);
+			}
 			break;
 		}
 		case Ast_identifier: {
 			auto identifier = (AstIdentifier *)type;
 			ensure(identifier->definition);
-			ensure(types_match(identifier->definition->expression->type, type_type));
+			// ensure(types_match(identifier->definition->expression->type, type_type));
 			append(builder, identifier->name);
 			break;
 		}
 		case Ast_unary_operator: {
 			using enum UnaryOperation;
 			auto unop = (AstUnaryOperator *)type;
-			ensure(unop->operation == pointer);
-			append(builder, as_string(unop->operation));
-			append_type(builder, unop->expression, silent_error);
+			switch (unop->operation) {
+				case pointer:
+				case option:
+					append(builder, as_string(unop->operation));
+					append_type(builder, unop->expression, silent_error);
+					break;
+			}
 			break;
 		}
 		case Ast_subscript: {
@@ -246,7 +256,7 @@ s64 get_align(AstExpression *type) {
 		}
 		case Ast_identifier: {
 			auto identifier = (AstIdentifier *)type;
-			return get_size(identifier->definition->expression);
+			return get_align(identifier->definition->expression);
 		}
 		case Ast_unary_operator: {
 			auto unop = (AstUnaryOperator *)type;
@@ -347,6 +357,8 @@ AstExpression *direct(AstExpression *type) {
 				if (!identifier->definition)
 					return 0;
 				type = identifier->definition->expression;
+				if (!type)
+					return 0;
 			} while (type->kind == Ast_identifier);
 			break;
 		}
@@ -529,7 +541,7 @@ bool is_pointer(AstExpression *type) {
 		}
 		case Ast_unary_operator: {
 			auto unop = (AstUnaryOperator *)type;
-			if (unop->operation == UnaryOperation::pointer_or_dereference) {
+			if (unop->operation == UnaryOperation::pointer_or_dereference_or_unwrap) {
 				// This fails at parse time.
 				// assert(is_type(unop->expression));
 				return true;
@@ -540,7 +552,7 @@ bool is_pointer(AstExpression *type) {
 	return false;
 }
 bool is_pointer_internally(AstExpression *type) {
-	return type->kind == Ast_lambda || is_pointer(type);
+	return is_lambda(type) || is_pointer(type);
 }
 
 AstLiteral *get_literal(AstExpression *expression) {
@@ -604,7 +616,10 @@ AstLambda *get_lambda(AstExpression *expression) {
 }
 
 bool is_lambda(AstExpression *expression) {
-	return direct(expression)->kind == Ast_lambda;
+	auto d = direct(expression);
+	if (!d)
+		return false;
+	return d->kind == Ast_lambda;
 }
 
 Comparison comparison_from_binary_operation(BinaryOperation operation) {

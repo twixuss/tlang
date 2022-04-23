@@ -199,7 +199,7 @@ struct Scope : DefaultAllocatable<Scope> {
 	u32 level = 0;
 	List<Scope *> children;
 	List<AstStatement *> statements;
-	Map<String, DefinitionList> definitions; // multiple definitions for a single name in case of function overloading
+	Map<KeyString, DefinitionList> definitions; // multiple definitions for a single name in case of function overloading
 	List<AstDefer *> bytecode_defers;
 
 	void append(Scope &that) {
@@ -232,6 +232,7 @@ struct AstNode {
 inline static constexpr auto sizeof_AstNode = sizeof AstNode;
 
 struct AstStatement : AstNode {
+	Scope *parent_scope = 0;
 };
 
 struct AstBlock : AstStatement, StatementPool<AstBlock> {
@@ -302,13 +303,13 @@ struct AstDefinition : AstStatement, StatementPool<AstDefinition> {
 
 	Expression<> expression = {};
 	Expression<> type = {};
-	Expression<> parent_block = {};
+	Expression<> parent_lambda_or_struct = {};
 
 	Box<AstLiteral> evaluated;
 
 	// REFERENCE32(Scope, parent_scope);
 
-	Span<utf8, u32> name = {};
+	KeyString name = {};
 	s32 offset_in_struct = INVALID_MEMBER_OFFSET;
 	s32 bytecode_offset = INVALID_DATA_OFFSET;
 
@@ -331,7 +332,7 @@ struct AstReturn : AstStatement, StatementPool<AstReturn> {
 struct AstIdentifier : AstExpression, ExpressionPool<AstIdentifier> {
 	AstIdentifier() { kind = Ast_identifier; }
 
-	Span<utf8, u32> name;
+	KeyString name;
 
 	Statement<AstDefinition> definition;
 
@@ -362,6 +363,7 @@ struct AstLambda : AstExpression, ExpressionPool<AstLambda> {
 		kind = Ast_lambda;
 		parameter_scope.node = this;
 		body_scope.node = this;
+		body_scope.parent = &parameter_scope;
 	}
 
 	Statement<AstDefinition> definition = {}; // not null if lambda is named
@@ -385,10 +387,14 @@ struct AstLambda : AstExpression, ExpressionPool<AstLambda> {
 
 	// Map<String, AstDefinition *> local_definitions;
 
+	List<AstLambda *> hardened_polys;
+	Expression<AstLambda> original_poly = {};
+
 	bool has_body                   : 1 = true;
 	bool is_type                    : 1 = false;
 	bool finished_typechecking_head : 1 = false;
 	bool is_intrinsic               : 1 = false;
+	bool is_poly                    : 1 = false;
 
 	ExternLanguage extern_language = {};
 	String extern_library;
@@ -419,7 +425,7 @@ struct AstTuple : AstExpression, ExpressionPool<AstTuple> {
 
 struct CallArgument {
 	Expression<> expression;
-	String name;
+	KeyString name;
 };
 
 struct AstCall : AstExpression, ExpressionPool<AstCall> {
@@ -537,11 +543,13 @@ enum class UnaryOperation : u8 {
 	address_of,  // &
 	dereference, // *
 	pointer,     // *
+	unwrap,      // *
 	autocast,    // autocast
 	Sizeof,      // #sizeof
 	typeof,      // #typeof
+	option,      // ?
 	count,
-	pointer_or_dereference,
+	pointer_or_dereference_or_unwrap,
 };
 
 inline String as_string(UnaryOperation unop) {
@@ -553,10 +561,12 @@ inline String as_string(UnaryOperation unop) {
 		case address_of:  return "&"str;
 		case pointer:     return "*"str;
 		case dereference: return "*"str;
+		case unwrap:      return "*"str;
 		case autocast:    return "autocast"str;
 		case Sizeof:      return "#sizeof"str;
 		case typeof:      return "#typeof"str;
-		case pointer_or_dereference: return "pointer_or_dereference"str;
+		case option:      return "?"str;
+		case pointer_or_dereference_or_unwrap: return "pointer_or_dereference_or_unwrap"str;
 	}
 	invalid_code_path();
 }
@@ -568,7 +578,8 @@ inline Optional<UnaryOperation> as_unary_operation(Token token) {
 		case '-': return minus;
 		case '!': return bnot;
 		case '&': return address_of;
-		case '*': return pointer_or_dereference;
+		case '*': return pointer_or_dereference_or_unwrap;
+		case '?': return option;
 		case Token_autocast:
 			return autocast;
 		case Token_directive:
@@ -686,6 +697,8 @@ extern AstStruct *type_string;
 extern AstStruct *type_noinit; // These are special, user can't use them directly. typeof'ing them should do what? i don't know. TODO
 extern AstStruct *type_unsized_integer;
 extern AstStruct *type_unsized_float;
+extern AstStruct *type_unknown;
+extern AstStruct *type_poly;
 // inline constexpr u32 built_in_struct_count = 14;
 
 extern AstUnaryOperator *type_pointer_to_void;
@@ -740,6 +753,7 @@ inline Optional<BigInteger> get_constant_integer(AstExpression *expression) {
 			switch (unop->operation) {
 				using enum UnaryOperation;
 				case minus: return -value;
+				default: invalid_code_path();
 			}
 			break;
 		}
@@ -756,9 +770,9 @@ inline Optional<BigInteger> get_constant_integer(AstExpression *expression) {
 				case band: return get_constant_integer(binop->left) & get_constant_integer(binop->right);
 				case bor: return get_constant_integer(binop->left) | get_constant_integer(binop->right);
 				case bsl: return get_constant_integer(binop->left) << get_constant_integer(binop->right);
-				case bsr: return {}; //return get_constant_integer(binop->left) >> get_constant_integer(binop->right);
-				case eq:
-				case ne:
+				case bsr: return get_constant_integer(binop->left) >> get_constant_integer(binop->right);
+				case eq: // return get_constant_integer(binop->left) == get_constant_integer(binop->right);
+				case ne: // return get_constant_integer(binop->left) != get_constant_integer(binop->right);
 				case dot:
 					return {};
 				default: invalid_code_path();
@@ -775,6 +789,8 @@ HeapString type_to_string(AstExpression *type, bool silent_error = false);
 
 // Returns just the name of the type without synonyms
 HeapString type_name     (AstExpression *type, bool silent_error = false);
+
+s64 get_align(AstExpression *type);
 
 inline s64 get_size(AstExpression *type) {
 	assert(type);
@@ -793,6 +809,7 @@ inline s64 get_size(AstExpression *type) {
 			switch (unop->operation) {
 				case pointer: return context.stack_word_size;
 				case typeof:  return get_size(unop->expression->type);
+				case option:  return get_size(unop->expression) + get_align(unop->expression);
 				default: invalid_code_path();
 			}
 		}
@@ -871,3 +888,18 @@ List<Expression<>> get_arguments(AstCall *call);
 
 bool is_sized_array(AstExpression *type);
 bool same_argument_and_return_types(AstLambda *a, AstLambda *b);
+
+inline AstUnaryOperator *as_option(AstExpression *expression) {
+	switch (expression->kind) {
+		case Ast_unary_operator: {
+			auto unop = (AstUnaryOperator *)expression;
+			return unop->operation == UnaryOperation::option ? unop : 0;
+		}
+		case Ast_identifier: {
+			auto ident = (AstIdentifier *)expression;
+			assert(ident->definition->expression);
+			return as_option(ident->definition->expression);
+		}
+	}
+	return 0;
+}

@@ -29,7 +29,7 @@ static void append_instructions(CompilerContext &context, StringBuilder &builder
 		// Override some of default instruction printing
 		switch (i.kind) {
 			using enum InstructionKind;
-			case mov_re: append_format(builder, "mov {}, [{}]", i.mov_re.d, Span(i.mov_re.s_data, i.mov_re.s_count)); break;
+			case mov_re: append_format(builder, "mov {}, [{}]", i.mov_re.d, i.mov_re.s); break;
 			default: append_instruction(builder, idx, i); break;
 		}
 #if BYTECODE_DEBUG

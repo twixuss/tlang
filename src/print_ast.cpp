@@ -69,12 +69,27 @@ void print_ast(AstDefinition *node) {
 	}
 }
 void print_ast(AstLambda *node) {
-	print_info("lambda - return_type: {}, uid: {}\n", node->return_parameter ? type_to_string(node->return_parameter->type, true) : "(not defined)"str, node->uid());
-	tab_count += 1;
-	for (auto statement : node->body_scope.statements) {
-		print_ast(statement);
+	if (node->is_poly) {
+		for (auto hardened : node->hardened_polys) {
+			print_ast(hardened);
+		}
+	} else {
+		print_info("lambda - return_type: {}, uid: {}\n", node->return_parameter ? type_to_string(node->return_parameter->type, true) : "(not defined)"str, node->uid());
+		tab_count += 1;
+		print_info("parameters:\n");
+		tab_count += 1;
+		for (auto param : node->parameters) {
+			print_ast(param);
+		}
+		tab_count -= 1;
+		print_info("statements:\n");
+		tab_count += 1;
+		for (auto statement : node->body_scope.statements) {
+			print_ast(statement);
+		}
+		tab_count -= 1;
+		tab_count -= 1;
 	}
-	tab_count -= 1;
 }
 void print_ast(AstIdentifier *node) {
 	print_info("identifier - type: {}, uid: {}, definition.uid: {}\n", type_to_string(node->type, true), node->uid(), node->definition ? node->definition->uid() : -1);

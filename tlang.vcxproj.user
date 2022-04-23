@@ -19,10 +19,10 @@
     <LocalDebuggerWorkingDirectory>$(ProjectDir)bin</LocalDebuggerWorkingDirectory>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
-    <LocalDebuggerCommandArguments>--target none --keep-temp --profile performance_test.tl</LocalDebuggerCommandArguments>
+    <LocalDebuggerCommandArguments>--target nasm_x86_64_windows --keep-temp --profile a.tl</LocalDebuggerCommandArguments>
     <DebuggerFlavor>WindowsLocalDebugger</DebuggerFlavor>
     <LocalDebuggerWorkingDirectory>$(ProjectDir)bin</LocalDebuggerWorkingDirectory>
-    <RemoteDebuggerCommandArguments>--target none --keep-temp --profile performance_test.tl</RemoteDebuggerCommandArguments>
+    <RemoteDebuggerCommandArguments>--target nasm_x86_64_windows --keep-temp --profile a.tl</RemoteDebuggerCommandArguments>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
     <LocalDebuggerCommandArguments>--keep-temp --profile performance_test.tl</LocalDebuggerCommandArguments>

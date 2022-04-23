@@ -428,7 +428,8 @@ inline void append_instruction(StringBuilder &builder, s64 idx, Instruction i) {
 
 		case jmp: append_cformat(builder, "jmp .{}", instruction_address(idx + i.jmp.offset)); break;
 
-		case jz_cr: { auto reg = part1b(i.jz_cr.reg); append_cformat(builder, "test {}, {}\njz .{}", reg, reg, instruction_address(idx + i.jz_cr.offset)); break; }
+		case jz_cr:  { auto reg = part1b(i.jz_cr.reg); append_cformat(builder, "test {}, {}\njz .{}", reg, reg, instruction_address(idx + i.jz_cr.offset)); break; }
+		case jnz_cr: { auto reg = part1b(i.jnz_cr.reg); append_cformat(builder, "test {}, {}\njnz .{}", reg, reg, instruction_address(idx + i.jnz_cr.offset)); break; }
 
 			// Here move into rcx must be last, because it can be source for rdi or rsi
 		case copyf_mmc: append_cformat(builder, "mov rsi, {}\nmov rdi, {}\nmov rcx, {}\ncld\nrep movsb", i.copyf_mmc.s, i.copyf_mmc.d, i.copyf_mmc.size); break;

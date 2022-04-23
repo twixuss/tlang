@@ -923,9 +923,9 @@ static Optional<Register> load_address_of(Optional<Register> destination, Conver
 		destination = allocate_register(conv);
 	s64 definition_size = ceil(get_size(definition->type), context.stack_word_size);
 
-	if (definition->parent_block) {
-		if (definition->parent_block->kind == Ast_lambda) {
-			auto parent_lambda = (AstLambda *)definition->parent_block;
+	if (definition->parent_lambda_or_struct) {
+		if (definition->parent_lambda_or_struct->kind == Ast_lambda) {
+			auto parent_lambda = (AstLambda *)definition->parent_lambda_or_struct;
 
 			s64 offset = 0;
 
@@ -1025,11 +1025,11 @@ static Optional<Register> load_address_of(Optional<Register> destination, Conver
 				if (destination) I(mov_rt, destination.value_unchecked(), lambda->location_in_bytecode);
 				else             I(push_t, lambda->location_in_bytecode);
 			} else {
-				assert((s64)(s32)lambda->definition->name.count == (s64)lambda->definition->name.count);
+				assert((s64)(s32)count_of(lambda->definition->name) == (s64)count_of(lambda->definition->name));
 				if (destination) {
-					I(mov_re, destination.value_unchecked(), lambda->definition->name.data, (s32)lambda->definition->name.count);
+					I(mov_re, destination.value_unchecked(), (String)lambda->definition->name);
 				} else {
-					I(mov_re, r0, lambda->definition->name.data, (s32)lambda->definition->name.count);
+					I(mov_re, r0, (String)lambda->definition->name);
 					I(push_r, r0);
 				}
 			}
@@ -1173,9 +1173,9 @@ static void push_address_of(Converter &conv, AstExpression *expression) {
 			} else {
 				s64 size = get_size(definition->type);
 
-				if (definition->parent_block) {
-					if (definition->parent_block->kind == Ast_lambda) {
-						auto parent_lambda = (AstLambda *)definition->parent_block;
+				if (definition->parent_lambda_or_struct) {
+					if (definition->parent_lambda_or_struct->kind == Ast_lambda) {
+						auto parent_lambda = (AstLambda *)definition->parent_lambda_or_struct;
 
 						s64 offset = 0;
 
@@ -1431,9 +1431,7 @@ static void ensure_present_in_bytecode(Converter &conv, AstLambda *lambda) {
 }
 
 static void append(Converter &conv, Scope &scope) {
-	auto old_scope = conv.ls->current_scope;
-	conv.ls->current_scope = &scope;
-	defer { conv.ls->current_scope = old_scope; };
+	scoped_replace(conv.ls->current_scope, &scope);
 	for (auto statement : scope.statements) {
 		append(conv, statement);
 	}
@@ -1455,7 +1453,7 @@ static void append(Converter &conv, AstDefinition *definition) {
 	auto definition_size = get_size(definition->type);
 
 	// Don't do anything for constant definitions in lambdas
-	if (definition->parent_block && definition->parent_block->kind != Ast_struct && definition->is_constant) {
+	if (definition->parent_lambda_or_struct && definition->parent_lambda_or_struct->kind != Ast_struct && definition->is_constant) {
 		return;
 	}
 
@@ -1467,9 +1465,9 @@ static void append(Converter &conv, AstDefinition *definition) {
 	if (definition->expression && is_type(definition->expression))
 		return;
 
-	if (definition->parent_block) {
-		if (definition->parent_block->kind == Ast_lambda) {
-			auto parent_lambda = (AstLambda *)definition->parent_block;
+	if (definition->parent_lambda_or_struct) {
+		if (definition->parent_lambda_or_struct->kind == Ast_lambda) {
+			auto parent_lambda = (AstLambda *)definition->parent_lambda_or_struct;
 			push_comment(conv, format(u8"definition {}", definition->name));
 			assert(!definition->is_parameter);
 
@@ -1820,18 +1818,18 @@ static ValueRegisters append(Converter &conv, AstBinaryOperator *bin) {
 			return {};
 		}
 
-		AstStruct *from = 0;
-		AstStruct *to = 0;
+		AstExpression *from = 0;
+		AstExpression *to = 0;
 
 		if (is_pointer_internally(cast->left->type))
 			from = type_u64;
 		else
-			from = get_struct(cast->left->type);
+			from = direct(cast->left->type);
 
 		if (is_pointer_internally(cast->type))
 			to = type_u64;
 		else
-			to = get_struct(cast->type);
+			to = direct(cast->type);
 
 
 		// Here are integer cases
@@ -1851,101 +1849,115 @@ static ValueRegisters append(Converter &conv, AstBinaryOperator *bin) {
 
 		if (false) {
 		} else if (from == type_u8) {
-			if (false) {}
-			else if (to == type_u8) {}
-			else if (to == type_u16) { I(and_mc, rs, 0xff); } // discard bits that could be garbage
-			else if (to == type_u32) { I(and_mc, rs, 0xff); }
-			else if (to == type_u64) { I(and_mc, rs, 0xff); }
-			else if (to == type_s8) {}
-			else if (to == type_s16) { I(and_mc, rs, 0xff); }
-			else if (to == type_s32) { I(and_mc, rs, 0xff); }
-			else if (to == type_s64) { I(and_mc, rs, 0xff); }
-			else invalid_code_path();
+			if (false) { return {}; }
+			else if (to == type_u8) { return {}; }
+			else if (to == type_u16) { I(and_mc, rs, 0xff); return {}; } // discard bits that could be garbage
+			else if (to == type_u32) { I(and_mc, rs, 0xff); return {}; }
+			else if (to == type_u64) { I(and_mc, rs, 0xff); return {}; }
+			else if (to == type_s8) { return {}; }
+			else if (to == type_s16) { I(and_mc, rs, 0xff); return {}; }
+			else if (to == type_s32) { I(and_mc, rs, 0xff); return {}; }
+			else if (to == type_s64) { I(and_mc, rs, 0xff); return {}; }
 		} else if (from == type_u16) {
-			if (false) {}
-			else if (to == type_u8) {}
-			else if (to == type_u16) {}
-			else if (to == type_u32) { I(and_mc, rs, 0xffff); }
-			else if (to == type_u64) { I(and_mc, rs, 0xffff); }
-			else if (to == type_s8) {}
-			else if (to == type_s16) {}
-			else if (to == type_s32) { I(and_mc, rs, 0xffff); }
-			else if (to == type_s64) { I(and_mc, rs, 0xffff); }
-			else invalid_code_path();
+			if (false) { return {}; }
+			else if (to == type_u8) { return {}; }
+			else if (to == type_u16) { return {}; }
+			else if (to == type_u32) { I(and_mc, rs, 0xffff); return {}; }
+			else if (to == type_u64) { I(and_mc, rs, 0xffff); return {}; }
+			else if (to == type_s8) { return {}; }
+			else if (to == type_s16) { return {}; }
+			else if (to == type_s32) { I(and_mc, rs, 0xffff); return {}; }
+			else if (to == type_s64) { I(and_mc, rs, 0xffff); return {}; }
 		} else if (from == type_u32) {
-			if (false) {}
-			else if (to == type_u8) {}
-			else if (to == type_u16) {}
-			else if (to == type_u32) {}
-			else if (to == type_u64) { I(and_mc, rs, 0xffffffff); }
-			else if (to == type_s8) {}
-			else if (to == type_s16) {}
-			else if (to == type_s32) {}
-			else if (to == type_s64) { I(and_mc, rs, 0xffffffff); }
-			else invalid_code_path();
+			if (false) { return {}; }
+			else if (to == type_u8) { return {}; }
+			else if (to == type_u16) { return {}; }
+			else if (to == type_u32) { return {}; }
+			else if (to == type_u64) { I(and_mc, rs, 0xffffffff); return {}; }
+			else if (to == type_s8) { return {}; }
+			else if (to == type_s16) { return {}; }
+			else if (to == type_s32) { return {}; }
+			else if (to == type_s64) { I(and_mc, rs, 0xffffffff); return {}; }
 		} else if (from == type_u64) {
-			if (false) {}
-			else if (to == type_u8) {}
-			else if (to == type_u16) {}
-			else if (to == type_u32) {}
-			else if (to == type_u64) {}
-			else if (to == type_s8) {}
-			else if (to == type_s16) {}
-			else if (to == type_s32) {}
-			else if (to == type_s64) {}
-			else invalid_code_path();
+			if (false) { return {}; }
+			else if (to == type_u8) { return {}; }
+			else if (to == type_u16) { return {}; }
+			else if (to == type_u32) { return {}; }
+			else if (to == type_u64) { return {}; }
+			else if (to == type_s8) { return {}; }
+			else if (to == type_s16) { return {}; }
+			else if (to == type_s32) { return {}; }
+			else if (to == type_s64) { return {}; }
 		} else if (from == type_s8) {
-			if (false) {}
-			else if (to == type_u8) {}
-			else if (to == type_u16) { I(movsx21_rm, r0, rs); I(mov2_mr, rs, r0); } // discard bits that could be garbage
-			else if (to == type_u32) { I(movsx41_rm, r0, rs); I(mov4_mr, rs, r0); }
-			else if (to == type_u64) { I(movsx81_rm, r0, rs); I(mov8_mr, rs, r0); }
-			else if (to == type_s8) {}
-			else if (to == type_s16) { I(movsx21_rm, r0, rs); I(mov2_mr, rs, r0); }
-			else if (to == type_s32) { I(movsx41_rm, r0, rs); I(mov4_mr, rs, r0); }
-			else if (to == type_s64) { I(movsx81_rm, r0, rs); I(mov8_mr, rs, r0); }
-			else invalid_code_path();
+			if (false) { return {}; }
+			else if (to == type_u8) { return {}; }
+			else if (to == type_u16) { I(movsx21_rm, r0, rs); I(mov2_mr, rs, r0); return {}; } // discard bits that could be garbage
+			else if (to == type_u32) { I(movsx41_rm, r0, rs); I(mov4_mr, rs, r0); return {}; }
+			else if (to == type_u64) { I(movsx81_rm, r0, rs); I(mov8_mr, rs, r0); return {}; }
+			else if (to == type_s8) { return {}; }
+			else if (to == type_s16) { I(movsx21_rm, r0, rs); I(mov2_mr, rs, r0); return {}; }
+			else if (to == type_s32) { I(movsx41_rm, r0, rs); I(mov4_mr, rs, r0); return {}; }
+			else if (to == type_s64) { I(movsx81_rm, r0, rs); I(mov8_mr, rs, r0); return {}; }
 		} else if (from == type_s16) {
-			if (false) {}
-			else if (to == type_u8) {}
-			else if (to == type_u16) {}
-			else if (to == type_u32) { I(movsx42_rm, r0, rs); I(mov4_mr, rs, r0); }
-			else if (to == type_u64) { I(movsx82_rm, r0, rs); I(mov8_mr, rs, r0); }
-			else if (to == type_s8) {}
-			else if (to == type_s16) {}
-			else if (to == type_s32) { I(movsx42_rm, r0, rs); I(mov4_mr, rs, r0); }
-			else if (to == type_s64) { I(movsx82_rm, r0, rs); I(mov8_mr, rs, r0); }
-			else invalid_code_path();
+			if (false) { return {}; }
+			else if (to == type_u8) { return {}; }
+			else if (to == type_u16) { return {}; }
+			else if (to == type_u32) { I(movsx42_rm, r0, rs); I(mov4_mr, rs, r0); return {}; }
+			else if (to == type_u64) { I(movsx82_rm, r0, rs); I(mov8_mr, rs, r0); return {}; }
+			else if (to == type_s8) { return {}; }
+			else if (to == type_s16) { return {}; }
+			else if (to == type_s32) { I(movsx42_rm, r0, rs); I(mov4_mr, rs, r0); return {}; }
+			else if (to == type_s64) { I(movsx82_rm, r0, rs); I(mov8_mr, rs, r0); return {}; }
 		} else if (from == type_s32) {
-			if (false) {}
-			else if (to == type_u8) {}
-			else if (to == type_u16) {}
-			else if (to == type_u32) {}
-			else if (to == type_u64) { I(movsx84_rm, r0, rs); I(mov8_mr, rs, r0); }
-			else if (to == type_s8) {}
-			else if (to == type_s16) {}
-			else if (to == type_s32) {}
-			else if (to == type_s64) { I(movsx84_rm, r0, rs); I(mov8_mr, rs, r0); }
-			else if (to == type_f32) { I(cvt_s32_f32); }
-			else invalid_code_path();
+			if (false) { return {}; }
+			else if (to == type_u8) { return {}; }
+			else if (to == type_u16) { return {}; }
+			else if (to == type_u32) { return {}; }
+			else if (to == type_u64) { I(movsx84_rm, r0, rs); I(mov8_mr, rs, r0); return {}; }
+			else if (to == type_s8) { return {}; }
+			else if (to == type_s16) { return {}; }
+			else if (to == type_s32) { return {}; }
+			else if (to == type_s64) { I(movsx84_rm, r0, rs); I(mov8_mr, rs, r0); return {}; }
+			else if (to == type_f32) { I(cvt_s32_f32); return {}; }
 		} else if (from == type_s64) {
-			if (false) {}
-			else if (to == type_u8) {}
-			else if (to == type_u16) {}
-			else if (to == type_u32) {}
-			else if (to == type_u64) {}
-			else if (to == type_s8) {}
-			else if (to == type_s16) {}
-			else if (to == type_s32) {}
-			else if (to == type_s64) {}
-			else if (to == type_f64) { I(cvt_s64_f64); }
-			else invalid_code_path();
+			if (false) { return {}; }
+			else if (to == type_u8) { return {}; }
+			else if (to == type_u16) { return {}; }
+			else if (to == type_u32) { return {}; }
+			else if (to == type_u64) { return {}; }
+			else if (to == type_s8) { return {}; }
+			else if (to == type_s16) { return {}; }
+			else if (to == type_s32) { return {}; }
+			else if (to == type_s64) { return {}; }
+			else if (to == type_f64) { I(cvt_s64_f64); return {}; }
 		} else if (from == type_f64) {
-			if (false) {}
-			else if (to == type_s64) { I(cvt_f64_s64); }
-			else invalid_code_path();
+			if (false) { return {}; }
+			else if (to == type_s64) { I(cvt_f64_s64); return {}; }
 		}
-		else invalid_code_path();
+
+		if (to == type_bool && as_option(from)) {
+			I(mov1_rm, r0, rs);
+			I(add_rc, rs, get_size(from));
+			I(push_r, r0);
+			return {};
+		}
+
+		{
+			auto option = as_option(to);
+			if (option) {
+				assert(types_match(option->expression, from));
+				//     string as ?string
+				//      count    count
+				// rs -> data    data
+				//               has_value <- rs
+
+				I(sub_rc, rs, get_align(from));
+				I(mov1_mc, rs, 1);
+				return {};
+			}
+		}
+
+		invalid_code_path();
 		return {};
 	} else {
 		switch (bin->operation) {
@@ -2230,8 +2242,8 @@ static ValueRegisters append(Converter &conv, AstIdentifier *identifier) {
 static ValueRegisters append(Converter &conv, AstCall *call) {
 	push_comment(conv, format(u8"call '{}'", call->callable->location));
 
-	assert(call->callable->type->kind == Ast_lambda);
-	auto lambda = (AstLambda *)call->callable->type;
+	auto lambda = get_lambda(call->callable->type);
+	assert(lambda);
 
 	if (lambda->is_intrinsic) {
 		auto name = lambda->definition->name;
@@ -2251,14 +2263,13 @@ static ValueRegisters append(Converter &conv, AstCall *call) {
 	auto &arguments = call->arguments;
 	bool lambda_is_constant = is_constant(call->callable);
 
-	assert(lambda_is_constant);
-
 	auto start_stack_size = conv.ls->stack_state.cursor;
 	defer {
 		// ensure we have the right amount of data on the stack
 		auto expected_size = ceil(get_size(lambda->return_parameter->type), 8ll);
 		auto actual_size = (conv.ls->stack_state.cursor - start_stack_size) * 8;
 		assert(expected_size == actual_size);
+		auto x = call->kind; // call is not visible in debug
 	};
 
 	switch (lambda->convention) {
@@ -2298,21 +2309,24 @@ static ValueRegisters append(Converter &conv, AstCall *call) {
 				append_to_stack(conv, argument.expression);
 			}
 
+			assert(lambda_is_constant);
 			if (lambda_is_constant) {
 				I(call_c, lambda->location_in_bytecode, lambda);
 				I(add_rc, rs, arguments_size_on_stack);
-				if (stack_was_realigned) {
-					append_memory_copy_a(conv, rs+8, rs, return_parameters_size_on_stack, true, u8"16 aligned stack"s, u8"16 unaligned stack"s);
-					I(add_rc, rs, 8);
-				}
 			} else {
-				invalid_code_path("not implemented");
 				append_to_stack(conv, call->callable);
+				I(call_m, rs);
+				I(add_rc, rs, arguments_size_on_stack + context.stack_word_size);
+			}
+			if (stack_was_realigned) {
+				append_memory_copy_a(conv, rs+8, rs, return_parameters_size_on_stack, true, u8"16 aligned stack"s, u8"16 unaligned stack"s);
+				I(add_rc, rs, 8);
 			}
 
 			break;
 		}
 		case CallingConvention::stdcall: {
+
 			using namespace x86_64;
 
 			s64 const shadow_space_size = 32;
@@ -2394,8 +2408,14 @@ static ValueRegisters append(Converter &conv, AstCall *call) {
 			I(sub_rc, rs, 32);
 
 			auto function_address_register = to_bc_register(Register64::rax);
-			load_address_of(function_address_register, conv, call->callable);
-			I(call_r, function_address_register);
+			if (lambda_is_constant) {
+				load_address_of(function_address_register, conv, call->callable);
+				I(call_r, function_address_register);
+			} else {
+				append_to_stack(conv, call->callable);
+				I(pop_r, function_address_register);
+				I(call_r, function_address_register);
+			}
 
 			push_comment(conv, u8"remove shadow space"s);
 			I(add_rc, rs, 32);
@@ -2677,6 +2697,15 @@ static ValueRegisters append(Converter &conv, AstUnaryOperator *unop) {
 			}
 			return registers;
 		}
+		case unwrap: {
+			append_to_stack(conv, unop->expression);
+			I(mov1_rm, r0, rs);
+			I(jnz_cr, 2, r0);
+			I(debug_break);
+			I(jmp_label);
+			I(add_rc, rs, get_align(unop->type));
+			return {};
+		}
 	}
 	invalid_code_path();
 }
@@ -2745,6 +2774,11 @@ static ValueRegisters append(Converter &conv, AstSubscript *subscript) {
 	return {};
 }
 static ValueRegisters append(Converter &conv, AstLambda *lambda, bool push_address) {
+	if (lambda->is_poly) {
+		assert(!push_address);
+		return {};
+	}
+
 	lambda->return_parameter->bytecode_offset = 0;
 
 	s64 parameter_size_accumulator = 0;
@@ -2776,9 +2810,7 @@ static ValueRegisters append(Converter &conv, AstLambda *lambda, bool push_addre
 			ls.free();
 		};
 
-		auto old_lambda = conv.lambda;
-		conv.lambda = lambda;
-		defer { conv.lambda = old_lambda; };
+		scoped_replace(conv.lambda, lambda);
 
 		lambda->first_instruction = &conv.ls->body_builder.add(MI(jmp_label));
 

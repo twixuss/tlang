@@ -41,6 +41,7 @@ void tlang_assertion_failed(char const *cause, char const *file, int line, char 
 #include <tl/ram.h>
 #include <tl/pool32.h>
 #include <tl/debug.h>
+#include <tl/fly_string.h>
 using namespace tl;
 
 #define REDECLARE_VAL(name, expr) auto _##name = expr; auto name = _##name;
@@ -61,6 +62,13 @@ using Ptr32 = typename Pool32<T>::template Ptr<T>;
 
 using String = Span<utf8, u32>;
 using HeapString = List<utf8, MyAllocator, u32>;
+
+// this string is used as key into hashmap
+#if 0                        // parse time | type time | total
+using KeyString = FlyString; // 8.3          3.5         11.8
+#else
+using KeyString = String;    // 6.4          5.9         12.3
+#endif
 
 // std::unordered_map is just a bit (10-15%) slower than tl::HashMap
 #if 1
