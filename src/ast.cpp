@@ -174,11 +174,11 @@ void append_type(StringBuilder &builder, AstExpression *type, bool silent_error)
 				}
 				append_type(builder, parameter->type, silent_error);
 			}
-			if (lambda->is_poly && !lambda->return_parameter) {
-				append(builder, ")");
-			} else {
-				append(builder, ") -> ");
+			if (lambda->return_parameter) {
+				append(builder, "): ");
 				append_type(builder, lambda->return_parameter->type, silent_error);
+			} else {
+				append(builder, ")");
 			}
 			break;
 		}
@@ -373,12 +373,8 @@ AstExpression *direct(AstExpression *type) {
 			auto binop = (AstBinaryOperator *)type;
 			return direct(binop->right);
 		}
-		case Ast_unary_operator:
-		case Ast_subscript:
-		case Ast_struct:
-		case Ast_lambda:
+		default:
 			break;
-		default: invalid_code_path();
 	}
 
 	return type;

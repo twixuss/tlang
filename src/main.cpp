@@ -1016,9 +1016,6 @@ AstLambda *parse_lambda(Parser *parser, bool is_parsing_type) {
 		if (!parser->next_not_end())
 			return 0;
 
-		//
-		// Parse first identifier manually to reduce parser resets
-		//
 		auto first_retparam_token = parser->token;
 		if (parser->token->kind == Token_identifier) {
 			auto ident = parser->token->string;
@@ -1042,6 +1039,7 @@ AstLambda *parse_lambda(Parser *parser, bool is_parsing_type) {
 			if (!return_type)
 				return 0;
 			lambda->return_parameter = make_retparam(return_type, lambda);
+			lambda->return_parameter->location = return_type->location;
 		}
 	}
 
@@ -2473,19 +2471,21 @@ void parse_statement(Parser *parser, AstStatement *&result) {
 				result = test;
 				return;
 			} else if (parser->token->string == "#assert"str) {
+				auto assert = AstAssert::create();
+				assert->location = parser->token->string;
+				assert->is_constant = true;
+
 				if (!parser->next_not_end())
 					return;
 
-				auto expression = parse_expression(parser);
-				if (!expression) {
+				assert->condition = parse_expression(parser);
+				if (!assert->condition) {
 					return;
 				}
 				if (!parser->expect(';'))
 					return;
 				parser->next();
 
-				auto assert = AstAssert::create();
-				assert->condition = expression;
 				result = assert;
 				return;
 			} else if (parser->token->string == "#print"str) {
@@ -2627,6 +2627,26 @@ void parse_statement(Parser *parser, AstStatement *&result) {
 			}
 
 			break;
+		}
+		case Token_assert: {
+			auto assert = AstAssert::create();
+			assert->location = parser->token->string;
+			assert->is_constant = false;
+			if (!parser->next_not_end()) {
+				return;
+			}
+
+			assert->condition = parse_expression(parser);
+			if (!assert->condition)
+				return;
+
+			if (!parser->expect(';'))
+				return;
+
+			parser->next();
+
+			result = assert;
+			return;
 		}
 		case '{': {
 			auto block = AstBlock::create();
@@ -4197,19 +4217,21 @@ void typecheck(TypecheckState *state, AstStatement *statement) {
 			auto assert = (AstAssert *)statement;
 			typecheck(state, assert->condition);
 
-			auto result = evaluate(state, assert->condition);
-			if (!result) {
-				yield(TypecheckResult::fail);
-			}
+			if (assert->is_constant) {
+				auto result = evaluate(state, assert->condition);
+				if (!result) {
+					yield(TypecheckResult::fail);
+				}
 
-			if (result->literal_kind != LiteralKind::boolean) {
-				state->reporter.error(assert->condition->location, "Expression must have bool type");
-				yield(TypecheckResult::fail);
-			}
+				if (result->literal_kind != LiteralKind::boolean) {
+					state->reporter.error(assert->condition->location, "Expression must have bool type");
+					yield(TypecheckResult::fail);
+				}
 
-			if (result->Bool == false) {
-				state->reporter.error(assert->condition->location, "Assertion failed");
-				yield(TypecheckResult::fail);
+				if (result->Bool == false) {
+					state->reporter.error(assert->condition->location, "Assertion failed");
+					yield(TypecheckResult::fail);
+				}
 			}
 
 			break;
@@ -4421,6 +4443,9 @@ AstExpression *typecheck(TypecheckState *state, AstCall *call) {
 	if (call->callable->kind == Ast_identifier) {
 		identifier = (AstIdentifier *)call->callable;
 	}
+
+//	if (call->callable->location == "new")
+//		debug_break();
 
 	if (identifier) {
 	resolve_ident:
@@ -4653,11 +4678,17 @@ AstExpression *typecheck(TypecheckState *state, AstCall *call) {
 						}
 					}
 
-					deep_copy(&hardened_lambda->body_scope, &lambda->body_scope);
-
 					scoped_replace(state->current_lambda_or_struct, hardened_lambda);
 					scoped_replace(state->current_lambda, hardened_lambda);
+					scoped_replace(state->current_scope, &hardened_lambda->parameter_scope);
 
+					if (lambda->return_parameter) {
+						hardened_lambda->return_parameter = deep_copy(lambda->return_parameter);
+						add_to_scope(hardened_lambda->return_parameter, &hardened_lambda->parameter_scope);
+						typecheck(state, hardened_lambda->return_parameter);
+					}
+
+					deep_copy(&hardened_lambda->body_scope, &lambda->body_scope);
 					typecheck_body(state, hardened_lambda);
 
 					calculate_parameters_size(hardened_lambda);

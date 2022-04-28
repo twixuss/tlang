@@ -642,6 +642,7 @@ struct AstAssert : AstStatement, StatementPool<AstAssert> {
 		kind = Ast_assert;
 	}
 	Expression<> condition = {};
+	bool is_constant : 1 = false;
 };
 
 struct AstPrint : AstStatement, StatementPool<AstPrint> {

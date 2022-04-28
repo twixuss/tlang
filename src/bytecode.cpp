@@ -184,6 +184,8 @@ struct Converter {
 	List<InstructionThatReferencesLambda> instructions_that_reference_lambdas;
 
 	String comment;
+
+	bool dont_care_about_definition_spacing;
 };
 
 Optional<Register> allocate_register(Converter &conv) {
@@ -293,6 +295,10 @@ Instruction *add_instruction(Converter &conv, Instruction next) {
 			stack_state.push(register_state[next.s]);
 			break;
 		}
+		case push_f: {
+			stack_state.push_unknown();
+			break;
+		}
 		case push_m: {
 			REDECLARE_REF(next, next.push_m);
 #if OPTIMIZE_BYTECODE
@@ -381,8 +387,13 @@ Instruction *add_instruction(Converter &conv, Instruction next) {
 #endif
 			break;
 		}
+		case pop_f: {
+			stack_state.pop();
+			break;
+		}
 		case pop_m: {
 			stack_state.pop();
+			break;
 		}
 		case add_rc: {
 			REDECLARE_REF(next, next.add_rc);
@@ -866,6 +877,7 @@ static void append(Converter &, AstIf *);
 static void append(Converter &, AstExpressionStatement *);
 static void append(Converter &, AstWhile *);
 static void append(Converter &, AstBlock *);
+static void append(Converter &, AstAssert *);
 
 static void append(Converter &conv, AstStatement *statement) {
 	switch (statement->kind) {
@@ -882,7 +894,7 @@ static void append(Converter &conv, AstStatement *statement) {
 			Defer->scope.parent->bytecode_defers.add(Defer);
 			return;
 		}
-		case Ast_assert:
+		case Ast_assert: return append(conv, (AstAssert *)statement);
 		case Ast_print:
 		case Ast_import:
 		case Ast_parse:
@@ -1515,13 +1527,20 @@ static void append(Converter &conv, AstDefinition *definition) {
 				if (definition->expression->type == type_noinit) {
 					I(sub_rc, rs, size);
 				} else {
-					auto expression_registers = append(conv, definition->expression);
-					if (expression_registers.count) {
-						for (auto r : reverse(expression_registers)) {
-							I(push_r, r);
-							free_register(conv, r);
-						}
-					}
+					conv.dont_care_about_definition_spacing = true;
+					defer { conv.dont_care_about_definition_spacing = false; };
+
+					auto cursor_before = conv.ls->stack_state.cursor;
+					append_to_stack(conv, definition->expression);
+					auto cursor_after = conv.ls->stack_state.cursor;
+
+					auto size_with_spacing = (cursor_after - cursor_before) * context.stack_word_size;
+					auto size_diff = size_with_spacing - ceil(size, context.stack_word_size);
+
+					// account for spacing
+					assert(size_diff == 0 || size_diff == 8);
+					definition->bytecode_offset += size_diff;
+					parent_lambda->offset_accumulator += size_diff;
 				}
 			} else {
 				push_zeros(conv, size);
@@ -1760,6 +1779,16 @@ static void append(Converter &conv, AstExpressionStatement *es) {
 
 	invalid_code_path();
 }
+static void append(Converter &conv, AstAssert *Assert) {
+	push_comment(conv, format(u8"assert {}", Assert->location));
+
+	append_to_stack(conv, Assert->condition);
+	I(pop_r, r0);
+	I(jnz_cr, 2, r0);
+	I(debug_break);
+	I(jmp_label);
+}
+
 static ValueRegisters append(Converter &conv, AstBinaryOperator *bin) {
 	push_comment(conv, format(u8"binary {}"s, bin->location));
 
@@ -2330,6 +2359,9 @@ static ValueRegisters append(Converter &conv, AstIdentifier *identifier) {
 	invalid_code_path();
 }
 static ValueRegisters append(Converter &conv, AstCall *call) {
+	auto dont_care_about_definition_spacing = conv.dont_care_about_definition_spacing;
+	conv.dont_care_about_definition_spacing = false;
+
 	push_comment(conv, format(u8"call {}", call->callable->location));
 
 	auto lambda = get_lambda(call->callable->type);
@@ -2373,11 +2405,11 @@ static ValueRegisters append(Converter &conv, AstCall *call) {
 	bool lambda_is_constant = is_constant(call->callable);
 
 	auto start_stack_size = conv.ls->stack_state.cursor;
+	auto expected_result_size = ceil(get_size(lambda->return_parameter->type), 8ll);
 	defer {
 		// ensure we have the right amount of data on the stack
-		auto expected_size = ceil(get_size(lambda->return_parameter->type), 8ll);
 		auto actual_size = (conv.ls->stack_state.cursor - start_stack_size) * 8;
-		assert(expected_size == actual_size);
+		assert(expected_result_size == actual_size);
 		auto x = call->kind; // call is not visible in debug
 	};
 
@@ -2421,10 +2453,18 @@ static ValueRegisters append(Converter &conv, AstCall *call) {
 				I(call_r, rax);
 			}
 			I(add_rc, rs, arguments_size_on_stack);
-			if (stack_was_realigned) {
-				// TODO: FIXME: this is not necessary. there is no important reason to do this.
-				append_memory_copy_a(conv, rs+8, rs, return_parameters_size_on_stack, true, u8"16 aligned stack"s, u8"16 unaligned stack"s);
-				I(add_rc, rs, 8);
+
+
+			// Allow local definitions to be spaced out by word size to avoid unnecessary copying.
+			if (dont_care_about_definition_spacing) {
+				if (stack_was_realigned) {
+					expected_result_size += 8;
+				}
+			} else {
+				if (stack_was_realigned) {
+					append_memory_copy_a(conv, rs+8, rs, return_parameters_size_on_stack, true, u8"16 aligned stack"s, u8"16 unaligned stack"s);
+					I(add_rc, rs, 8);
+				}
 			}
 
 			break;

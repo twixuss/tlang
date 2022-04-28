@@ -13,6 +13,6 @@ init_allocator :: fn () {
     };
 }
 
-new :: fn (T: %type): *void {
-    return default_allocator.func(#sizeof T, null);
+new :: fn (T: %type): *T {
+    return @ default_allocator.func(#sizeof T, null);
 }

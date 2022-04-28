@@ -1,7 +1,7 @@
 import "std.tl"
 import "allocator.tl"
 
-STRING_BUILDER_INITIAL_BUFFER_CAPACITY :: 4096;//0x4000;
+STRING_BUILDER_INITIAL_BUFFER_CAPACITY :: 0x4000;
 
 StringBuilder :: struct {
 	Block :: struct {
@@ -16,17 +16,14 @@ StringBuilder :: struct {
 	last: *Block;
 	alloc_last: *Block;
     count: uint;
+    create :: fn (): result: StringBuilder {
+        // result.allocator = current_allocator;
+        result.first.capacity = STRING_BUILDER_INITIAL_BUFFER_CAPACITY;
+        result.last = &result.first;
+        result.alloc_last = &result.first;
+    }
 }
 
-// FIXME: StringBuilder has pointers to itself. meaning that it is not copyable.
-// Right now we can't return it, we can only pass it as pointer parameter.
-// A copy happens when returning in some cases because of stack alignment
-init :: fn (result: *StringBuilder) {
-    // result.allocator = current_allocator;
-    result.first.capacity = STRING_BUILDER_INITIAL_BUFFER_CAPACITY;
-    result.last = &result.first;
-    result.alloc_last = &result.first;
-}
 begin :: fn (block: *StringBuilder.Block): *u8 => @&block[1];
 end   :: fn (block: *StringBuilder.Block): *u8 => begin(block) + block.count;
 available_space :: fn (block: *StringBuilder.Block): uint => block.capacity - block.count;
