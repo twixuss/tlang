@@ -15,7 +15,7 @@ E(null,     0x200000a) \
 E(as,       0x200000b) \
 E(then,     0x200000c) \
 E(simd,     0x200000d) \
-E(autocast, 0x200000e) \
+/*E(unused, 0x200000e)*/ \
 E(defer,    0x200000f) \
 E(union,    0x2000010) \
 E(operator, 0x2000011) \

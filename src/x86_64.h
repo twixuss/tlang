@@ -271,6 +271,7 @@ umm append_cformat(StringBuilder &b, Arg const &arg, Args const &...args) {
 
 inline void append_instruction(StringBuilder &builder, s64 idx, Instruction i) {
 	using enum Register64;
+
 	switch (i.kind) {
 		using enum InstructionKind;
 		case mov_rr: append_cformat(builder, "mov {},{}", i.mov_rr.d, i.mov_rr.s); break;
@@ -432,11 +433,13 @@ inline void append_instruction(StringBuilder &builder, s64 idx, Instruction i) {
 		case jnz_cr: { auto reg = part1b(i.jnz_cr.reg); append_cformat(builder, "test {}, {}\njnz .{}", reg, reg, instruction_address(idx + i.jnz_cr.offset)); break; }
 
 			// Here move into rcx must be last, because it can be source for rdi or rsi
-		case copyf_mmc: append_cformat(builder, "mov rsi, {}\nmov rdi, {}\nmov rcx, {}\ncld\nrep movsb", i.copyf_mmc.s, i.copyf_mmc.d, i.copyf_mmc.size); break;
-		case copyb_mmc: append_cformat(builder, "lea rsi, [{} + {}]\nlea rdi, [{} + {}]\nmov rcx, {}\nstd\nrep movsb", i.copyb_mmc.s, i.copyb_mmc.size - 1, i.copyb_mmc.d, i.copyb_mmc.size - 1, i.copyb_mmc.size); break;
-		case copyf_ssc: append_cformat(builder, "pop rsi\npop rdi\nmov rcx, {}\ncld\nrep movsb", i.copyf_ssc.size); break;
-		case copyb_ssc: append_cformat(builder, "pop rsi\npop rdi\nadd rsi, {}\nadd rdi, {}\nmov rcx, {}\nstd\nrep movsb", i.copyb_ssc.size - 1, i.copyb_ssc.size - 1, i.copyb_ssc.size); break;
-		case set_mcc: append_cformat(builder, "mov rdi, {}\nmov al, {}\nmov rcx, {}\ncld\nrep stosb", i.set_mcc.d, i.set_mcc.s, i.set_mcc.size); break;
+		case copyf_mmc: append_cformat(builder, "mov rsi, {}\nmov rdi, {}\nmov rcx, {}\nrep movsb", i.copyf_mmc.s, i.copyf_mmc.d, i.copyf_mmc.size); break;
+		case copyb_mmc: append_cformat(builder, "lea rsi, [{} + {}]\nlea rdi, [{} + {}]\nmov rcx, {}\nstd\nrep movsb\ncld", i.copyb_mmc.s, i.copyb_mmc.size - 1, i.copyb_mmc.d, i.copyb_mmc.size - 1, i.copyb_mmc.size); break;
+		case copyf_ssc: append_cformat(builder, "pop rsi\npop rdi\nmov rcx, {}\nrep movsb", i.copyf_ssc.size); break;
+		case copyb_ssc: append_cformat(builder, "pop rsi\npop rdi\nadd rsi, {}\nadd rdi, {}\nmov rcx, {}\nstd\nrep movsb\ncld", i.copyb_ssc.size - 1, i.copyb_ssc.size - 1, i.copyb_ssc.size); break;
+		case copyf_rrr: append_cformat(builder, "mov rsi, {}\nmov rdi, {}\nmov rcx, {}\nrep movsb", i.copyf_rrr.s, i.copyf_rrr.d, i.copyf_rrr.size); break;
+		case setf_mcc: append_cformat(builder, "lea rdi, {}\nmov al, {}\nmov rcx, {}\nrep stosb", i.setf_mcc.d, i.setf_mcc.s, i.setf_mcc.size); break;
+		case setb_mcc: append_cformat(builder, "lea rdi, {}\nmov al, {}\nmov rcx, {}\nadd rdi, {}\nstd\nrep stosb\ncld", i.setb_mcc.d, i.setb_mcc.s, i.setb_mcc.size, i.setb_mcc.size-1); break;
 
 #if 0
 		case begin_lambda: {
@@ -691,6 +694,29 @@ inline void append_instruction(StringBuilder &builder, s64 idx, Instruction i) {
 		case movzx84_rm: append_cformat(builder, "movzx {}, dword {}", part8b(i.movsx84_rm.d), i.movsx84_rm.s); break;
 
 		case push_used_registers:
+			if (i.push_used_registers.mask == -1) {
+				append(builder,
+					//"push rax\n"
+					"push rbx\n"
+					//"push rcx\n"
+					//"push rdx\n"
+					"push rsi\n"
+					"push rdi\n"
+					//"push rsp\n"
+					//"push rbp\n"
+					//"push r8\n"
+					//"push r9\n"
+					"push r10\n"
+					"push r11\n"
+					"push r12\n"
+					"push r13\n"
+					"push r14\n"
+					"push r15\n"
+					"sub rsp, 8\n" // keep alignment
+				);
+				break;
+			}
+
 			for (u64 bit = 0; bit < sizeof(i.push_used_registers.mask) * 8; ++bit) {
 				if ((i.push_used_registers.mask >> bit) & 1) {
 					append_cformat(builder, "push {}\n", (Register)bit);
@@ -702,6 +728,29 @@ inline void append_instruction(StringBuilder &builder, s64 idx, Instruction i) {
 				append_cformat(builder, "sub rsp, 8\n");
 			break;
 		case pop_used_registers:
+			if (i.pop_used_registers.mask == -1) {
+				append(builder,
+					"add rsp, 8\n" // keep alignment
+					"pop r15\n"
+					"pop r14\n"
+					"pop r13\n"
+					"pop r12\n"
+					"pop r11\n"
+					"pop r10\n"
+					//"pop r9\n"
+					//"pop r8\n"
+					//"pop rbp\n"
+					//"pop rsp\n"
+					"pop rdi\n"
+					"pop rsi\n"
+					//"pop rdx\n"
+					//"pop rcx\n"
+					"pop rbx\n"
+					//"pop rax\n"
+				);
+				break;
+			}
+
 			// keep the stack 16-byte aligned
 			if (count_bits(i.push_used_registers.mask) & 1)
 				append_cformat(builder, "add rsp, 8\n");

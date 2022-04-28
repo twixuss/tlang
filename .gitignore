@@ -9,3 +9,4 @@ bin/*
 !bin/fasm/
 !bin/nasm.exe
 !bin/tlang.exe
+devtest/

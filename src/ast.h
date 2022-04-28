@@ -81,6 +81,7 @@ struct AstLambda;
 struct AstStruct;
 struct AstLiteral;
 struct AstDefer;
+struct AstCall;
 
 #pragma pack(push, 1)
 template <class T>
@@ -317,6 +318,7 @@ struct AstDefinition : AstStatement, StatementPool<AstDefinition> {
 	bool is_parameter        : 1 = false;
 	bool built_in            : 1 = false;
 	bool is_return_parameter : 1 = false;
+	bool is_poly             : 1 = false;
 };
 
 // Started with 176
@@ -337,6 +339,8 @@ struct AstIdentifier : AstExpression, ExpressionPool<AstIdentifier> {
 	Statement<AstDefinition> definition;
 
 	DefinitionList possible_definitions;
+
+	bool is_poly : 1 = false;
 
 };
 
@@ -361,9 +365,12 @@ enum class CallingConvention : u8 {
 struct AstLambda : AstExpression, ExpressionPool<AstLambda> {
 	AstLambda() {
 		kind = Ast_lambda;
+		type_scope.node = this;
 		parameter_scope.node = this;
 		body_scope.node = this;
+
 		body_scope.parent = &parameter_scope;
+		parameter_scope.parent = &type_scope;
 	}
 
 	Statement<AstDefinition> definition = {}; // not null if lambda is named
@@ -373,9 +380,10 @@ struct AstLambda : AstExpression, ExpressionPool<AstLambda> {
 
 	Statement<AstReturn> return_statement_type_deduced_from = {};
 
-	// body_scope is a child of parameter_scope to avoid parameter redefinition
+	Scope type_scope;
 	Scope parameter_scope;
 	Scope body_scope;
+	Scope *outer_scope() { return &type_scope; }
 
 	DefinitionList parameters;
 
@@ -387,7 +395,12 @@ struct AstLambda : AstExpression, ExpressionPool<AstLambda> {
 
 	// Map<String, AstDefinition *> local_definitions;
 
-	List<AstLambda *> hardened_polys;
+	struct HardenedPoly {
+		AstLambda *lambda;
+		AstCall *call;
+	};
+
+	List<HardenedPoly> hardened_polys;
 	Expression<AstLambda> original_poly = {};
 
 	bool has_body                   : 1 = true;
@@ -409,7 +422,7 @@ struct AstLambda : AstExpression, ExpressionPool<AstLambda> {
 	// For bytecode generation
 
 	s64 offset_accumulator = 0;
-	s64 parameters_size = 0; // Sum of (parameters' size ceiled to context.stack_word_size)
+	s64 parameters_size = -1; // Sum of (parameters' size ceiled to context.stack_word_size)
 	struct ReturnInfo {
 		Instruction *jmp;
 		s64 index;
@@ -449,10 +462,6 @@ struct AstStruct : AstExpression, ExpressionPool<AstStruct> {
 	}
 
 	Statement<AstDefinition> definition = {};
-
-	// TODO: this is redundant
-	DefinitionList members;
-	DefinitionList constants;
 
 	Scope scope;
 
@@ -544,7 +553,7 @@ enum class UnaryOperation : u8 {
 	dereference, // *
 	pointer,     // *
 	unwrap,      // *
-	autocast,    // autocast
+	autocast,    // @
 	Sizeof,      // #sizeof
 	typeof,      // #typeof
 	option,      // ?
@@ -562,7 +571,7 @@ inline String as_string(UnaryOperation unop) {
 		case pointer:     return "*"str;
 		case dereference: return "*"str;
 		case unwrap:      return "*"str;
-		case autocast:    return "autocast"str;
+		case autocast:    return "@"str;
 		case Sizeof:      return "#sizeof"str;
 		case typeof:      return "#typeof"str;
 		case option:      return "?"str;
@@ -580,8 +589,7 @@ inline Optional<UnaryOperation> as_unary_operation(Token token) {
 		case '&': return address_of;
 		case '*': return pointer_or_dereference_or_unwrap;
 		case '?': return option;
-		case Token_autocast:
-			return autocast;
+		case '@': return autocast;
 		case Token_directive:
 			if (token.string == "#sizeof") return Sizeof;
 			if (token.string == "#typeof") return typeof;
@@ -710,6 +718,7 @@ extern AstStruct *type_default_float;
 extern AstIdentifier *type_int;
 extern AstIdentifier *type_sint;
 extern AstIdentifier *type_uint;
+extern AstIdentifier *type_float;
 
 extern Scope global_scope;
 
@@ -783,6 +792,8 @@ inline Optional<BigInteger> get_constant_integer(AstExpression *expression) {
 	return {};
 }
 
+void append_type(StringBuilder &builder, AstExpression *type, bool silent_error);
+
 // Returns a human readable string.
 // For example for type `int` it will return "int (aka s64)"
 HeapString type_to_string(AstExpression *type, bool silent_error = false);
@@ -807,9 +818,9 @@ inline s64 get_size(AstExpression *type) {
 			using enum UnaryOperation;
 			auto unop = (AstUnaryOperator *)type;
 			switch (unop->operation) {
-				case pointer: return context.stack_word_size;
-				case typeof:  return get_size(unop->expression->type);
-				case option:  return get_size(unop->expression) + get_align(unop->expression);
+				case pointer:  return context.stack_word_size;
+				case typeof:   return get_size(unop->expression->type);
+				case option:   return get_size(unop->expression) + get_align(unop->expression);
 				default: invalid_code_path();
 			}
 		}
@@ -870,6 +881,8 @@ void operator delete(void *, umm size);
 
 bool is_pointer(AstExpression *type);
 bool is_pointer_internally(AstExpression *type);
+
+AstUnaryOperator *as_pointer(AstExpression *type);
 
 AstLiteral *get_literal(AstExpression *expression);
 bool is_constant(AstExpression *expression);

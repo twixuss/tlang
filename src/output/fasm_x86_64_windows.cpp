@@ -16,6 +16,7 @@ static void append_instructions(CompilerContext &context, StringBuilder &builder
 		"and rsp, -16\n"
 		"push 0\n"
 		"push 0\n"
+		"cld\n"
 		"call .{}\n"
 		"mov rcx, [rsp]\n"
 		"call [ExitProcess]\n"
@@ -34,7 +35,7 @@ static void append_instructions(CompilerContext &context, StringBuilder &builder
 		}
 #if BYTECODE_DEBUG
 		append_format(builder, "; bytecode.cpp:{}\n", i.line);
-		if (i.comment) {
+		if (i.comment.data) {
 			append_format(builder, "; {}\n", i.comment);
 		}
 #else

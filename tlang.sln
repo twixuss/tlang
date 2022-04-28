@@ -16,9 +16,9 @@ EndProject
 Project("{911E67C6-3D85-4FCE-B560-20A9C3E3FF48}") = "a", "bin\a.exe", "{72B146B8-867E-42A2-83C6-150271C80750}"
 	ProjectSection(DebuggerProjectSystem) = preProject
 		PortSupplier = 00000000-0000-0000-0000-000000000000
-		Executable = F:\tlang\bin\a.exe
+		Executable = F:\tlang\devtest\a.exe
 		RemoteMachine = DESKTOP-2HA4U8E
-		StartingDirectory = F:\tlang\bin
+		StartingDirectory = F:\tlang\devtest
 		Environment = По умолчанию
 		LaunchingEngine = 00000000-0000-0000-0000-000000000000
 		UseLegacyDebugEngines = No

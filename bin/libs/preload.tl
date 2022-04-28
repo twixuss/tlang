@@ -1,24 +1,2 @@
-float :: f64;
-
-/*
-
-allocator :: struct {
-    func:  #type fn (size: umm, state: *void) -> *void;
-    state: *void;
-}
-
-default_allocator: allocator;
-
-__init_allocator :: fn () {
-    default_allocator.func = fn (size: umm, state: *void) -> *void {
-        return null;
-    };
-}
-
-allocate :: fn (size: umm) -> *void {
-    return default_allocator.func(size, null);
-}
-
-*/
-
 debug_break :: fn #intrinsic ();
+memcpy :: fn #intrinsic (dst: *void, src: *void, size: uint): void;

@@ -22,10 +22,17 @@ inline bool operator==(std::source_location a, std::source_location b) {
 
 void tlang_assertion_failed(char const *cause, char const *file, int line, char const *expression, char const *function);
 
+template <class ...T>
+inline void print(T ...args) {
+	::tl::print(args...);
+}
+inline void print() {
+}
+
 #include <tl/console.h>
 #undef ASSERTION_FAILURE
 #if TL_DEBUG
-#define ASSERTION_FAILURE(cause_string, expression, ...) (::tl::print(Print_error, "Assertion failed: "), ::tl::print("{}\n{}:{}: {} at {}\n", expression, __FILE__, __LINE__, cause_string, __FUNCSIG__), debug_break())
+#define ASSERTION_FAILURE(cause_string, expression, ...) (::tl::print(Print_error, "Assertion failed: "), ::tl::print("{}\nMessage: ", expression), ::print(__VA_ARGS__), ::tl::print("\n{}:{}: {} at {}\n", __FILE__, __LINE__, cause_string, __FUNCSIG__), debug_break())
 #else
 #define ASSERTION_FAILURE(cause_string, expression, ...) tlang_assertion_failed(cause_string, __FILE__, __LINE__, expression, __FUNCSIG__)
 #endif

@@ -184,7 +184,8 @@ static void append_instructions(CompilerContext &context, StringBuilder &builder
 				break;
 			case copyf_ssc: append_format(builder, "pop rsi\npop rdi\nmov rcx, {}\ncld\nrep movsb", i.copyf_ssc.size); break;
 			case copyb_ssc: append_format(builder, "pop rsi\npop rdi\nadd rsi, {}\nadd rdi, {}\nmov rcx, {}\nstd\nrep movsb", i.copyb_ssc.size - 1, i.copyb_ssc.size - 1, i.copyb_ssc.size); break;
-			case set_mcc: append_format(builder, "mov rdi, {}\nmov al, {}\nmov rcx, {}\ncld\nrep stosb", i.set_mcc.d, i.set_mcc.s, i.set_mcc.size); break;
+			case setf_mcc: append_format(builder, "mov rdi, {}\nmov al, {}\nmov rcx, {}\ncld\nrep stosb", i.setf_mcc.d, i.setf_mcc.s, i.setf_mcc.size); break;
+			case setb_mcc: append_format(builder, "mov rdi, {}\nmov al, {}\nmov rcx, {}\nadd rdi, {}\nstd\nrep stosb", i.setb_mcc.d, i.setb_mcc.s, i.setb_mcc.size, i.setb_mcc.size-1); break;
 
 			case call_c: {
 				append_format(builder, "call .{}", instruction_address(i.call_c.constant));
@@ -257,7 +258,7 @@ static void append_instructions(CompilerContext &context, StringBuilder &builder
 		}
 #if BYTECODE_DEBUG
 		append_format(builder, "; bytecode.cpp:{}\n", i.line);
-		if (i.comment) {
+		if (i.comment.data) {
 			append_format(builder, "; {}\n", i.comment);
 		}
 #else

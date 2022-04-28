@@ -238,8 +238,11 @@ enum class InstructionKind : u8 {
 	copyb_mmc,
 	copyf_ssc,
 	copyb_ssc,
+	copyf_rrr,
+	copyb_rrr,
 
-	set_mcc,
+	setf_mcc,
+	setb_mcc,
 
 	begin_lambda,
 	end_lambda,
@@ -285,6 +288,8 @@ enum class InstructionKind : u8 {
 
 	push_used_registers,
 	pop_used_registers,
+
+	prepare_stack,
 
 	count,
 };
@@ -434,9 +439,9 @@ struct Instruction {
 		struct { Register d, a, b; Comparison c; } cmps8;
 
 		// Call instructions. Equivalent to x86 call instruction - pushes rip and jumps to the destination and nothing else
-		struct { s64 constant; AstLambda *lambda; } call_c;
-		struct { Register   s; AstLambda *lambda; } call_r;
-		struct { Address    s; AstLambda *lambda; } call_m;
+		struct { s64 constant; } call_c;
+		struct { Register   s; } call_r;
+		struct { Address    s; } call_m;
 
 		struct { s64 offset; } jmp;
 		struct { s64 offset; Register reg; } jz_cr;
@@ -446,8 +451,11 @@ struct Instruction {
 		struct { Register d, s; s64 size; } copyb_mmc;
 		struct { s64 size; } copyf_ssc;
 		struct { s64 size; } copyb_ssc;
+		struct { Register d, s, size; } copyf_rrr;
+		struct { Register d, s, size; } copyb_rrr;
 
-		struct { Register d; s32 s, size; } set_mcc;
+		struct { Address d; s32 s, size; } setf_mcc;
+		struct { Address d; s32 s, size; } setb_mcc;
 
 		struct { AstLambda *lambda; CallingConvention convention; } begin_lambda;
 		struct { AstLambda *lambda; CallingConvention convention; } end_lambda;
@@ -491,11 +499,13 @@ struct Instruction {
 		struct { u64 mask; } push_used_registers;
 		struct { u64 mask; } pop_used_registers;
 
+		struct { s64 byte_count; } prepare_stack;
+
 		struct {} debug_break;
 	};
 	InstructionKind kind;
 #if BYTECODE_DEBUG
-	utf8 *comment;
+	String comment;
 	u64 line;
 #endif
 };

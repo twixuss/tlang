@@ -132,7 +132,14 @@ test :: fn (): named_return_value: int {
   named_return_value = 42; // this is the same as return 42;
 }
 ```
-Named return parameters are useful when you need to do something with the value right before returning from the function:
+They can be used when creating objects:
+```rs
+create :: fn (): result: StringBuilder {
+  result.last = &result.first;
+  result.alloc_last = &result.first;
+}
+```
+Also named return parameters can be useful when you need to do something with the value right before returning from the function:
 ```rs
 process :: (data: Data): result: ProcessedData  {
   defer do_something(result);

@@ -34,4 +34,7 @@
         <DisplayString Condition="type==&amp;type_type&amp;&amp;kind==Ast_struct">x</DisplayString>
 -->
     </Type>
+    <Type Name="Instruction">
+        <DisplayString>{kind}</DisplayString>
+    </Type>
 </AutoVisualizer>

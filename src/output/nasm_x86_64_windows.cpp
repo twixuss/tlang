@@ -114,6 +114,7 @@ static void append_instructions(CompilerContext &context, StringBuilder &builder
 		"and rsp, -16\n"
 		"push 0\n"
 		"push 0\n"
+		"cld\n"
 		"call .{}\n"
 		"mov rcx, [rsp]\n"
 		"call ExitProcess\n"
@@ -121,23 +122,67 @@ static void append_instructions(CompilerContext &context, StringBuilder &builder
 		instruction_address(context.main_lambda->location_in_bytecode)
 	);
 
+	// prepare stack routine.
+	// touches every 4096th byte to mark the pages.
+	// expects size in rax
+	// in debug mode fills the memory with known value
+	if (/*debug*/ true) {
+		append(builder,
+			"._ps:"
+			"push rcx\n"
+			"push rdi\n"
+			"lea rdi, [rsp-1]\n"
+			"mov rcx, rax\n"
+			"std\n"
+			"rep stosb\n"
+			"pop rdi\n"
+			"pop rcx\n"
+			"ret\n"
+		);
+	} else {
+		append(builder,
+			"._ps:"
+			"push rbx\n"
+			"mov rbx, rsp\n"
+			"sub rbx, rax\n"
+			"lea rax, [rsp-1]\n"
+			"._psl:\n"
+			"mov byte [rax], 0\n"
+			"sub rax, 4096\n"
+			"cmp rax, rbx\n"
+			"jg ._psl\n"
+			"pop rbx\n"
+			"ret\n"
+		);
+	}
+
 	s64 idx = 0;
 	for (auto i : instructions) {
+#if BYTECODE_DEBUG
+		append_format(builder, "; #{} @ bytecode.cpp:{}\n", idx, i.line);
+		if (i.comment.data) {
+			split(i.comment, u8'\n', [&](auto part) {
+				append_format(builder, "; {}\n", part);
+			});
+		}
+#endif
+
 		if (i.kind == InstructionKind::jmp_label)
 			append_format(builder, ".{}: ", instruction_address(idx));
 		switch (i.kind) {
 			using enum InstructionKind;
 			case mov_re: append_format(builder, "mov {}, {}", i.mov_re.d, i.mov_re.s); break;
+			case prepare_stack:
+				append_format(builder, "mov rax, {}\ncall ._ps", i.prepare_stack.byte_count);
+
+				// HACK: bytecode does not change instructions that point to code after inserting `unguard_stack` instruction.
+				// This accounts for adding `jmp_label` and `unguard_stack` instructions.
+				// idx -= 2;
+
+				break;
 			default: append_instruction(builder, idx, i); break;
 		}
-#if BYTECODE_DEBUG
-		append_format(builder, "; bytecode.cpp:{}\n", i.line);
-		if (i.comment) {
-			append_format(builder, "; {}\n", i.comment);
-		}
-#else
 		append(builder, '\n');
-#endif
 		++idx;
 	}
 }
@@ -205,7 +250,7 @@ DECLARE_OUTPUT_BUILDER {
 
 		append_format(bat_builder, u8R"(@echo off
 {}\nasm -f win64 -gcv8 "{}.asm" -o "{}.obj" -w-number-overflow -w-db-empty
-	)", context.compiler_directory, output_path_base, output_path_base);
+)", context.compiler_directory, output_path_base, output_path_base);
 
 		append(bat_builder, "if %errorlevel% neq 0 exit /b %errorlevel%\n");
 		append_format(bat_builder,

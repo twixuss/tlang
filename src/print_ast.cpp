@@ -24,6 +24,7 @@ void print_ast(AstReturn *node);
 void print_ast(AstCall *node);
 void print_ast(AstStruct *node);
 void print_ast(AstIf *node);
+void print_ast(AstIfx *node);
 void print_ast(AstWhile *node);
 void print_ast(AstExpressionStatement *node);
 void print_ast(AstUnaryOperator *node);
@@ -42,6 +43,7 @@ void print_ast(AstNode *node) {
 		case Ast_return:     return print_ast((AstReturn     *)node);
 		case Ast_call:       return print_ast((AstCall       *)node);
 		case Ast_if:         return print_ast((AstIf         *)node);
+		case Ast_ifx:        return print_ast((AstIfx        *)node);
 		case Ast_while:      return print_ast((AstWhile      *)node);
 		case Ast_expression_statement: return print_ast((AstExpressionStatement *)node);
 		case Ast_binary_operator: return print_ast((AstBinaryOperator *)node);
@@ -71,7 +73,7 @@ void print_ast(AstDefinition *node) {
 void print_ast(AstLambda *node) {
 	if (node->is_poly) {
 		for (auto hardened : node->hardened_polys) {
-			print_ast(hardened);
+			print_ast(hardened.lambda);
 		}
 	} else {
 		print_info("lambda - return_type: {}, uid: {}\n", node->return_parameter ? type_to_string(node->return_parameter->type, true) : "(not defined)"str, node->uid());
@@ -174,9 +176,9 @@ void print_ast(AstStruct *node) {
 	else
 		print_info("struct - unnamed, uid: {}\n", node->uid());
 	tab_count += 1;
-	for (auto member : node->members) {
-		print_ast(member);
-	}
+	for_each(node->scope.definitions, [&](auto, auto member) {
+		print_ast(member[0]);
+	});
 	tab_count -= 1;
 }
 void print_ast(AstIf *node) {
@@ -197,6 +199,23 @@ void print_ast(AstIf *node) {
 	for (auto statement : node->false_scope.statements) {
 		print_ast(statement);
 	}
+	tab_count -= 1;
+	tab_count -= 1;
+}
+void print_ast(AstIfx *node) {
+	print_info("ifx - uid: {}\n", node->uid());
+	tab_count += 1;
+	print_label("condition:\n");
+	tab_count += 1;
+	print_ast(node->condition);
+	tab_count -= 1;
+	print_label("true expression:\n");
+	tab_count += 1;
+	print_ast(node->true_expression);
+	tab_count -= 1;
+	print_label("false expression:\n");
+	tab_count += 1;
+	print_ast(node->false_expression);
 	tab_count -= 1;
 	tab_count -= 1;
 }

@@ -43,6 +43,7 @@ AstUnaryOperator *type_pointer_to_void;
 AstIdentifier *type_int;
 AstIdentifier *type_sint;
 AstIdentifier *type_uint;
+AstIdentifier *type_float;
 
 bool struct_is_built_in(AstStruct *type) {
 	return
@@ -117,6 +118,7 @@ bool can_be_global(AstStatement *statement) {
 		case Ast_definition:
 		case Ast_operator_definition:
 		case Ast_assert:
+		case Ast_print:
 			return true;
 
 		default:
@@ -135,6 +137,11 @@ bool is_type(AstExpression *expression) {
 }
 
 void append_type(StringBuilder &builder, AstExpression *type, bool silent_error) {
+	if (!type) {
+		append(builder, "(null)");
+		return;
+	}
+
 #define ensure(x) \
 	if (silent_error) { \
 		if (!(x)) { \
@@ -554,6 +561,26 @@ bool is_pointer(AstExpression *type) {
 bool is_pointer_internally(AstExpression *type) {
 	return is_lambda(type) || is_pointer(type);
 }
+AstUnaryOperator *as_pointer(AstExpression *type) {
+	switch (type->kind) {
+		case Ast_identifier: {
+			auto ident = (AstIdentifier *)type;
+			return as_pointer(ident->definition->expression);
+		}
+		case Ast_unary_operator: {
+			auto unop = (AstUnaryOperator *)type;
+			switch (unop->operation) {
+				case UnaryOperation::pointer_or_dereference_or_unwrap:
+				// This fails at parse time.
+				// assert(is_type(unop->expression));
+				case UnaryOperation::pointer:
+					return unop;
+			}
+			break;
+		}
+	}
+	return 0;
+}
 
 AstLiteral *get_literal(AstExpression *expression) {
     switch (expression->kind) {
@@ -578,6 +605,17 @@ bool is_constant(AstExpression *expression) {
 
     if (expression->kind == Ast_identifier) {
         auto identifier = (AstIdentifier *)expression;
+
+		if (identifier->possible_definitions.count) {
+			// HACK: TODO: FIXME: this is to make passing overloaded functions working.
+			for (auto definition : identifier->possible_definitions) {
+				if (!definition->is_constant)
+					return false;
+			}
+			return true;
+		}
+
+		assert(identifier->definition);
         if (identifier->definition)
             return identifier->definition->is_constant;
         return false;

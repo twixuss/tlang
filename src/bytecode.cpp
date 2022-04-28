@@ -46,6 +46,7 @@ struct StackState {
 	List<Optional<KnownValue>> data;
 	s64 cursor = -1;
 	s64 rb_offset = -1;
+	s64 max_cursor = -1;
 
 	void init(s64 return_type_size) {
 		// include return value and return address pushed by `call` instruction
@@ -56,6 +57,7 @@ struct StackState {
 		data.resize(cursor + 1);
 		data[cursor] = v;
 		cursor++;
+		max_cursor = max(max_cursor, cursor);
 	}
 	void push(Optional<s64> v) {
 		if (v) {
@@ -84,6 +86,7 @@ struct StackState {
 			assert(cursor >= amount);
 		}
 		cursor -= amount;
+		max_cursor = max(max_cursor, cursor);
 		data.resize(cursor);
 	}
 	Optional<KnownValue> top() {
@@ -157,6 +160,11 @@ struct LambdaState {
 	}
 };
 
+struct InstructionThatReferencesLambda {
+	Instruction *instruction;
+	AstLambda *lambda;
+};
+
 struct Converter {
 	InstructionList builder;
 	StringBuilder constant_data_builder;
@@ -172,6 +180,10 @@ struct Converter {
 	ExternLibraries extern_libraries;
 
 	LambdaState *ls;
+
+	List<InstructionThatReferencesLambda> instructions_that_reference_lambdas;
+
+	String comment;
 };
 
 Optional<Register> allocate_register(Converter &conv) {
@@ -205,11 +217,10 @@ s64 allocate_zero_data(Converter &conv, s64 byte_count) {
 #if BYTECODE_DEBUG
 
 void push_comment(Converter &conv, Span<utf8> string) {
-	auto &back = conv.ls->body_builder.back();
-	if (back.comment) {
-		back.comment = (utf8 *)concatenate(as_span(back.comment), ';', string, '\0').data;
+	if (conv.comment.data) {
+		conv.comment = (String)concatenate(as_span(conv.comment), '\n', string);
 	} else {
-		back.comment = null_terminate(string).data;
+		conv.comment = (String)string;
 	}
 }
 
@@ -231,9 +242,9 @@ void push_comment(Converter &conv, Span<utf8> string) {
 void remove_last_instruction(Converter &conv) {
 	auto removed = conv.ls->body_builder.pop_back();
 	auto &back = conv.ls->body_builder.back();
-	if (back.comment) {
-		if (removed.comment) {
-			back.comment = format(u8"{};{}\0"s, back.comment, removed.comment).data;
+	if (back.comment.data) {
+		if (removed.comment.data) {
+			back.comment = format(u8"{}\n{}"s, back.comment, removed.comment);
 		}
 	} else {
 		back.comment = removed.comment;
@@ -246,6 +257,11 @@ void remove_last_instruction(Converter &conv) {
 #endif
 
 Instruction *add_instruction(Converter &conv, Instruction next) {
+#if BYTECODE_DEBUG
+	next.comment = conv.comment;
+	conv.comment = {};
+#endif
+
 	auto &ls = *conv.ls;
 	auto &stack_state = ls.stack_state;
 	auto &register_state = ls.register_state;
@@ -944,10 +960,14 @@ static Optional<Register> load_address_of(Optional<Register> destination, Conver
 			// local2
 			// local3
 
+			assert(parent_lambda->parameters_size != -1);
 			s64 const stack_base_register_size = context.stack_word_size;
 			s64 const return_address_size = context.stack_word_size;
 			s64 const parameters_end_offset = stack_base_register_size + return_address_size + parent_lambda->parameters_size;
 			s64 const return_parameters_start_offset = parameters_end_offset;
+
+			// if (definition->name == "uMsg")
+			// 	debug_break();
 
 			if (definition->is_parameter) {
 				// Function Parameter
@@ -1020,10 +1040,12 @@ static Optional<Register> load_address_of(Optional<Register> destination, Conver
 				destination = allocate_register(conv);
 
 			if (lambda->has_body) {
-				// TODO: YIELD!!!!!!
-				assert(lambda->location_in_bytecode != -1);
-				if (destination) I(mov_rt, destination.value_unchecked(), lambda->location_in_bytecode);
-				else             I(push_t, lambda->location_in_bytecode);
+				Instruction *instr = 0;
+				if (destination) instr = II(mov_rt, destination.value_unchecked(), -1);
+				else             instr = II(push_t, -1);
+				if (lambda->has_body) {
+					conv.instructions_that_reference_lambdas.add({.instruction=instr, .lambda=lambda});
+				}
 			} else {
 				assert((s64)(s32)count_of(lambda->definition->name) == (s64)count_of(lambda->definition->name));
 				if (destination) {
@@ -1053,9 +1075,12 @@ static Optional<Register> load_address_of(Optional<Register> destination, Conver
 			using enum BinaryOperation;
 			assert(binop->operation == dot);
 			assert(binop->right->kind == Ast_identifier);
-			auto offset = ((AstIdentifier *)binop->right)->definition->offset_in_struct;
+			auto right = (AstIdentifier *)binop->right;
+			auto offset = right->definition->offset_in_struct;
 			assert(offset != INVALID_MEMBER_OFFSET);
-			auto destination = load_address_of(conv, binop->left);
+			auto destination = is_pointer(binop->left->type)
+				? (append_to_stack(conv, binop->left), Optional<Register>{})
+				: load_address_of(conv, binop->left);
 			if (offset) {
 				if (destination) I(add_rc, destination.value_unchecked(), offset);
 				else             I(add_mc, rs, offset);
@@ -1369,7 +1394,15 @@ static void append_memory_copy_a(Converter &conv, Address dst, Address src, s64 
 			break;
 		}
 		default: {
-			invalid_code_path("not implemented");
+			assert(src.base != r0);
+			assert(dst.base != r1);
+			I(lea, r0, dst);
+			I(lea, r1, src);
+			if (reverse) {
+				I(copyb_mmc, r0, r1, bytes_to_copy);
+			} else {
+				I(copyf_mmc, r0, r1, bytes_to_copy);
+			}
 			break;
 		}
 	}
@@ -1383,23 +1416,11 @@ static void append_memory_copy(Converter &conv, s64 bytes_to_copy, bool reverse,
 	append_memory_copy(conv, Optional<Register>{}, Optional<Register>{}, bytes_to_copy, reverse, from_name, to_name);
 }
 
-static void append_memory_set(Converter &conv, Address d, s64 s, s64 size) {
-	s64 i = 0;
-	while (size > 0) {
-		switch (context.stack_word_size) {
-			case 8:
-				I(mov8_mc, d + i, s);
-				size -= 8;
-				i += 8;
-				break;
-			case 4:
-				I(mov4_mc, d + i, s);
-				size -= 4;
-				i += 4;
-				break;
-		}
-	}
-	assert(size == 0);
+static void append_memory_set(Converter &conv, Address d, s64 s, s64 size, bool reverse) {
+	if (reverse)
+		I(setb_mcc, d, (s32)s, (s32)size);
+	else
+		I(setf_mcc, d, (s32)s, (s32)size);
 }
 
 static void push_zeros(Converter &conv, s64 size) {
@@ -1412,7 +1433,7 @@ static void push_zeros(Converter &conv, s64 size) {
 	if (size > threshold) {
 		I(sub_rc, rs, size);
 		assert((s64)(s32)size == size);
-		I(set_mcc, rs, 0, (s32)size);
+		append_memory_set(conv, rs, 0, size, true); // backward. like pushing
 	} else {
 		auto remaining_bytes = size;
 		while (remaining_bytes > 0) {
@@ -1433,6 +1454,7 @@ static void ensure_present_in_bytecode(Converter &conv, AstLambda *lambda) {
 static void append(Converter &conv, Scope &scope) {
 	scoped_replace(conv.ls->current_scope, &scope);
 	for (auto statement : scope.statements) {
+		push_comment(conv, (Span<utf8>)format("==== {}: {} ====", where(statement->location.data), statement->location));
 		append(conv, statement);
 	}
 	for (auto Defer : reverse(scope.bytecode_defers)) {
@@ -1460,6 +1482,18 @@ static void append(Converter &conv, AstDefinition *definition) {
 	if (definition->expression && definition->expression->kind == Ast_lambda) {
 		assert_always(append(conv, (AstLambda *)definition->expression, false).count == 0);
 		return;
+	}
+
+	if (definition->expression) {
+		if (definition->expression->kind == Ast_struct) {
+			auto Struct = (AstStruct *)definition->expression;
+			for_each (Struct->scope.definitions, [&](auto, auto members) {
+				auto member = members[0];
+				if (member->is_constant && member->expression && member->expression->kind == Ast_lambda) {
+					append(conv, member);
+				}
+			});
+		}
 	}
 
 	if (definition->expression && is_type(definition->expression))
@@ -1727,7 +1761,7 @@ static void append(Converter &conv, AstExpressionStatement *es) {
 	invalid_code_path();
 }
 static ValueRegisters append(Converter &conv, AstBinaryOperator *bin) {
-	push_comment(conv, format(u8"binary {}"s, operator_string(bin->operation)));
+	push_comment(conv, format(u8"binary {}"s, bin->location));
 
 	auto left = bin->left;
 	auto right = bin->right;
@@ -1736,7 +1770,15 @@ static ValueRegisters append(Converter &conv, AstBinaryOperator *bin) {
 	if (bin->operation == dot) {
 		switch (right->kind) {
 			case Ast_identifier: {
-				auto Struct = get_struct(left->type);
+				AstStruct *Struct = 0;
+				bool is_pointer = false;
+				if (auto pointer = as_pointer(left->type)) {
+					Struct = get_struct(pointer->expression);
+					is_pointer = true;
+				} else {
+					Struct = get_struct(left->type);
+				}
+
 				if (Struct) {
 					auto struct_size = get_size(left->type);
 
@@ -1750,53 +1792,101 @@ static ValueRegisters append(Converter &conv, AstBinaryOperator *bin) {
 					// assert(struct_size % stack_word_size == 0);
 					// assert(member_size % stack_word_size == 0);
 
-					if (member->is_constant) {
-						invalid_code_path("not implemented");
-						I(push_c, member->bytecode_offset);
-					} else {
-						// The plan is simple:
-						// 1. Reserve space for eventual value
-						// 2. Append the struct
-						// 3. Copy the member from struct to reserved space
-						// 4. Remove struct from the stack
-						assert(member->offset_in_struct != INVALID_MEMBER_OFFSET);
+					if (is_pointer) {
 
-						push_comment(conv, u8"1. Reserve space for eventual value"s);
-						I(sub_rc, rs, ceil(member_size, context.stack_word_size));
+						if (member->is_constant) {
+							invalid_code_path("not implemented");
+							I(push_c, member->bytecode_offset);
+						} else {
+							// The plan is simple:
+							// 1. Reserve space for eventual value
+							// 2. Append pointer to stack
+							// 3. Append struct pointer
+							// 4. Copy the member from struct to reserved space
+							assert(member->offset_in_struct != INVALID_MEMBER_OFFSET);
 
-						push_comment(conv, u8"2. Append the struct"s);
-						append_to_stack(conv, left);
+							push_comment(conv, u8"1. Reserve space for eventual value"s);
+							I(sub_rc, rs, ceil(member_size, context.stack_word_size));
 
-						//if (member == Struct->members.back()) {
-						//	I(add_rc, rs, struct_size - member_size); // just throw away rest of the struct
-						//} else
-						{
-							/*
+							//if (member == Struct->members.back()) {
+							//	I(add_rc, rs, struct_size - member_size); // just throw away rest of the struct
+							//} else
+							{
+								/*
 
-							Example on 64 bit architecture
+								Example on 64 bit architecture
 
-							a :: struct {
-								data: *void;
-								count: uint;
+								a :: struct {
+									data: *void;
+									count: uint;
+								}
+																			rs
+									20      28      30      38      40      48      50
+								  0 |------||------||------||------||------||------||------| ffff
+											38      48      data    count   data    ????????
+
+								*/
+
+								push_comment(conv, u8"2. Append destination pointer"s);
+								I(push_r, rs); // destination
+
+								push_comment(conv, u8"3. Append pointer to the struct"s);
+								append_to_stack(conv, left);
+								I(add_mc, rs, member->offset_in_struct);
+
+								push_comment(conv, u8"4. Copy the member"s);
+								append_memory_copy(conv, member_size, true, bin->location, u8"stack"s);
 							}
-																		rs
-								20      28      30      38      40      48      50
-							  0 |------||------||------||------||------||------||------| ffff
-										38      48      data    count   data    ????????
+						}
+					} else {
+						if (member->is_constant) {
+							invalid_code_path("not implemented");
+							I(push_c, member->bytecode_offset);
+						} else {
+							// The plan is simple:
+							// 1. Reserve space for eventual value
+							// 2. Append the struct
+							// 3. Copy the member from struct to reserved space
+							// 4. Remove struct from the stack
+							assert(member->offset_in_struct != INVALID_MEMBER_OFFSET);
 
-							*/
+							push_comment(conv, u8"1. Reserve space for eventual value"s);
+							I(sub_rc, rs, ceil(member_size, context.stack_word_size));
 
-							push_comment(conv, u8"3. Copy the member from struct to reserved space"s);
-							I(push_r, rs); // destination
-							I(add_mc, rs, ceil(struct_size, context.stack_word_size));
+							push_comment(conv, u8"2. Append the struct"s);
+							append_to_stack(conv, left);
 
-							I(push_r, rs); // source
-							I(add_mc, rs, context.stack_word_size + member->offset_in_struct);
+							//if (member == Struct->members.back()) {
+							//	I(add_rc, rs, struct_size - member_size); // just throw away rest of the struct
+							//} else
+							{
+								/*
 
-							append_memory_copy(conv, member_size, true, bin->location, u8"stack"s);
+								Example on 64 bit architecture
 
-							push_comment(conv, u8"4. Remove struct from the stack"s);
-							I(add_rc, rs, ceil(struct_size, context.stack_word_size));
+								a :: struct {
+									data: *void;
+									count: uint;
+								}
+																			rs
+									20      28      30      38      40      48      50
+								  0 |------||------||------||------||------||------||------| ffff
+											38      48      data    count   data    ????????
+
+								*/
+
+								push_comment(conv, u8"3. Copy the member from struct to reserved space"s);
+								I(push_r, rs); // destination
+								I(add_mc, rs, ceil(struct_size, context.stack_word_size));
+
+								I(push_r, rs); // source
+								I(add_mc, rs, context.stack_word_size + member->offset_in_struct);
+
+								append_memory_copy(conv, member_size, true, bin->location, u8"stack"s);
+
+								push_comment(conv, u8"4. Remove struct from the stack"s);
+								I(add_rc, rs, ceil(struct_size, context.stack_word_size));
+							}
 						}
 					}
 				} else {
@@ -2001,7 +2091,7 @@ static ValueRegisters append(Converter &conv, AstBinaryOperator *bin) {
 					}
 					I(push_f, x0);
 				} else {
-					assert(::is_integer(bin->type));
+					assert(::is_integer(bin->type) || ::is_pointer(bin->type));
 					I(pop_r, r0);
 					switch (bin->operation) {
 						case add:  I(add_mr, rs, r0); break;
@@ -2189,7 +2279,7 @@ static ValueRegisters append(Converter &conv, AstBinaryOperator *bin) {
 	return {};
 }
 static ValueRegisters append(Converter &conv, AstIdentifier *identifier) {
-	push_comment(conv, format(u8"load identifer {}", identifier->name));
+	push_comment(conv, format(u8"load identifer {}", identifier->location));
 
 	auto definition = identifier->definition;
 	assert(definition->bytecode_offset != -1);
@@ -2240,15 +2330,37 @@ static ValueRegisters append(Converter &conv, AstIdentifier *identifier) {
 	invalid_code_path();
 }
 static ValueRegisters append(Converter &conv, AstCall *call) {
-	push_comment(conv, format(u8"call '{}'", call->callable->location));
+	push_comment(conv, format(u8"call {}", call->callable->location));
 
 	auto lambda = get_lambda(call->callable->type);
 	assert(lambda);
+	assert(lambda->parameters_size != -1);
+
+	auto append_arguments_to_stack = [&] {
+		for (umm i = 0; i < call->arguments.count; ++i) {
+			auto arg = call->arguments[i].expression;
+			auto param = lambda->parameters[i];
+
+			if (param->is_constant)
+				continue;
+
+			append_to_stack(conv, arg);
+		}
+	};
 
 	if (lambda->is_intrinsic) {
 		auto name = lambda->definition->name;
 		if (name == "debug_break") {
 			I(debug_break);
+		} else if (name == "memcpy") {
+			append_arguments_to_stack();
+			auto rdst = r0;
+			auto rsrc = r1;
+			auto rsize = r2;
+			I(pop_r, rsize);
+			I(pop_r, rsrc);
+			I(pop_r, rdst);
+			I(copyf_rrr, rdst, rsrc, rsize);
 		} else {
 			invalid_code_path("Unknown intrinsic");
 		}
@@ -2256,9 +2368,6 @@ static ValueRegisters append(Converter &conv, AstCall *call) {
 	}
 
 	assert(context.stack_word_size == 8);
-
-	if (lambda->has_body)
-		ensure_present_in_bytecode(conv, lambda);
 
 	auto &arguments = call->arguments;
 	bool lambda_is_constant = is_constant(call->callable);
@@ -2274,14 +2383,7 @@ static ValueRegisters append(Converter &conv, AstCall *call) {
 
 	switch (lambda->convention) {
 		case CallingConvention::tlang: {
-			if (!lambda->has_body) {
-				immediate_error(lambda->location, "Unexpected lambda with no body");
-				assert(lambda->has_body);
-			}
-
-			//
 			// Calculate sizes of all things that go on the stack - lambda pointer, return value and arguments
-			//
 			s64 bytes_pushed_before_call = 0;
 
 			s64 return_parameters_size_on_stack = ceil(get_size(call->type), 8ll);
@@ -2305,20 +2407,22 @@ static ValueRegisters append(Converter &conv, AstCall *call) {
 			push_comment(conv, u8"reserve space for return value"s);
 			I(sub_rc, rs, return_parameters_size_on_stack);
 
-			for (auto argument : arguments) {
-				append_to_stack(conv, argument.expression);
-			}
+			append_arguments_to_stack();
 
-			assert(lambda_is_constant);
 			if (lambda_is_constant) {
-				I(call_c, lambda->location_in_bytecode, lambda);
-				I(add_rc, rs, arguments_size_on_stack);
+				conv.instructions_that_reference_lambdas.add({
+					.instruction = II(call_c, -1),
+					.lambda = lambda,
+				});
 			} else {
 				append_to_stack(conv, call->callable);
-				I(call_m, rs);
-				I(add_rc, rs, arguments_size_on_stack + context.stack_word_size);
+				auto rax = x86_64::to_bc_register(x86_64::Register64::rax);
+				I(pop_r, rax);
+				I(call_r, rax);
 			}
+			I(add_rc, rs, arguments_size_on_stack);
 			if (stack_was_realigned) {
+				// TODO: FIXME: this is not necessary. there is no important reason to do this.
 				append_memory_copy_a(conv, rs+8, rs, return_parameters_size_on_stack, true, u8"16 aligned stack"s, u8"16 unaligned stack"s);
 				I(add_rc, rs, 8);
 			}
@@ -2356,8 +2460,9 @@ static ValueRegisters append(Converter &conv, AstCall *call) {
 
 			for (auto argument : arguments) {
 				assert(get_size(argument.expression->type) <= 8);
-				append_to_stack(conv, argument.expression);
 			}
+
+			append_arguments_to_stack();
 
 			// we have this:
 			//
@@ -2595,7 +2700,7 @@ static ValueRegisters append(Converter &conv, AstLiteral *literal) {
 	return {};
 }
 static ValueRegisters append(Converter &conv, AstUnaryOperator *unop) {
-	push_comment(conv, format(u8"unary '{}'", as_string(unop->operation)));
+	push_comment(conv, format(u8"unary {}", unop->location));
 	switch (unop->operation) {
 		using enum UnaryOperation;
 		case minus: {
@@ -2710,7 +2815,7 @@ static ValueRegisters append(Converter &conv, AstUnaryOperator *unop) {
 	invalid_code_path();
 }
 static ValueRegisters append(Converter &conv, AstSubscript *subscript) {
-	push_comment(conv, format(u8"subscript"));
+	push_comment(conv, format(u8"subscript {}", subscript->location));
 	auto element_size = get_size(subscript->type);
 	assert(element_size);
 
@@ -2776,17 +2881,20 @@ static ValueRegisters append(Converter &conv, AstSubscript *subscript) {
 static ValueRegisters append(Converter &conv, AstLambda *lambda, bool push_address) {
 	if (lambda->is_poly) {
 		assert(!push_address);
+
+		for (auto hardened : lambda->hardened_polys) {
+			append(conv, hardened.lambda, false);
+		}
 		return {};
 	}
 
-	lambda->return_parameter->bytecode_offset = 0;
+	//if (lambda->original_poly)
+	//	debug_break();
 
-	s64 parameter_size_accumulator = 0;
-	for (auto parameter : lambda->parameters) {
-		parameter->bytecode_offset = parameter_size_accumulator;
-		parameter_size_accumulator += ceil(get_size(parameter->type), context.stack_word_size);
-	}
-	lambda->parameters_size = parameter_size_accumulator;
+	lambda->return_parameter->bytecode_offset = 0;
+	assert(lambda->return_parameter->parent_lambda_or_struct);
+	assert(lambda->return_parameter->is_return_parameter);
+	assert(!lambda->return_parameter->is_parameter);
 
 	if (lambda->has_body) {
 		if (types_match(lambda->return_parameter->type, type_type)) {
@@ -2812,18 +2920,12 @@ static ValueRegisters append(Converter &conv, AstLambda *lambda, bool push_addre
 
 		scoped_replace(conv.lambda, lambda);
 
-		lambda->first_instruction = &conv.ls->body_builder.add(MI(jmp_label));
-
-		if (lambda->definition) {
-			push_comment(conv, format(u8"lambda {}", lambda->definition->name));
-		} else {
-			push_comment(conv, format(u8"lambda {}", where(lambda->location.data)));
-		}
-
 		auto return_value_size = ceil(get_size(lambda->return_parameter->type), context.stack_word_size);
 
 		//if (lambda->definition->name == u8"print_string"s)
 		//	debug_break();
+
+		ls.push_used_registers = I(push_used_registers);
 
 		if (lambda->convention == CallingConvention::stdcall) {
 			assert(context.stack_word_size == 8);
@@ -2863,8 +2965,8 @@ static ValueRegisters append(Converter &conv, AstLambda *lambda, bool push_addre
 						I(push_r, to_bc_register(stdcall_int_registers[arg_index]));
 			};
 
-			push_comment(conv, u8"reserve space for return value"s);
 			I(sub_rc, rs, return_value_size);
+			push_comment(conv, u8"reserved space for return value"s);
 
 			push_argument(0);
 			push_argument(1);
@@ -2883,9 +2985,7 @@ static ValueRegisters append(Converter &conv, AstLambda *lambda, bool push_addre
 				}
 			}
 			push_comment(conv, u8"dummy return address"s);
-			I(sub_rc, rs, 8);
-		} else {
-			ls.push_used_registers = I(push_used_registers);
+			I(push_c, 0xdeadc0d);
 		}
 
 		I(push_r, rb);
@@ -2893,20 +2993,11 @@ static ValueRegisters append(Converter &conv, AstLambda *lambda, bool push_addre
 
 		push_comment(conv, u8"zero out the return value"s);
 		auto address = load_address_of(conv, lambda->return_parameter);
-		append_memory_set(conv, address.value(), 0, return_value_size);
+		append_memory_set(conv, address.value(), 0, return_value_size, true); // clear stack in direction it's growing
 
 		append(conv, lambda->body_scope);
 
 		lambda->return_location = count_of(conv.ls->body_builder);
-
-		for (auto i : lambda->return_jumps) {
-			auto offset = lambda->return_location - i.index;
-			if (offset == 1) {
-				i.jmp->kind = InstructionKind::noop; // TODO: this instruction can be removed. but i don't know if it should be.
-			} else {
-				i.jmp->jmp.offset = offset;
-			}
-		}
 
 		I(jmp_label);
 		I(mov_rr, rs, rb);
@@ -2917,14 +3008,25 @@ static ValueRegisters append(Converter &conv, AstLambda *lambda, bool push_addre
 			I(add_rc, rs, context.stack_word_size + (s64)lambda->parameters.count * context.stack_word_size);
 			push_comment(conv, u8"put return value into rax"s);
 			I(pop_r, x86_64::to_bc_register(x86_64::Register64::rax));
-		} else {
-			ls.pop_used_registers = I(pop_used_registers);
+		}
 
+		ls.pop_used_registers = I(pop_used_registers);
+
+		s64 additional_rb_parameter_offset = 0;
+		if (lambda->convention == CallingConvention::stdcall) {
+			// FIXME: push and pop only necessary registers
+			// HACK: -1 means push all non-volatile registers according to x64 stdcall convention.
+			ls.push_used_registers->mask =
+			ls. pop_used_registers->mask = -1;
+			// additional_rb_parameter_offset = -8; //
+			// additional_rb_parameter_offset = ceil(9u*8, 16u);
+		} else {
 			ls.push_used_registers->mask =
 			ls. pop_used_registers->mask = ls.used_registers_mask;
+			additional_rb_parameter_offset = ceil(count_bits(ls.used_registers_mask)*8, 16u);
+		}
 
-			s64 additional_rb_parameter_offset = ceil(count_bits(ls.used_registers_mask)*8, 16u); // :DEBUG:
-
+		if (additional_rb_parameter_offset) {
 			for (auto instr : ls.parameter_load_offsets) {
 				switch (instr->kind) {
 					using enum InstructionKind;
@@ -2944,23 +3046,45 @@ static ValueRegisters append(Converter &conv, AstLambda *lambda, bool push_addre
 				}
 			}
 		}
+
+
 		I(ret);
 
 
 		lambda->location_in_bytecode = count_of(conv.builder);
+
+		lambda->first_instruction = &conv.builder.add(MI(jmp_label));
+
+		if (lambda->definition) {
+			lambda->first_instruction->comment = format(u8"lambda {}", lambda->definition->name);
+		} else {
+			lambda->first_instruction->comment = format(u8"lambda {}", where(lambda->location.data));
+		}
+
+
+		auto used_bytes = ls.stack_state.max_cursor*context.stack_word_size;
+		if (used_bytes >= 4096) {
+			conv.builder.add(MI(prepare_stack, used_bytes));
+		}
+
+		for (auto i : lambda->return_jumps) {
+			auto offset = lambda->return_location - i.index;
+			if (offset == 1) {
+				i.jmp->kind = InstructionKind::noop; // TODO: this instruction can be removed. but i don't know if it should be.
+			} else {
+				i.jmp->jmp.offset = offset;
+			}
+		}
 #if 1
 		add_steal(&conv.builder, &conv.ls->body_builder);
 #else
 		add(&conv.builder, conv.ls->body_builder);
 #endif
-
-		for (auto relocation : conv.local_relocations) {
-			relocation.instruction_index += lambda->location_in_bytecode;
-			conv.global_relocations.add(relocation);
+	} else {
+		lambda->definition->bytecode_offset = 0;
+		if (lambda->extern_library.data) {
+			conv.extern_libraries.get_or_insert(lambda->extern_library).add(lambda->definition->name);
 		}
-		conv.local_relocations.clear();
-	} else if (lambda->extern_library.data) {
-		conv.extern_libraries.get_or_insert(lambda->extern_library).add(lambda->definition->name);
 	}
 
 	if (push_address) {
@@ -2970,6 +3094,8 @@ static ValueRegisters append(Converter &conv, AstLambda *lambda, bool push_addre
 	return {};
 }
 static ValueRegisters append(Converter &conv, AstIfx *If) {
+	push_comment(conv, format(u8"ifx {}", If->location));
+
 	auto condition = append(conv, If->condition);
 	decltype(Instruction::jz_cr) *jz = 0;
 	if (condition.count) {
@@ -3017,14 +3143,6 @@ static ValueRegisters append(Converter &conv, AstIfx *If) {
 	return {};
 }
 
-void fix_relocations(InstructionList &instructions, List<Relocation> relocations) {
-	timed_function(context.profiler);
-	for (auto &r : relocations) {
-		instructions[r.instruction_index].call_c.constant = r.lambda->location_in_bytecode;
-	}
-
-}
-
 Bytecode build_bytecode() {
 	timed_function(context.profiler);
 
@@ -3047,8 +3165,23 @@ Bytecode build_bytecode() {
 	result.zero_data_size = conv.zero_data_size;
 	result.extern_libraries = conv.extern_libraries;
 
-	fix_relocations(result.instructions, conv.global_relocations);
-
+	for (auto i : conv.instructions_that_reference_lambdas) {
+		assert(i.lambda->location_in_bytecode != -1);
+		switch (i.instruction->kind) {
+			case InstructionKind::call_c: {
+				i.instruction->call_c.constant = i.lambda->location_in_bytecode;
+				break;
+			}
+			case InstructionKind::push_t: {
+				i.instruction->push_t.s = i.lambda->location_in_bytecode;
+				break;
+			}
+			case InstructionKind::mov_rt: {
+				i.instruction->mov_rt.s = i.lambda->location_in_bytecode;
+				break;
+			}
+		}
+	}
 
 	// print_bytecode(result.instructions);
 
