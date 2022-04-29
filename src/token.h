@@ -2,6 +2,7 @@
 #include <common.h>
 
 #define ENUMERATE_KEYWORDS(E) \
+E(as,       'as') \
 E(return,   0x2000000) \
 E(fn,       0x2000001) \
 E(true,     0x2000002) \
@@ -12,7 +13,7 @@ E(while,    0x2000007) \
 E(struct,   0x2000008) \
 E(import,   0x2000009) \
 E(null,     0x200000a) \
-E(as,       0x200000b) \
+/*E(unused, 0x200000b)*/ \
 E(then,     0x200000c) \
 E(simd,     0x200000d) \
 E(assert,   0x200000e) \

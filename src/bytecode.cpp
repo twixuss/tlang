@@ -485,6 +485,12 @@ Instruction *add_instruction(Converter &conv, Instruction next) {
 			REDECLARE_REF(next, next.mov_rr);
 
 			register_state[next.d] = register_state[next.s];
+
+			if (next.d == rs) {
+				assert(next.s == rb);
+				stack_state.cursor = stack_state.rb_offset;
+			}
+
 			break;
 		}
 		case mov1_rm: {
@@ -846,6 +852,9 @@ ValueRegisters value_registers(Register a, Register b) {
 [[nodiscard]] static ValueRegisters append(Converter &, AstIfx *);
 
 [[nodiscard]] static ValueRegisters append(Converter &conv, AstExpression *expression) {
+	if (expression->evaluated) {
+		return append(conv, expression->evaluated);
+	}
 	switch (expression->kind) {
 		case Ast_identifier:           return append(conv, (AstIdentifier *)expression);
 		case Ast_literal:              return append(conv, (AstLiteral *)expression);
@@ -1555,8 +1564,8 @@ static void append(Converter &conv, AstDefinition *definition) {
 	} else {
 		if (definition->is_constant) {
 			if (definition->expression) {
-				auto literal = (AstLiteral *)get_literal(definition->expression);
-
+				auto literal = definition->expression->evaluated;
+				assert(literal);
 
 				switch (literal->literal_kind) {
 					case LiteralKind::integer: {
@@ -2599,7 +2608,7 @@ static ValueRegisters append(Converter &conv, AstLiteral *literal) {
 	else
 		push_comment(conv, format(u8"literal {}", literal->location));
 
-	assert(literal->type != type_unsized_integer);
+	// assert(literal->type != type_unsized_integer);
 	assert(literal->type != type_unsized_float);
 	auto dtype = direct(literal->type);
 
@@ -2712,32 +2721,10 @@ static ValueRegisters append(Converter &conv, AstLiteral *literal) {
 			}
 			break;
 		case boolean:
-			I(push_c, (u8)literal->Bool);
+			I(push_c, literal->Bool);
 			break;
 		case integer: {
-			if (dtype == type_u8 ||
-				dtype == type_s8)
-				I(push_c, (u8)literal->integer);
-			else if (dtype == type_u16 ||
-					 dtype == type_s16)
-				I(push_c, (u16)literal->integer);
-			else if (dtype == type_u32 ||
-					 dtype == type_s32)
-				I(push_c, (u32)literal->integer);
-			else if (dtype == type_u64 ||
-					 dtype == type_s64 ||
-					 dtype == type_pointer_to_void)
-				I(push_c, (s64)literal->integer);
-			else if (dtype == type_f32) {
-				auto f = (f32)(s64)literal->integer;
-				I(push_c, *(s32 *)&f);
-			} else if (dtype == type_f64) {
-				auto f = (f64)(s64)literal->integer;
-				I(push_c, *(s64 *)&f);
-			}
-			else if (literal->type->kind == Ast_unary_operator && ((AstUnaryOperator *)literal->type)->operation == UnaryOperation::pointer)
-				I(push_c, (s64)literal->integer);
-			else invalid_code_path();
+			I(push_c, (s64)literal->integer);
 			break;
 		}
 	}

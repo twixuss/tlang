@@ -253,6 +253,7 @@ struct AstExpressionStatement : AstStatement, StatementPool<AstExpressionStateme
 
 struct AstExpression : AstNode {
 	Expression<> type = {};
+	Expression<AstLiteral> evaluated = {};
 	bool is_parenthesized : 1 = false;
 };
 
@@ -289,10 +290,9 @@ struct AstLiteral : AstExpression, ExpressionPool<AstLiteral> {
 	AstLiteral() {
 		memset(this, 0, sizeof(*this));
 		kind = Ast_literal;
+		evaluated = this;
 	}
-	~AstLiteral() {
-
-	}
+	~AstLiteral() {}
 };
 
 inline static constexpr auto sizeof_AstLiteral = sizeof AstLiteral;
@@ -306,8 +306,6 @@ struct AstDefinition : AstStatement, StatementPool<AstDefinition> {
 	Expression<> expression = {};
 	Expression<> type = {};
 	Expression<> parent_lambda_or_struct = {};
-
-	Box<AstLiteral> evaluated;
 
 	// REFERENCE32(Scope, parent_scope);
 
@@ -505,40 +503,105 @@ struct AstWhile : AstStatement, StatementPool<AstWhile> {
 	Scope scope;
 };
 
+//#define e(name, token)
+#define ENUMERATE_BINARY_OPERATIONS \
+e(add,     +) \
+e(sub,     -) \
+e(mul,     *) \
+e(div,     /) \
+e(mod,     %) \
+e(bxor,    ^) \
+e(band,    &) \
+e(bor,     |) \
+e(bsl,     <<) \
+e(bsr,     >>) \
+e(eq,      ==) \
+e(ne,      !=) \
+e(gt,      >) \
+e(lt,      <) \
+e(ge,      >=) \
+e(le,      <=) \
+e(land,    &&) \
+e(lor,     ||) \
+e(dot,     .) \
+e(ass,     =) \
+e(addass,  +=) \
+e(subass,  -=) \
+e(mulass,  *=) \
+e(divass,  /=) \
+e(modass,  %=) \
+e(bxorass, ^=) \
+e(bandass, &=) \
+e(borass,  |=) \
+e(bslass,  <<=) \
+e(bsrass,  >>=) \
+e(as,      as) \
+
 enum class BinaryOperation {
-    add,     // +
-    sub,     // -
-    mul,     // *
-    div,     // /
-    mod,     // %
-    bxor,    // ^
-    band,    // &
-    bor,     // |
-    bsl,     // <<
-    bsr,     // >>
-    eq,      // ==
-    ne,      // !=
-    gt,      // >
-    lt,      // <
-    ge,      // >=
-    le,      // <=
-    land,    // &&
-    lor,     // ||
-	dot,     // .
-    ass,     // =
-    addass,  // +=
-    subass,  // -=
-    mulass,  // *=
-    divass,  // /=
-    modass,  // %=
-    bxorass, // ^=
-    bandass, // &=
-    borass,  // |=
-    bslass,  // <<=
-    bsrass,  // >>=
-	as,      // as
+#define e(name, token) name,
+	ENUMERATE_BINARY_OPERATIONS
+#undef e
     count,
 };
+
+Optional<BinaryOperation> as_binary_operation(TokenKind kind);
+String as_string(BinaryOperation op);
+
+inline s32 get_precedence(BinaryOperation op) {
+	using enum BinaryOperation;
+
+	switch (op) {
+		case dot:
+			return 100;
+
+		case as:
+			return 90;
+
+		case mul:
+		case div:
+		case mod:
+			return 20;
+
+		case add:
+		case sub:
+			return 10;
+
+		case band:
+		case bor:
+		case bxor:
+		case bsl:
+		case bsr:
+			return 5;
+
+		case gt:
+		case lt:
+		case eq:
+		case ne:
+		case ge:
+		case le:
+			return 3;
+
+		case lor:
+		case land:
+			return 2;
+
+		case ass:
+		case addass:
+		case subass:
+		case mulass:
+		case divass:
+		case modass:
+		case bxorass:
+		case bandass:
+		case borass:
+		case bslass:
+		case bsrass:
+			return 1;
+	}
+
+	invalid_code_path();
+	return 0;
+}
 
 // NOTE: Cast operator's right expression is it's type. So right expression pointer is wasted space...
 struct AstBinaryOperator : AstExpression, ExpressionPool<AstBinaryOperator> {
@@ -690,7 +753,7 @@ struct AstOperatorDefinition : AstStatement, StatementPool<AstOperatorDefinition
 
 	Expression<AstLambda> lambda = {};
 
-	TokenKind operation = {};
+	BinaryOperation operation = {};
 	bool is_implicit : 1 = false;
 };
 
@@ -821,10 +884,9 @@ AstExpression *direct(AstExpression *type);
 AstExpression *get_definition_expression(AstExpression *expression);
 
 String operator_string(u64 op);
-String operator_string(BinaryOperation op);
 
 inline umm append(StringBuilder &builder, BinaryOperation op) {
-	return append(builder, operator_string(op));
+	return append(builder, as_string(op));
 }
 
 bool is_integer(AstExpression *type);
@@ -848,7 +910,6 @@ bool is_pointer_internally(AstExpression *type);
 
 AstUnaryOperator *as_pointer(AstExpression *type);
 
-AstLiteral *get_literal(AstExpression *expression);
 bool is_constant(AstExpression *expression);
 AstLambda *get_lambda(AstExpression *expression);
 bool is_lambda(AstExpression *expression);

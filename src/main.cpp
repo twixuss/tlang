@@ -35,6 +35,13 @@ enum class TypecheckResult {
 void typecheck_global(struct CoroState *corostate, struct TypecheckState *state);
 
 #if USE_FIBERS
+
+void yield_break(TypecheckResult result) {
+	if (result == TypecheckResult::fail) {
+		int x = 5;
+	}
+}
+
 TypecheckResult fiber_result;
 bool throwing = false;
 #define PARENT_FIBER state->parent_fiber
@@ -43,7 +50,7 @@ bool throwing = false;
 // calling typecheck_global again, meaning that failed function's stack is not freed and not reused, just wasted memory. It can be solved by
 // using exceptions and stack unwinding, and i think it should be, because the stack is growing FAST. Note that this throw is executed only on fail, so it should not
 // slow down the typechecker that much.
-#define yield(x) (fiber_result = x, SWITCH_TO_FIBER(PARENT_FIBER), x == TypecheckResult::fail ? ((throwing = true, throw 0), 0) : 0)
+#define yield(x) (fiber_result = x, yield_break(x), SWITCH_TO_FIBER(PARENT_FIBER), x == TypecheckResult::fail ? ((throwing = true, throw 0), 0) : 0)
 #else
 #define YIELD_STATE state->coro
 // #define yield(x) (_ReadWriteBarrier(), ::tl::print("remaining stack size: {}\n", (u8 *)YIELD_STATE->sp - (u8 *)YIELD_STATE->buffer_base), ::coro_yield(YIELD_STATE, (size_t)x))
@@ -62,7 +69,6 @@ static List<String> import_paths;
 AstDefinition *parse_definition(String name, Parser *parser);
 AstDefinition *parse_definition(Parser *parser);
 AstExpression *make_pointer_type(AstExpression *type);
-BinaryOperation binary_operation_from_token(TokenKind kind);
 
 void print_help() {
     print(strings.usage, context.compiler_name);
@@ -685,94 +691,6 @@ AstLiteral *make_float(f64 value, AstExpression *type = type_unsized_float) {
 	i->Float = value;
 	i->type = type;
 	return i;
-}
-
-bool is_binary_operator(TokenKind kind) {
-	switch (kind) {
-		case '+':
-		case '-':
-		case '*':
-		case '/':
-		case '%':
-		case '.':
-		case '&':
-		case '|':
-		case '^':
-		case '>':
-		case '<':
-		case '==':
-		case '!=':
-		case '>=':
-		case '<=':
-		case '<<':
-		case '>>':
-		case Token_as:
-		case '=':
-		case '+=':
-		case '-=':
-		case '*=':
-		case '/=':
-		case '%=':
-		case '^=':
-		case '&=':
-		case '|=':
-		case '<<=':
-		case '>>=':
-			return true;
-	}
-	return false;
-}
-
-s32 get_precedence(BinaryOperation op) {
-	using enum BinaryOperation;
-
-	switch (op) {
-		case dot:
-			return 100;
-
-		case as:
-			return 90;
-
-		case mul:
-		case div:
-		case mod:
-			return 20;
-
-		case add:
-		case sub:
-			return 10;
-
-		case band:
-		case bor:
-		case bxor:
-		case bsl:
-		case bsr:
-			return 5;
-
-		case gt:
-		case lt:
-		case eq:
-		case ne:
-		case ge:
-		case le:
-			return 3;
-
-		case ass:
-		case addass:
-		case subass:
-		case mulass:
-		case divass:
-		case modass:
-		case bxorass:
-		case bandass:
-		case borass:
-		case bslass:
-		case bsrass:
-			return 1;
-	}
-
-	invalid_code_path();
-	return 0;
 }
 
 // TODO FIXME right now `!func()` parses as `(!func)()`
@@ -1587,7 +1505,7 @@ AstExpression *parse_expression_1(Parser *parser) {
 	while (parser->token->kind == '(' || parser->token->kind == '[' || parser->token->kind == '.') {
 		while (parser->token->kind == '.') {
 			auto binop = AstBinaryOperator::create();
-			binop->operation = binary_operation_from_token(parser->token->kind);
+			binop->operation = BinaryOperation::dot;
 			binop->left = expression;
 
 			if (!parser->next_not_end())
@@ -1696,25 +1614,44 @@ AstExpression *parse_expression_1(Parser *parser) {
 	return expression;
 }
 
-// For types:
-// Replaces identifiers with structs
-// Example: *void parses into:
-//   AstUnary(*) -> AstIdentifier(void)
-// This will be replaced with:
-//   AstUnary(*) -> AstStruct(void)
-//
-// Reason for this is getting rid of extra pointer dereferences in later use
-//
-//
-// For expressions:
-// Replaces operations on constants and constant identifiers with literals
-//
-// NOTE:
-// Does not simplify child expressions as they are already simplified after parsing or typechecking
+// Replaces expressions like:
+// StringBuilder.Block with Block;
+// #typeof var with var's actual type;
 [[nodiscard]]
 bool simplify(Reporter *reporter, AstExpression **_expression) {
+	auto expression = *_expression;
+	defer {
+		if (expression) {
+			expression->location = (*_expression)->location;
+		}
+		*_expression = expression;
+	};
+	if (is_type(expression)) {
+		switch (expression->kind) {
+			case Ast_unary_operator: {
+				using enum UnaryOperation;
+				auto unop = (AstUnaryOperator *)expression;
+				if (unop->operation == typeof) {
+					expression = unop->expression->type;
+					return true;
+				}
+				break;
+			}
+			case Ast_binary_operator: {
+				using enum BinaryOperation;
+				auto bin = (AstBinaryOperator *)expression;
+				if (bin->operation == dot) {
+					expression = bin->right;
+					return true;
+				}
+				break;
+			}
+		}
+	}
+	return true;
 
 #define SIMPLIFY(reporter, x) ([&] { auto y = raw(x); auto result = simplify(reporter, &y); x = y; return result; }())
+#if 0
 
 	auto expression = *_expression;
 	defer {
@@ -1838,6 +1775,58 @@ bool simplify(Reporter *reporter, AstExpression **_expression) {
 						}
 						break;
 					}
+					case lor: {
+						auto left_literal  = get_literal(binop->left);
+						auto right_literal = get_literal(binop->right);
+						if (!left_literal || !right_literal)
+							return true;
+						if (left_literal->literal_kind == LiteralKind::integer && right_literal->literal_kind == LiteralKind::integer) {
+							auto left  = left_literal->integer;
+							auto right = right_literal->integer;
+
+							BigInteger value;
+
+							switch (binop->operation) {
+								case add: expression = make_integer(left + right, binop->type); return true;
+								case sub: expression = make_integer(left - right, binop->type); return true;
+								case mul: expression = make_integer(left * right, binop->type); return true;
+								case div:
+									if (right == 0) {
+										reporter->error(expression->location, "Integer division by zero.");
+										expression = 0;
+										return false;
+									}
+									expression = make_integer(left / right, binop->type);
+									return true;
+								case mod: expression = make_integer(left % right, binop->type); return true;
+								case band: expression = make_integer(left & right, binop->type); return true;
+								case bor: expression = make_integer(left | right, binop->type); return true;
+								case bxor: expression = make_integer(left ^ right, binop->type); return true;
+								case bsl:
+									if (right.msb) {
+										reporter->error(expression->location, "Can't shift left by negative amount.");
+										expression = 0;
+										return false;
+									}
+									if (right.parts.count > 1) {
+										reporter->error(expression->location, "Can't shift left by amount that big. Resulting number will now fit in memory.");
+										expression = 0;
+										return false;
+									}
+									expression = make_integer(left << right, binop->type);
+									return true;
+								case bsr: expression = make_integer(left >> right, binop->type); return true;
+								case lt:  expression = make_boolean(left < right); return true;
+								case gt:  expression = make_boolean(left > right); return true;
+								case le: expression = make_boolean(left <= right); return true;
+								case ge: expression = make_boolean(left >= right); return true;
+								case ne: expression = make_boolean(left != right); return true;
+								case eq: expression = make_boolean(left == right); return true;
+								default: invalid_code_path(); break;
+							}
+						}
+						break;
+					}
 					case as: {
 						if (!binop->type)
 							return true; // do nothing in parsing phase
@@ -1906,7 +1895,7 @@ bool simplify(Reporter *reporter, AstExpression **_expression) {
 					case bsrass:
 						break;
 					default:
-						invalid_code_path();
+						print(Print_warning, "unhandled binary operation in simplify\n");
 				}
 				break;
 			}
@@ -1972,49 +1961,7 @@ bool simplify(Reporter *reporter, AstExpression **_expression) {
 		}
 	}
 	return true;
-}
-
-BinaryOperation binary_operation_from_token(TokenKind kind) {
-	using enum BinaryOperation;
-	switch (kind) {
-		case '+':  return add;
-		case '-':  return sub;
-		case '*':  return mul;
-		case '/':  return div;
-		case '%':  return mod;
-		case '^':  return bxor;
-		case '&':  return band;
-		case '|':  return bor;
-		case '<<': return bsl;
-		case '>>': return bsr;
-		case '&&': return land;
-		case '||': return lor;
-		case '==': return eq;
-		case '!=': return ne;
-		case '<':  return lt;
-		case '>':  return gt;
-		case '<=': return le;
-		case '>=': return ge;
-		case '.':  return dot;
-		case '=':  return ass;
-
-		case '+=':  return addass;
-		case '-=':  return subass;
-		case '*=':  return mulass;
-		case '/=':  return divass;
-		case '%=':  return modass;
-		case '^=':  return bxorass;
-		case '&=':  return bandass;
-		case '|=':  return borass;
-		case '<<=': return bslass;
-		case '>>=': return bsrass;
-
-		case Token_as: return as;
-
-		default:
-			invalid_code_path();
-			break;
-	}
+#endif
 }
 
 // a.b[c] = ((a).(b))[c]
@@ -2040,7 +1987,7 @@ void print_parsed_expression(AstExpression *expression) {
 			auto bin = (AstBinaryOperator *)expression;
 			open();
 			print_parsed_expression(bin->left);
-			print(operator_string(bin->operation));
+			print(as_string(bin->operation));
 			print_parsed_expression(bin->right);
 			close();
 			break;
@@ -2101,25 +2048,27 @@ void parse_expression(Parser *parser, AstExpression **_expression) {
 		return;
 	}
 
-	defer {
-		if (expression) {
-			if (!simplify(parser->reporter, &expression))
-				expression = 0;
-		}
-	};
+	// defer {
+	// 	if (expression) {
+	// 		if (!simplify(parser->reporter, &expression))
+	// 			expression = 0;
+	// 	}
+	// };
 
 	AstBinaryOperator *top_binop = 0;
 	AstBinaryOperator *previous_binop = 0;
 	s32 previous_precedence = 0;
 
-	while (is_binary_operator(parser->token->kind)) {
+	while (auto maybe_operation = as_binary_operation(parser->token->kind)) {
+		auto operation = maybe_operation.value_unchecked();
+
 		auto binop = AstBinaryOperator::create();
 
 		defer { previous_binop = binop; };
 
 		binop->left = expression;
 
-		binop->operation = binary_operation_from_token(parser->token->kind);
+		binop->operation = operation;
 
 		if (!parser->next()) {
 			parser->reporter->error("Unexpected end of file after binary operator.");
@@ -2567,7 +2516,7 @@ void parse_statement(Parser *parser, AstStatement *&result) {
 				{
 					auto definition = AstOperatorDefinition::create();
 					definition->location = parser->token->string;
-					definition->operation = parser->token->kind;
+					definition->operation = as_binary_operation(parser->token->kind).value();
 
 					if (!parser->next_expect(':'))
 						return;
@@ -2588,13 +2537,13 @@ void parse_statement(Parser *parser, AstStatement *&result) {
 					result = definition;
 					return;
 				}
-				case Token_as: {
+				case 'as': {
 					if (!parser->next_not_end())
 						return;
 
 					auto definition = AstOperatorDefinition::create();
 					definition->location = parser->token->string;
-					definition->operation = Token_as;
+					definition->operation = BinaryOperation::as;
 					switch (parser->token->kind) {
 						case Token_implicit:
 							untypechecked_implicit_casts_count += 1;
@@ -2987,21 +2936,19 @@ void harden_type(AstExpression *expression) {
 	}
 }
 
-Box<AstLiteral> make_type_literal(AstExpression *type) {
-	timed_function(context.profiler);
-	AstLiteral result;
-	result.literal_kind = LiteralKind::type;
-	result.type_value = type;
-	result.type = type_type;
+AstLiteral *make_type_literal(AstExpression *type) {
+	auto result = AstLiteral::create();
+	result->literal_kind = LiteralKind::type;
+	result->type_value = type;
+	result->type = type_type;
 	return result;
 }
 
-Box<AstLiteral> make_bool(bool val) {
-	timed_function(context.profiler);
-	AstLiteral result;
-	result.literal_kind = LiteralKind::boolean;
-	result.Bool = val;
-	result.type = type_bool;
+AstLiteral *make_bool(bool val) {
+	auto result = AstLiteral::create();
+	result->literal_kind = LiteralKind::boolean;
+	result->Bool = val;
+	result->type = type_bool;
 	return result;
 }
 
@@ -3022,87 +2969,289 @@ void ensure_definition_is_resolved(TypecheckState *state, AstIdentifier *identif
 	}
 }
 
-Box<AstLiteral> evaluate(TypecheckState *state, AstExpression *expression) {
+AstLiteral *try_evaluate(TypecheckState *state, AstExpression *expression) {
 	timed_function(context.profiler);
+
+	using enum LiteralKind;
+
+	if (expression->evaluated)
+		return expression->evaluated;
+
+	AstLiteral *result = 0;
+	defer {
+		if (result)
+			expression->evaluated = result;
+	};
+
 	switch (expression->kind) {
-		case Ast_literal: return (AstLiteral *)expression;
+		case Ast_literal:
+			return result = (AstLiteral *)expression;
 		case Ast_identifier: {
 			auto ident = (AstIdentifier *)expression;
 
-			ensure_definition_is_resolved(state, ident);
+			if (!ident->definition) {
+				return 0;
+			}
 
 			auto definition = ident->definition;
 
 			if (!definition->is_constant) {
-				state->reporter.error(expression->location, "Can't evaluate expression at compile time: definition is not constant");
-				return nullptr;
+				// state->reporter.error(expression->location, "Can't evaluate expression at compile time: definition is not constant");
+				return 0;
 			}
 
-			if (definition->evaluated)
-				return definition->evaluated;
+			assert(definition->expression);
 
-			return definition->evaluated = evaluate(state, definition->expression);
+			return result = try_evaluate(state, definition->expression);
 		}
 		case Ast_binary_operator: {
 			auto bin = (AstBinaryOperator *)expression;
-			auto l = evaluate(state, bin->left);
-			if (!l) return nullptr;
-			auto r = evaluate(state, bin->right);
-			if (!r) return nullptr;
-			using enum BinaryOperation;
+
 			switch (bin->operation) {
-				case add: {
+				using enum BinaryOperation;
+				// Always evaluate both expressions.
+				case add:
+				case sub:
+				case mul:
+				case div:
+				case mod:
+				case bxor:
+				case band:
+				case bor:
+				case bsl:
+				case bsr:
+				case eq:
+				case ne:
+				case gt:
+				case lt:
+				case ge:
+				case le: {
+					auto l = try_evaluate(state, bin->left);
+					if (!l) {
+						return 0;
+					}
+
+					auto r = try_evaluate(state, bin->right);
+					if (!r) {
+						return 0;
+					}
+
 					assert(l->literal_kind == r->literal_kind);
-					switch (l->literal_kind) {
-						using enum LiteralKind;
-						case integer: return make_integer(l->integer + r->integer, bin->type);
-						case Float:   return make_float  (l->Float   + r->Float  , bin->type);
-						default: invalid_code_path();
+
+					switch (bin->operation) {
+						case add: {
+							switch (l->literal_kind) {
+								case integer: return result = make_integer(l->integer + r->integer, bin->type);
+								case Float:   return result = make_float  (l->Float   + r->Float  , bin->type);
+							}
+							invalid_code_path();
+						}
+						case sub: {
+							switch (l->literal_kind) {
+								case integer: return result = make_integer(l->integer - r->integer, bin->type);
+								case Float:   return result = make_float  (l->Float   - r->Float  , bin->type);
+							}
+							invalid_code_path();
+						}
+						case mul: {
+							switch (l->literal_kind) {
+								case integer: return result = make_integer(l->integer * r->integer, bin->type);
+								case Float:   return result = make_float  (l->Float   * r->Float  , bin->type);
+							}
+							invalid_code_path();
+						}
+						case div: {
+							switch (l->literal_kind) {
+								case integer: return result = make_integer(l->integer / r->integer, bin->type);
+								case Float:   return result = make_float  (l->Float   / r->Float  , bin->type);
+							}
+							invalid_code_path();
+						}
+						case mod: {
+							switch (l->literal_kind) {
+								case integer: return result = make_integer(l->integer % r->integer, bin->type);
+							}
+							invalid_code_path();
+						}
+						case bxor: {
+							switch (l->literal_kind) {
+								case integer: return result = make_integer(l->integer ^ r->integer, bin->type);
+							}
+							invalid_code_path();
+						}
+						case band: {
+							switch (l->literal_kind) {
+								case integer: return result = make_integer(l->integer & r->integer, bin->type);
+							}
+							invalid_code_path();
+						}
+						case bor: {
+							switch (l->literal_kind) {
+								case integer: return result = make_integer(l->integer | r->integer, bin->type);
+							}
+							invalid_code_path();
+						}
+						case eq: {
+							switch (l->literal_kind) {
+								case integer:   return result = make_bool(l->integer   == r->integer  );
+								case Float:     return result = make_bool(l->Float     == r->Float    );
+								case boolean:   return result = make_bool(l->Bool      == r->Bool     );
+								case character: return result = make_bool(l->character == r->character);
+								case string:    return result = make_bool(l->string    == r->string   );
+								case type:      return result = make_bool(types_match(l->type_value, r->type_value));
+							}
+							invalid_code_path();
+						}
+						case ne: {
+							switch (l->literal_kind) {
+								case integer:   return result = make_bool(l->integer   != r->integer  );
+								case Float:     return result = make_bool(l->Float     != r->Float    );
+								case boolean:   return result = make_bool(l->Bool      != r->Bool     );
+								case character: return result = make_bool(l->character != r->character);
+								case string:    return result = make_bool(l->string    != r->string   );
+								case type:      return result = make_bool(!types_match(l->type_value, r->type_value));
+							}
+							invalid_code_path();
+						}
+						case gt: {
+							switch (l->literal_kind) {
+								case integer:   return result = make_bool(l->integer   > r->integer  );
+								case Float:     return result = make_bool(l->Float     > r->Float    );
+								case boolean:   return result = make_bool(l->Bool      > r->Bool     );
+								case character: return result = make_bool(l->character > r->character);
+							}
+							invalid_code_path();
+						}
+						case lt: {
+							switch (l->literal_kind) {
+								case integer:   return result = make_bool(l->integer   < r->integer  );
+								case Float:     return result = make_bool(l->Float     < r->Float    );
+								case boolean:   return result = make_bool(l->Bool      < r->Bool     );
+								case character: return result = make_bool(l->character < r->character);
+							}
+							invalid_code_path();
+						}
+						case ge: {
+							switch (l->literal_kind) {
+								case integer:   return result = make_bool(l->integer   >= r->integer  );
+								case Float:     return result = make_bool(l->Float     >= r->Float    );
+								case boolean:   return result = make_bool(l->Bool      >= r->Bool     );
+								case character: return result = make_bool(l->character >= r->character);
+							}
+							invalid_code_path();
+						}
+						case le: {
+							switch (l->literal_kind) {
+								case integer:   return result = make_bool(l->integer   <= r->integer  );
+								case Float:     return result = make_bool(l->Float     <= r->Float    );
+								case boolean:   return result = make_bool(l->Bool      <= r->Bool     );
+								case character: return result = make_bool(l->character <= r->character);
+							}
+							invalid_code_path();
+						}
 					}
-				}
-				case sub: {
-					assert(l->literal_kind == r->literal_kind);
-					switch (l->literal_kind) {
-						using enum LiteralKind;
-						case integer: return make_integer(l->integer - r->integer, bin->type);
-						case Float:   return make_float  (l->Float   - r->Float  , bin->type);
-						default: invalid_code_path();
-					}
-				}
-				case mul: {
-					assert(l->literal_kind == r->literal_kind);
-					switch (l->literal_kind) {
-						using enum LiteralKind;
-						case integer: return make_integer(l->integer * r->integer, bin->type);
-						case Float:   return make_float  (l->Float   * r->Float  , bin->type);
-						default: invalid_code_path();
-					}
-				}
-				case div: {
-					assert(l->literal_kind == r->literal_kind);
-					switch (l->literal_kind) {
-						using enum LiteralKind;
-						case integer: return make_integer(l->integer / r->integer, bin->type);
-						case Float:   return make_float  (l->Float   / r->Float  , bin->type);
-						default: invalid_code_path();
-					}
-				}
-				case eq: {
-					assert(l->literal_kind == LiteralKind::type);
-					assert(r->literal_kind == LiteralKind::type);
-					bool val = types_match(l->type_value, r->type_value);
-					if (!val) {
-						int x = 4;
-					}
-					return make_bool(val);
-				}
-				default:
 					invalid_code_path();
-					return nullptr;
+				}
+				// Evaluate at least one expression
+				case land: {
+					auto l = try_evaluate(state, bin->left);
+					if (!l) {
+						return 0;
+					}
+					assert(l->literal_kind == LiteralKind::boolean);
+					if (!l->Bool) {
+						return result = l;
+					}
+
+					auto r = try_evaluate(state, bin->right);
+					if (r)
+						assert(r->literal_kind == LiteralKind::boolean);
+					return result = r;
+				}
+				case lor: {
+					auto l = try_evaluate(state, bin->left);
+					if (!l) {
+						return 0;
+					}
+					assert(l->literal_kind == LiteralKind::boolean);
+					if (l->Bool) {
+						return result = l;
+					}
+
+					auto r = try_evaluate(state, bin->right);
+					if (r)
+						assert(r->literal_kind == LiteralKind::boolean);
+					return result = r;
+				}
+				case as: {
+					auto value = try_evaluate(state, bin->left);
+					if (!value) {
+						return 0;
+					}
+
+					if (value->literal_kind == LiteralKind::integer) {
+						auto copied = copy(value->integer);
+						assert(BigInteger::bits_in_part == 64, "this algorithm relies on part being 64 bit wide");
+						if (types_match(bin->right, type_u8)) {
+							copied.msb = 0;
+							copied.parts.resize(1);
+							copied.parts.data[0] &= 0xFF;
+						} else if (types_match(bin->right, type_u16)) {
+							copied.msb = 0;
+							copied.parts.resize(1);
+							copied.parts.data[0] &= 0xFFFF;
+						} else if (types_match(bin->right, type_u32)) {
+							copied.msb = 0;
+							copied.parts.resize(1);
+							copied.parts.data[0] &= 0xFFFFFFFF;
+						} else if (types_match(bin->right, type_u64) || ::is_pointer(bin->right)) {
+							copied.msb = 0;
+							copied.parts.resize(1);
+						} else if (types_match(bin->right, type_s8)) {
+							copied.parts.resize(1);
+							copied.parts.data[0] &= 0xFF;
+							copied.msb = copied.parts.data[0] & 0x80;
+							copied.parts.data[0] |= copied.msb ? ~0xFF : 0;
+						} else if (types_match(bin->right, type_s16)) {
+							copied.parts.resize(1);
+							copied.parts.data[0] &= 0xFFFF;
+							copied.msb = copied.parts.data[0] & 0x8000;
+							copied.parts.data[0] |= copied.msb ? ~0xFFFF : 0;
+						} else if (types_match(bin->right, type_s32)) {
+							copied.parts.resize(1);
+							copied.parts.data[0] &= 0xFFFFFFFF;
+							copied.msb = copied.parts.data[0] & 0x80000000;
+							copied.parts.data[0] |= copied.msb ? ~0xFFFFFFFF : 0;
+						} else if (types_match(bin->right, type_s64)) {
+							copied.parts.resize(1);
+							copied.msb = copied.parts.data[0] & 0x8000000000000000;
+						} else {
+							invalid_code_path();
+						}
+						return result = make_integer(copied, bin->right);
+					} else {
+						invalid_code_path();
+					}
+					break;
+				}
+				case ass:
+				case addass:
+				case subass:
+				case mulass:
+				case divass:
+				case modass:
+				case bxorass:
+				case bandass:
+				case borass:
+				case bslass:
+				case bsrass:
+				case dot:
+					return 0;
 			}
+			invalid_code_path();
 		}
 		case Ast_struct: {
-			return make_type_literal(expression);
+			return result = make_type_literal(expression);
 		}
 		case Ast_unary_operator: {
 			auto unop = (AstUnaryOperator *)expression;
@@ -3110,18 +3259,29 @@ Box<AstLiteral> evaluate(TypecheckState *state, AstExpression *expression) {
 			switch (unop->operation) {
 				using enum UnaryOperation;
 				case typeof:
-					return make_type_literal(unop->expression->type);
-				default: {
-					if (types_match(expression->type, type_type)) {
-						auto child = evaluate(state, unop->expression);
-						if (!child)
-							return nullptr;
+					return result = make_type_literal(unop->expression->type);
+				case minus: {
+					result = try_evaluate(state, unop->expression);
+					if (!result)
+						return 0;
 
-						if (child->literal_kind == LiteralKind::type) {
-							return make_type_literal(make_pointer_type(child->type_value));
-						}
+					switch (result->literal_kind) {
+						case integer: return result = make_integer(-result->integer, result->type);
+						case Float:   return result = make_float  (-result->Float,   result->type);
 					}
 					invalid_code_path();
+				}
+				default: {
+					if (types_match(expression->type, type_type)) {
+						auto child = try_evaluate(state, unop->expression);
+						if (!child)
+							return 0;
+
+						if (child->literal_kind == LiteralKind::type) {
+							return result = make_type_literal(make_pointer_type(child->type_value));
+						}
+					}
+					return 0;
 				}
 			}
 
@@ -3131,28 +3291,49 @@ Box<AstLiteral> evaluate(TypecheckState *state, AstExpression *expression) {
 			// TODO: this is very limited right now
 			auto call = (AstCall *)expression;
 			auto lambda = get_lambda(call->callable);
+			if (!lambda)
+				return 0;
 			if (lambda->body_scope.statements.count != 1) {
-				state->reporter.error(expression->location, "Can't evaluate expression at compile time: definition is not constant");
-				return nullptr;
+				// state->reporter.error(expression->location, "Can't evaluate expression at compile time: definition is not constant");
+				return 0;
 			}
-			assert(lambda->body_scope.statements[0]->kind == Ast_return);
-			return evaluate(state, ((AstReturn *)lambda->body_scope.statements[0])->expression);
+			if (lambda->body_scope.statements[0]->kind == Ast_return) {
+				return result = try_evaluate(state, ((AstReturn *)lambda->body_scope.statements[0])->expression);
+			}
+			break;
 		}
 		case Ast_lambda: {
 			auto lambda = (AstLambda *)expression;
-			assert(!lambda->has_body);
-			assert(lambda->is_type);
-			return make_type_literal(lambda);
+			// assert(!lambda->has_body);
+			// assert(!lambda->is_type);
+			// if (lambda->is_type) {
+			// 	return result = make_type_literal(lambda->type);
+			// }
+			return 0;
+		}
+		case Ast_lambda_type: {
+			return result = make_type_literal(expression);
 		}
 		case Ast_subscript: {
 			auto subscript = (AstSubscript *)expression;
-			assert(is_type(subscript->expression));
-			return make_type_literal(subscript);
+			if (is_type(subscript->expression)) {
+				return result = make_type_literal(subscript);
+			}
+			return 0;
 		}
 		default:
-			invalid_code_path();
+			return 0;
 	}
-	return nullptr;
+
+	return result;
+}
+AstLiteral *evaluate(TypecheckState *state, AstExpression *expression) {
+	auto evaluated = try_evaluate(state, expression);
+	if (!evaluated) {
+		state->reporter.error(expression->location, "Couldn't evaluate expression at compile time");
+		yield(TypecheckResult::fail);
+	}
+	return evaluated;
 }
 
 bool do_all_paths_explicitly_return(AstLambda *lambda, List<AstStatement *> statements) {
@@ -3306,7 +3487,7 @@ bool implicitly_cast(TypecheckState *state, Reporter *reporter, Expression<> *_e
 					}
 				}
 			} else if (::is_pointer(src_type)) {
-				if (::is_pointer(dst_type)) {
+				if (::is_pointer_internally(dst_type)) {
 					return allow_autocast();
 				} else if (::is_integer(dst_type)) {
 					if (get_size(dst_type) == 8) {
@@ -3655,6 +3836,7 @@ template <class T>
 T *copy_expression(T *expression) {
 	auto result = copy_node(expression);
 	result->type = expression->type;
+	result->evaluated = expression->evaluated;
 	return result;
 }
 
@@ -3758,7 +3940,6 @@ AstDefinition *deep_copy(AstDefinition *s) {
 	d->name = s->name;
 	d->expression = deep_copy(s->expression);
 	d->built_in = s->built_in;
-	d->evaluated = deep_copy(s->evaluated.pointer);
 	d->is_constant = s->is_constant;
 	d->is_parameter = s->is_parameter;
 	d->is_return_parameter = s->is_return_parameter;
@@ -3970,9 +4151,13 @@ void typecheck(TypecheckState *state, AstDefinition *definition) {
 
 	if (definition->is_constant) {
 		if (definition->expression) {
-			if (!is_constant(definition->expression)) {
-				state->reporter.error(definition->location, "Definition marked as constant, but assigned expression is not constant");
-				yield(TypecheckResult::fail);
+
+			// HACK:
+			if (definition->expression->kind != Ast_lambda) {
+				if (definition->expression->kind == Ast_identifier && ((AstIdentifier *)definition->expression)->possible_definitions.count) {
+				} else {
+					evaluate(state, definition->expression);
+				}
 			}
 		}
 	}
@@ -4236,7 +4421,7 @@ void typecheck(TypecheckState *state, AstStatement *statement) {
 			typecheck(state, assert->condition);
 
 			if (assert->is_constant) {
-				auto result = evaluate(state, assert->condition);
+				auto result = try_evaluate(state, assert->condition);
 				if (!result) {
 					yield(TypecheckResult::fail);
 				}
@@ -4265,7 +4450,7 @@ void typecheck(TypecheckState *state, AstStatement *statement) {
 			auto print = (AstPrint *)statement;
 			typecheck(state, print->expression);
 
-			auto result = evaluate(state, print->expression);
+			auto result = try_evaluate(state, print->expression);
 			if (!result) {
 				yield(TypecheckResult::fail);
 			}
@@ -4299,7 +4484,8 @@ void typecheck(TypecheckState *state, AstStatement *statement) {
 		case Ast_operator_definition: {
 			auto op = (AstOperatorDefinition *)statement;
 			switch (op->operation) {
-				case Token_as: {
+				using enum BinaryOperation;
+				case as: {
 					auto old_lambda = op->lambda;
 					typecheck(state, (Expression<> &)op->lambda);
 					assert(op->lambda == old_lambda);
@@ -4312,17 +4498,17 @@ void typecheck(TypecheckState *state, AstStatement *statement) {
 					}
 					break;
 				}
-				case '+':
-				case '-':
-				case '*':
-				case '/':
-				case '%':
-				case '^':
-				case '&':
-				case '|':
+				case add:
+				case sub:
+				case mul:
+				case div:
+				case mod:
+				case bxor:
+				case band:
+				case bor:
 				{
 					typecheck(state, (Expression<> &)op->lambda);
-					binary_operators.get_or_insert(binary_operation_from_token(op->operation)).add(op->lambda);
+					binary_operators.get_or_insert(op->operation).add(op->lambda);
 					break;
 				}
 				default: invalid_code_path();
@@ -4555,13 +4741,13 @@ AstExpression *typecheck(TypecheckState *state, AstCall *call) {
 							break;
 						}
 						if (resolved.lambda->parameters[i]->is_constant) {
-							auto evaluated_arg = evaluate(state, arguments[i].expression);
+							auto evaluated_arg = try_evaluate(state, arguments[i].expression);
 							if (!evaluated_arg) {
 								all_types_match = false;
 								break;
 							}
 
-							auto evaluated_param = evaluate(state, resolved.lambda->parameters[i]->expression);
+							auto evaluated_param = try_evaluate(state, resolved.lambda->parameters[i]->expression);
 							if (!evaluated_param) {
 								all_types_match = false;
 								break;
@@ -4636,6 +4822,7 @@ AstExpression *typecheck(TypecheckState *state, AstCall *call) {
 								type_def->name = ident->name;
 								type_def->expression = arg.expression->type;
 								type_def->type = type_type;
+								type_def->is_constant = true;
 								type_def->parent_lambda_or_struct = hardened_lambda;
 								add_to_scope(type_def, &hardened_lambda->type_scope);
 							}
@@ -4949,7 +5136,7 @@ AstExpression *typecheck(TypecheckState *state, AstBinaryOperator *bin) {
 	}
 
 	auto report_type_mismatch = [&] {
-		state->reporter.error(bin->location, "Can't use binary {} on types {} and {}", operator_string(bin->operation), type_to_string(bin->left->type), type_to_string(bin->right->type));
+		state->reporter.error(bin->location, "Can't use binary {} on types {} and {}", as_string(bin->operation), type_to_string(bin->left->type), type_to_string(bin->right->type));
 		yield(TypecheckResult::fail);
 	};
 
@@ -5030,7 +5217,7 @@ AstExpression *typecheck(TypecheckState *state, AstBinaryOperator *bin) {
 
 					return make_cast(array_address, bin->type);
 				} else if (identifier->name == "count"str) {
-					auto size = evaluate(state, array_type->index_expression);
+					auto size = try_evaluate(state, array_type->index_expression);
 					if (!size) {
 						state->reporter.error(array_type->index_expression->location, "INTERNAL ERROR: failed to evaluate index expression");
 						yield(TypecheckResult::fail);
@@ -5214,6 +5401,14 @@ AstExpression *typecheck(TypecheckState *state, AstBinaryOperator *bin) {
 						return bin;
 					} else if (r == type_unsized_integer && li) {
 						bin->right->type = l;
+						return bin;
+					}
+					break;
+				}
+				case land:
+				case lor: {
+					if (types_match(l, type_bool) && types_match(r, type_bool)) {
+						bin->type = type_bool;
 						return bin;
 					}
 					break;
@@ -5689,6 +5884,7 @@ void typecheck(TypecheckState *state, Expression<> &expression) {
 			assert(expression->type);
 			if (!SIMPLIFY(&state->reporter, expression))
 				yield(TypecheckResult::fail);
+			try_evaluate(state, expression);
 			assert(expression->type);
 		}
 	}};
@@ -6486,6 +6682,8 @@ restart_main:
 	double_char_tokens.insert("->"str);
 	double_char_tokens.insert(">>"str);
 	double_char_tokens.insert("<<"str);
+	double_char_tokens.insert("||"str);
+	double_char_tokens.insert("&&"str);
 
 	triple_char_tokens.insert(">>="str);
 	triple_char_tokens.insert("<<="str);
@@ -6848,9 +7046,7 @@ restart_main:
 			}
 		typecheck_break:;
 			if (fail) {
-				if (!printed_reports_count) {
-					immediate_error("Typechecking failed.");
-				}
+				print(Print_error, "Typechecking failed.\n");
 				return 1;
 			}
 		}

@@ -112,7 +112,7 @@ void print_ast(AstCall *node) {
 	tab_count -= 1;
 }
 void print_ast(AstBinaryOperator *node) {
-	print_info("binary - operation: {}, type: {}, uid: {}\n", operator_string(node->operation), type_to_string(node->type, true), node->uid());
+	print_info("binary - operation: {}, type: {}, uid: {}\n", as_string(node->operation), type_to_string(node->type, true), node->uid());
 	tab_count += 1;
 
 	print_label("left:\n");
