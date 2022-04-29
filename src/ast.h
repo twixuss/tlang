@@ -44,6 +44,7 @@ e(null) \
 e(definition) \
 e(return) \
 e(lambda) \
+e(lambda_type) \
 e(identifier) \
 e(literal) \
 e(call) \
@@ -361,7 +362,11 @@ enum class CallingConvention : u8 {
 	stdcall,
 };
 
-// MYTYPEISME
+struct AstLambdaType : AstExpression, ExpressionPool<AstLambdaType> {
+	AstLambdaType() { kind = Ast_lambda_type; }
+	Expression<AstLambda> lambda;
+};
+
 struct AstLambda : AstExpression, ExpressionPool<AstLambda> {
 	AstLambda() {
 		kind = Ast_lambda;
@@ -804,49 +809,7 @@ HeapString type_name     (AstExpression *type, bool silent_error = false);
 
 s64 get_align(AstExpression *type);
 
-inline s64 get_size(AstExpression *type) {
-	assert(type);
-	switch (type->kind) {
-		case Ast_struct: {
-			auto Struct = (AstStruct *)type;
-			return Struct->size;
-		}
-		case Ast_identifier: {
-			auto identifier = (AstIdentifier *)type;
-			return get_size(identifier->definition->expression);
-		}
-		case Ast_unary_operator: {
-			using enum UnaryOperation;
-			auto unop = (AstUnaryOperator *)type;
-			switch (unop->operation) {
-				case pointer:  return context.stack_word_size;
-				case typeof:   return get_size(unop->expression->type);
-				case option:   return get_size(unop->expression) + get_align(unop->expression);
-				default: invalid_code_path();
-			}
-		}
-		case Ast_subscript: {
-			auto subscript = (AstSubscript *)type;
-
-			auto count = get_constant_integer(subscript->index_expression);
-			assert(count.has_value());
-
-			return get_size(subscript->expression) * (s64)count.value();
-		}
-		case Ast_lambda: {
-			return context.stack_word_size;
-		}
-		case Ast_call: {
-			auto call = (AstCall *)type;
-			return get_size(call->type);
-		}
-		default: {
-			invalid_code_path();
-			return 0;
-		}
-	}
-}
-
+s64 get_size(AstExpression *type);
 s64 get_align(AstExpression *type);
 
 bool types_match(AstExpression *type_a, AstExpression *type_b);

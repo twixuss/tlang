@@ -1484,6 +1484,10 @@ static void append(Converter &conv, AstDefinition *definition) {
 		return;
 	}
 
+	// don't append overload sets
+	if (!definition->type)
+		return;
+
 	auto definition_size = get_size(definition->type);
 
 	// Don't do anything for constant definitions in lambdas

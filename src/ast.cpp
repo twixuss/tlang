@@ -127,13 +127,8 @@ bool can_be_global(AstStatement *statement) {
 }
 
 bool is_type(AstExpression *expression) {
-	if (types_match(expression->type, type_type))
-		return true;
-
-	if (expression->kind == Ast_lambda)
-		return ((AstLambda *)expression)->is_type;
-
-	return false;
+	assert(expression->type);
+	return types_match(expression->type, type_type);
 }
 
 void append_type(StringBuilder &builder, AstExpression *type, bool silent_error) {
@@ -160,8 +155,8 @@ void append_type(StringBuilder &builder, AstExpression *type, bool silent_error)
 			append(builder, Struct->definition->name);
 			break;
 		}
-		case Ast_lambda: {
-			auto lambda = (AstLambda *)type;
+		case Ast_lambda_type: {
+			auto lambda = ((AstLambdaType *)type)->lambda;
 
 			append(builder, "fn ");
 			switch (lambda->convention) {
@@ -253,6 +248,44 @@ HeapString type_name(AstExpression *type, bool silent_error) {
 	return (HeapString)to_string<MyAllocator>(builder);
 }
 
+s64 get_size(AstExpression *type) {
+	assert(type);
+	switch (type->kind) {
+		case Ast_struct: {
+			auto Struct = (AstStruct *)type;
+			return Struct->size;
+		}
+		case Ast_identifier: {
+			auto identifier = (AstIdentifier *)type;
+			return get_size(identifier->definition->expression);
+		}
+		case Ast_unary_operator: {
+			using enum UnaryOperation;
+			auto unop = (AstUnaryOperator *)type;
+			switch (unop->operation) {
+				case pointer:  return context.stack_word_size;
+				case typeof:   return get_size(unop->expression->type);
+				case option:   return get_size(unop->expression) + get_align(unop->expression);
+				default: invalid_code_path();
+			}
+		}
+		case Ast_subscript: {
+			auto subscript = (AstSubscript *)type;
+
+			auto count = get_constant_integer(subscript->index_expression);
+			assert(count.has_value());
+
+			return get_size(subscript->expression) * (s64)count.value();
+		}
+		case Ast_lambda_type: {
+			return context.stack_word_size;
+		}
+		default: {
+			invalid_code_path();
+			return 0;
+		}
+	}
+}
 
 s64 get_align(AstExpression *type) {
 	assert(type);
@@ -277,7 +310,7 @@ s64 get_align(AstExpression *type) {
 			auto subscript = (AstSubscript *)type;
 			return get_align(subscript->expression);
 		}
-		case Ast_lambda: {
+		case Ast_lambda_type: {
 			return 8;
 		}
 		default: {
@@ -313,40 +346,41 @@ bool types_match_ns(AstExpression *a, AstExpression *b) {
 		return false;
 	}
 
-	if (a->kind == Ast_struct) {
-		return a == b;
+	switch (a->kind) {
+		case Ast_struct:
+			return a == b;
+		case Ast_unary_operator:
+			return types_match(((AstUnaryOperator *)a)->expression, ((AstUnaryOperator *)b)->expression);
+
+
+		case Ast_subscript: {
+			auto eq = [](auto a, auto b) {
+				if (!a.has_value()) return false;
+				if (!b.has_value()) return false;
+				return a.value() == b.value();
+			};
+			return types_match(((AstSubscript *)a)->expression, ((AstSubscript *)b)->expression) &&
+				eq(get_constant_integer(((AstSubscript *)a)->index_expression),
+				get_constant_integer(((AstSubscript *)b)->index_expression));
+		}
+		case Ast_lambda_type: {
+			auto al = ((AstLambdaType *)a)->lambda;
+			auto bl = ((AstLambdaType *)b)->lambda;
+
+			assert(al);
+			assert(bl);
+
+			if (!same_argument_and_return_types(al, bl))
+				return false;
+
+			if (al->convention != bl->convention)
+				return false;
+
+			return true;
+		}
+
+		default: invalid_code_path();
 	}
-
-	if (a->kind == Ast_unary_operator) {
-		return types_match(((AstUnaryOperator *)a)->expression, ((AstUnaryOperator *)b)->expression);
-	}
-
-	auto eq = [](auto a, auto b) {
-		if (!a.has_value()) return false;
-		if (!b.has_value()) return false;
-		return a.value() == b.value();
-	};
-
-	if (a->kind == Ast_subscript) {
-		return types_match(((AstSubscript *)a)->expression, ((AstSubscript *)b)->expression) &&
-			eq(get_constant_integer(((AstSubscript *)a)->index_expression),
-			get_constant_integer(((AstSubscript *)b)->index_expression));
-	}
-
-	if (a->kind == Ast_lambda) {
-		auto al = (AstLambda *)a;
-		auto bl = (AstLambda *)b;
-
-		if (!same_argument_and_return_types(al, bl))
-			return false;
-
-		if (al->convention != bl->convention)
-			return false;
-
-		return true;
-	}
-
-	return false;
 }
 
 bool types_match(AstExpression *type_a, AstExpression *type_b) {
@@ -640,6 +674,8 @@ AstLambda *get_lambda(AstExpression *expression) {
 	switch (expression->kind) {
 		case Ast_lambda:
 			return (AstLambda *)expression;
+		case Ast_lambda_type:
+			return ((AstLambdaType *)expression)->lambda;
 		case Ast_identifier: {
 			auto ident = (AstIdentifier *)expression;
 			assert(ident->definition->expression);

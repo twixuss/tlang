@@ -8,6 +8,7 @@
             <Item Name="[value]" Condition="kind==Ast_definition          " Optional="true">*(AstDefinition         *)this</Item>
             <Item Name="[value]" Condition="kind==Ast_return              " Optional="true">*(AsReturn              *)this</Item>
             <Item Name="[value]" Condition="kind==Ast_lambda              " Optional="true">*(AstLambda             *)this</Item>
+            <Item Name="[value]" Condition="kind==Ast_lambda_type         " Optional="true">*(AstLambdaType         *)this</Item>
             <Item Name="[value]" Condition="kind==Ast_identifier          " Optional="true">*(AstIdentifier         *)this</Item>
             <Item Name="[value]" Condition="kind==Ast_literal             " Optional="true">*(AstLiteral            *)this</Item>
             <Item Name="[value]" Condition="kind==Ast_call                " Optional="true">*(AstCall               *)this</Item>

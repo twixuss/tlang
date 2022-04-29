@@ -911,10 +911,18 @@ AstDefinition *create_definition(Parser *parser, String name, AstExpression *typ
 	return definition;
 }
 
-// if `lambda` is 0, `parse_lambda` will create a new one.
-// otherwise it fills the passed one.
+AstLambdaType *create_lambda_type(AstLambda *lambda) {
+	auto type = AstLambdaType::create();
+	type->location = lambda->location;
+	type->lambda = lambda;
+	return type;
+}
+
 AstLambda *parse_lambda(Parser *parser, bool is_parsing_type) {
 	auto lambda = AstLambda::create();
+
+	lambda->location = parser->token->string;
+
 	if (!parser->next_not_end())  return 0;
 
 	if (parser->token->kind == Token_directive) {
@@ -935,8 +943,6 @@ AstLambda *parse_lambda(Parser *parser, bool is_parsing_type) {
 	}
 
 	if (!parser->expect('('))  return 0;
-
-	lambda->location = parser->token->string;
 
 	if (!parser->next_not_end())  return 0;
 
@@ -1043,6 +1049,7 @@ AstLambda *parse_lambda(Parser *parser, bool is_parsing_type) {
 		}
 	}
 
+	lambda->location = {lambda->location.begin(), parser->token[-1].string.end()};
 
 	if (parser->token->kind != '{' && parser->token->kind != '=>' && parser->token->kind != ';') {
 		parser->reporter->error(parser->token->string, "Expected '{{' or '=>' or ';' or ':' instead of '{}'.", parser->token->string);
@@ -1053,7 +1060,6 @@ AstLambda *parse_lambda(Parser *parser, bool is_parsing_type) {
 
 	if (is_parsing_type) {
 		lambda->has_body = false;
-		lambda->is_type = true;
 		if (parser->token->kind == '{' || parser->token->kind == '=>') {
 			parser->reporter->error(lambda->location, "Body of a lambda can not be specified after a #type directive.");
 			return 0;
@@ -1361,7 +1367,12 @@ AstExpression *parse_expression_0(Parser *parser) {
 
 		parse_function:
 
-			return parse_lambda(parser, is_parsing_type);
+			auto lambda = parse_lambda(parser, is_parsing_type);
+			if (is_parsing_type) {
+				return create_lambda_type(lambda);
+			}
+
+			return lambda;
 		}
 		case Token_struct: {
 			auto token = parser->token->string;
@@ -1949,6 +1960,7 @@ bool simplify(Reporter *reporter, AstExpression **_expression) {
 				break;
 			}
 			case Ast_lambda:
+			case Ast_lambda_type :
 			case Ast_struct:
 			case Ast_literal:
 			case Ast_call:
@@ -3965,22 +3977,28 @@ void typecheck(TypecheckState *state, AstDefinition *definition) {
 		}
 	}
 
-	assert(definition->type);
-
-	if (definition->type->kind != Ast_import) {
-		if (!is_type(definition->type)) {
-			if (!is_lambda(definition->type)) {
+	if (definition->type) {
+		if (definition->type->kind != Ast_import) {
+			if (!definition->type->type) {
 				state->reporter.error(definition->type->location, "This is not a type");
-				definition->type = type_unknown;
+				yield(TypecheckResult::fail);
+			}
+			if (!is_type(definition->type)) {
+				state->reporter.error(definition->type->location, "This is not a type");
+				// definition->type = type_unknown;
+				yield(TypecheckResult::fail);
+			}
+			if (!is_type(definition->type) && get_size(definition->type) == 0) {
+				state->reporter.error(definition->location.data ? definition->location : definition->type->location, "Defining a variable with 0 size is not allowed");
 				yield(TypecheckResult::fail);
 			}
 		}
-		if (!is_type(definition->type) && get_size(definition->type) == 0) {
-			state->reporter.error(definition->location.data ? definition->location : definition->type->location, "Defining a variable with 0 size is not allowed");
+	} else {
+		if (!definition->is_constant) {
+			state->reporter.error(definition->location, "Can't assign an overload set to a non constant definition.");
 			yield(TypecheckResult::fail);
 		}
 	}
-
 }
 void typecheck(TypecheckState *state, AstStatement *statement) {
 	auto _statement = statement;
@@ -4368,6 +4386,7 @@ AstExpression *typecheck(TypecheckState *, AstIdentifier     *);
 AstExpression *typecheck(TypecheckState *, AstCall           *);
 AstExpression *typecheck(TypecheckState *, AstLiteral        *);
 AstExpression *typecheck(TypecheckState *, AstLambda         *);
+AstExpression *typecheck(TypecheckState *, AstLambdaType     *);
 AstExpression *typecheck(TypecheckState *, AstBinaryOperator *);
 AstExpression *typecheck(TypecheckState *, AstUnaryOperator  *);
 AstExpression *typecheck(TypecheckState *, AstStruct         *);
@@ -4403,9 +4422,6 @@ void typecheck_body(TypecheckState *state, AstLambda *lambda) {
 }
 
 AstExpression *typecheck(TypecheckState *state, AstIdentifier *identifier) {
-	// if (identifier->location == "HDC"str)
-	// 	debug_break();
-
 	if (identifier->definition)
 		return identifier;
 
@@ -4421,7 +4437,6 @@ AstExpression *typecheck(TypecheckState *state, AstIdentifier *identifier) {
 	}
 	return identifier;
 }
-
 AstExpression *typecheck(TypecheckState *state, AstCall *call) {
 	typecheck(state, call->callable);
 
@@ -4880,7 +4895,8 @@ AstExpression *typecheck(TypecheckState *state, AstLambda *lambda) {
 	scoped_replace(state->current_lambda, lambda);
 	scoped_replace(state->current_lambda_or_struct, lambda);
 
-	lambda->type = lambda; // MYTYPEISME
+	lambda->type = create_lambda_type(lambda);
+	lambda->type->type = type_type;
 
 	if (lambda->is_poly) {
 		return lambda;
@@ -4906,6 +4922,11 @@ AstExpression *typecheck(TypecheckState *state, AstLambda *lambda) {
 	typecheck_body(state, lambda);
 
 	return lambda;
+}
+AstExpression *typecheck(TypecheckState *state, AstLambdaType *lambda_type) {
+	typecheck(state, lambda_type->lambda);
+	lambda_type->type = type_type;
+	return lambda_type;
 }
 AstExpression *typecheck(TypecheckState *state, AstBinaryOperator *bin) {
 	using enum BinaryOperation;
@@ -5471,6 +5492,8 @@ AstExpression *typecheck(TypecheckState *state, AstStruct *Struct) {
 		Struct->definition->type = Struct->type;
 	}
 
+	// if (Struct->definition && Struct->definition->name == "allocator")
+	// 	debug_break();
 
 	scoped_replace(state->current_lambda_or_struct, Struct);
 
@@ -5675,6 +5698,7 @@ void typecheck(TypecheckState *state, Expression<> &expression) {
 		case Ast_call:            expression = typecheck(state, (AstCall           *)expression); return;
 		case Ast_literal:         expression = typecheck(state, (AstLiteral        *)expression); return;
 		case Ast_lambda:          expression = typecheck(state, (AstLambda         *)expression); return;
+		case Ast_lambda_type:     expression = typecheck(state, (AstLambdaType     *)expression); return;
 		case Ast_binary_operator: expression = typecheck(state, (AstBinaryOperator *)expression); return;
 		case Ast_unary_operator:  expression = typecheck(state, (AstUnaryOperator  *)expression); return;
 		case Ast_struct:          expression = typecheck(state, (AstStruct         *)expression); return;
