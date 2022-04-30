@@ -2,15 +2,6 @@
 #include <tl/ram.h>
 #include <tl/process.h>
 
-umm append(StringBuilder &builder, AstKind kind) {
-	switch (kind) {
-#define e(name) case Ast_ ## name: return append(builder, u8#name##s);
-		ENUMERATE_AST_KIND(e)
-#undef e
-	}
-	return append(builder, "(unknown AstKind)");
-}
-
 s32 ast_node_uid_counter;
 
 BlockList<AstDefinition> ast_definitions;
@@ -204,12 +195,10 @@ void append_type(StringBuilder &builder, AstExpression *type, bool silent_error)
 			append_type(builder, subscript->expression, silent_error);
 			break;
 		}
-		case Ast_binary_operator: {
-			auto bin = (AstBinaryOperator *)type;
-			assert(bin->operation == BinaryOperation::dot);
-			append_type(builder, bin->left, silent_error);
-			append(builder, '.');
-			append_type(builder, bin->right, silent_error);
+		case Ast_span: {
+			auto subscript = (AstSpan *)type;
+			append(builder, "[]");
+			append_type(builder, subscript->expression, silent_error);
 			break;
 		}
 		default: {
@@ -278,17 +267,16 @@ s64 get_size(AstExpression *type) {
 		}
 		case Ast_subscript: {
 			auto subscript = (AstSubscript *)type;
-
 			auto count = get_constant_integer(subscript->index_expression);
 			assert(count.has_value());
 
 			return get_size(subscript->expression) * (s64)count.value();
 		}
+		case Ast_span: {
+			return context.stack_word_size*2; // pointer+count;
+		}
 		case Ast_lambda_type: {
 			return context.stack_word_size;
-		}
-		case Ast_binary_operator: {
-			return get_size(((AstBinaryOperator *)type)->right);
 		}
 		default: {
 			invalid_code_path();
@@ -372,12 +360,15 @@ bool types_match_ns(AstExpression *a, AstExpression *b) {
 				if (!b.has_value()) return false;
 				return a.value() == b.value();
 			};
-
 			auto as = (AstSubscript *)a;
 			auto bs = (AstSubscript *)b;
-
 			return types_match(as->expression, bs->expression) &&
 				eq(get_constant_integer(as->index_expression), get_constant_integer(bs->index_expression));
+		}
+		case Ast_span: {
+			auto as = (AstSpan *)a;
+			auto bs = (AstSpan *)b;
+			return types_match(as->expression, bs->expression);
 		}
 		case Ast_lambda_type: {
 			auto al = ((AstLambdaType *)a)->lambda;
@@ -391,22 +382,6 @@ bool types_match_ns(AstExpression *a, AstExpression *b) {
 
 			if (al->convention != bl->convention)
 				return false;
-
-			return true;
-		}
-		case Ast_binary_operator: {
-			auto ab = (AstBinaryOperator *)a;
-			auto bb = (AstBinaryOperator *)b;
-			if (ab->operation != bb->operation)
-				return false;
-
-			assert(ab->operation == BinaryOperation::dot);
-
-			if (!types_match(ab->left, bb->left))
-				false;
-
-			if (!types_match(ab->right, bb->right))
-				false;
 
 			return true;
 		}
@@ -616,14 +591,12 @@ bool is_pointer(AstExpression *type) {
 	}
 	return false;
 }
-
-bool is_lambda_type(AstExpression *expression) {
-	auto d = direct(expression);
+bool is_lambda_type(AstExpression *type) {
+	auto d = direct(type);
 	if (!d)
 		return false;
 	return d->kind == Ast_lambda_type;
 }
-
 
 bool is_pointer_internally(AstExpression *type) {
 	return is_lambda_type(type) || is_pointer(type);
@@ -649,43 +622,61 @@ AstUnaryOperator *as_pointer(AstExpression *type) {
 	return 0;
 }
 
-bool is_constant(AstExpression *expression) {
+AstLiteral *get_literal(AstExpression *expression) {
     switch (expression->kind) {
-		case Ast_import:
-		case Ast_literal:
-		case Ast_lambda:
-			return true;
-
-		case Ast_identifier: {
-			auto identifier = (AstIdentifier *)expression;
-
-			if (identifier->possible_definitions.count) {
-				// HACK: TODO: FIXME: this is to make passing overloaded functions working.
-				for (auto definition : identifier->possible_definitions) {
-					if (!definition->is_constant)
-						return false;
+        case Ast_literal: return (AstLiteral *)expression;
+        case Ast_identifier: {
+            auto identifier = (AstIdentifier *)expression;
+			if (identifier->definition) {
+				auto definition = identifier->definition;
+				if (definition->is_constant) {
+					return get_literal(definition->expression);
 				}
-				return true;
+            }
+            break;
+        }
+    }
+    return 0;
+}
+
+bool is_constant(AstExpression *expression) {
+    if (expression->kind == Ast_literal)
+        return true;
+
+    if (expression->kind == Ast_identifier) {
+        auto identifier = (AstIdentifier *)expression;
+
+		if (identifier->possible_definitions.count) {
+			// HACK: TODO: FIXME: this is to make passing overloaded functions working.
+			for (auto definition : identifier->possible_definitions) {
+				if (!definition->is_constant)
+					return false;
 			}
-
-			assert(identifier->definition);
-			if (identifier->definition)
-				return identifier->definition->is_constant;
-			return false;
+			return true;
 		}
 
-		case Ast_binary_operator: {
-			auto binop = (AstBinaryOperator *)expression;
-			return is_constant(binop->left) && is_constant(binop->right);
-		}
+		assert(identifier->definition);
+        if (identifier->definition)
+            return identifier->definition->is_constant;
+        return false;
+    }
 
-		case Ast_unary_operator: {
-			auto unop = (AstUnaryOperator *)expression;
-			return is_constant(unop->expression);
-		}
-	}
-	if (is_type(expression))
-		return true;
+    if (expression->kind == Ast_binary_operator) {
+        auto binop = (AstBinaryOperator *)expression;
+        return is_constant(binop->left) && is_constant(binop->right);
+    }
+
+    if (expression->kind == Ast_lambda) {
+        return true;
+    }
+
+    if (expression->kind == Ast_import) {
+        return true;
+    }
+
+    if (is_type(expression))
+        return true;
+
     return false;
 }
 
@@ -697,8 +688,7 @@ AstLambda *get_lambda(AstExpression *expression) {
 			return ((AstLambdaType *)expression)->lambda;
 		case Ast_identifier: {
 			auto ident = (AstIdentifier *)expression;
-			if (!ident->definition->expression)
-				return 0;
+			assert(ident->definition->expression);
 			return get_lambda(ident->definition->expression);
 		}
 	}
@@ -742,4 +732,17 @@ List<Expression<>> get_arguments(AstCall *call) {
 
 bool is_sized_array(AstExpression *type) {
 	return type->kind == Ast_subscript;
+}
+
+AstSubscript *as_array(AstExpression *type) {
+	auto d = direct(type);
+	if (d->kind == Ast_subscript)
+		return (AstSubscript *)d;
+	return 0;
+}
+AstSpan *as_span(AstExpression *type) {
+	auto d = direct(type);
+	if (d->kind == Ast_span)
+		return (AstSpan *)d;
+	return 0;
 }

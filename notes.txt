@@ -1,5 +1,6 @@
 CURRENT RESTRICTIONS:
-    MAX 4 bln definitions;
+    MAX 4 gb of definitions;
+    MAX 4 gb of expressions;
     MAX 4 gb source file
 
 /*
@@ -36,20 +37,28 @@ Then, arguments are pushed, the function is called, and parameters are erased fr
 
 Return from a function means just write in preallocated by the caller space
 
-Example state of the stack:
+Example state of the stack calling  fn (a: int, b: int): result: int
 
-ffff
-...
-previously allocated data
-return parameter 0
-return parameter 1
-parameter 0
-parameter 1
+local variables..
+result
+a
+b
 return address
 saved rbp <- rbp
 
-...
-0
+
+Example state of the stack calling  fn (a: int, b: []int): result: [4]int  with b=[4]int
+
+local variables..
+result[3]
+result[2]
+result[1]
+result[0]
+a
+b.count
+b.data -> ?
+return address
+saved rbp <- rbp
 
 
 

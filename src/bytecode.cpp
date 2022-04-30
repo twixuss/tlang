@@ -486,11 +486,6 @@ Instruction *add_instruction(Converter &conv, Instruction next) {
 
 			register_state[next.d] = register_state[next.s];
 
-			if (next.d == rs) {
-				assert(next.s == rb);
-				stack_state.cursor = stack_state.rb_offset;
-			}
-
 			break;
 		}
 		case mov1_rm: {
@@ -852,9 +847,6 @@ ValueRegisters value_registers(Register a, Register b) {
 [[nodiscard]] static ValueRegisters append(Converter &, AstIfx *);
 
 [[nodiscard]] static ValueRegisters append(Converter &conv, AstExpression *expression) {
-	if (expression->evaluated) {
-		return append(conv, expression->evaluated);
-	}
 	switch (expression->kind) {
 		case Ast_identifier:           return append(conv, (AstIdentifier *)expression);
 		case Ast_literal:              return append(conv, (AstLiteral *)expression);
@@ -1476,7 +1468,12 @@ static void append(Converter &conv, Scope &scope) {
 	scoped_replace(conv.ls->current_scope, &scope);
 	for (auto statement : scope.statements) {
 		push_comment(conv, (Span<utf8>)format("==== {}: {} ====", where(statement->location.data), statement->location));
+		auto cursor_before = conv.ls->stack_state.cursor;
 		append(conv, statement);
+		auto cursor_after = conv.ls->stack_state.cursor;
+		if (statement->kind != Ast_definition) {
+			assert(cursor_before == cursor_after);
+		}
 	}
 	for (auto Defer : reverse(scope.bytecode_defers)) {
 		append(conv, Defer->scope);
@@ -1564,8 +1561,8 @@ static void append(Converter &conv, AstDefinition *definition) {
 	} else {
 		if (definition->is_constant) {
 			if (definition->expression) {
-				auto literal = definition->expression->evaluated;
-				assert(literal);
+				auto literal = (AstLiteral *)get_literal(definition->expression);
+
 
 				switch (literal->literal_kind) {
 					case LiteralKind::integer: {
@@ -1944,7 +1941,6 @@ static ValueRegisters append(Converter &conv, AstBinaryOperator *bin) {
 		}
 	} else if (bin->operation == as) {
 		auto cast = bin;
-		append_to_stack(conv, cast->left);
 
 		if (is_pointer_internally(cast->left->type) && is_pointer_internally(cast->type)) {
 			return {};
@@ -1952,7 +1948,6 @@ static ValueRegisters append(Converter &conv, AstBinaryOperator *bin) {
 
 		AstExpression *from = 0;
 		AstExpression *to = 0;
-
 		if (is_pointer_internally(cast->left->type))
 			from = type_u64;
 		else
@@ -1962,6 +1957,41 @@ static ValueRegisters append(Converter &conv, AstBinaryOperator *bin) {
 			to = type_u64;
 		else
 			to = direct(cast->type);
+
+
+		{
+			auto array = as_array(from);
+			auto span = as_span(to);
+			if (array && span) {
+				I(push_c, (s64)get_constant_integer(array->index_expression).value());
+				push_address_of(conv, left);
+				return {};
+			}
+		}
+
+
+		append_to_stack(conv, cast->left);
+
+		{
+			// TODO: FIXME: HACK:
+			// extremely dumb way to access data and count members of span
+			auto span = as_span(from);
+			if (span) {
+				if (::is_integer(to)) {
+					//       count => count <- rs
+					// rs -> data
+					I(add_rc, rs, context.stack_word_size);
+				} else if (::is_pointer(to)) {
+					//       count => data <- rs
+					// rs -> data
+					I(pop_r, r0);
+					I(mov8_mr, rs, r0);
+				} else {
+					invalid_code_path();
+				}
+				return {};
+			}
+		}
 
 
 		// Here are integer cases
@@ -2608,7 +2638,7 @@ static ValueRegisters append(Converter &conv, AstLiteral *literal) {
 	else
 		push_comment(conv, format(u8"literal {}", literal->location));
 
-	// assert(literal->type != type_unsized_integer);
+	assert(literal->type != type_unsized_integer);
 	assert(literal->type != type_unsized_float);
 	auto dtype = direct(literal->type);
 
@@ -2721,10 +2751,32 @@ static ValueRegisters append(Converter &conv, AstLiteral *literal) {
 			}
 			break;
 		case boolean:
-			I(push_c, literal->Bool);
+			I(push_c, (u8)literal->Bool);
 			break;
 		case integer: {
-			I(push_c, (s64)literal->integer);
+			if (dtype == type_u8 ||
+				dtype == type_s8)
+				I(push_c, (u8)literal->integer);
+			else if (dtype == type_u16 ||
+					 dtype == type_s16)
+				I(push_c, (u16)literal->integer);
+			else if (dtype == type_u32 ||
+					 dtype == type_s32)
+				I(push_c, (u32)literal->integer);
+			else if (dtype == type_u64 ||
+					 dtype == type_s64 ||
+					 dtype == type_pointer_to_void)
+				I(push_c, (s64)literal->integer);
+			else if (dtype == type_f32) {
+				auto f = (f32)(s64)literal->integer;
+				I(push_c, *(s32 *)&f);
+			} else if (dtype == type_f64) {
+				auto f = (f64)(s64)literal->integer;
+				I(push_c, *(s64 *)&f);
+			}
+			else if (literal->type->kind == Ast_unary_operator && ((AstUnaryOperator *)literal->type)->operation == UnaryOperation::pointer)
+				I(push_c, (s64)literal->integer);
+			else invalid_code_path();
 			break;
 		}
 	}
@@ -2842,6 +2894,9 @@ static ValueRegisters append(Converter &conv, AstUnaryOperator *unop) {
 			I(add_rc, rs, get_align(unop->type));
 			return {};
 		}
+		case autocast: {
+			return append(conv, unop->expression);
+		}
 	}
 	invalid_code_path();
 }
@@ -2849,6 +2904,7 @@ static ValueRegisters append(Converter &conv, AstSubscript *subscript) {
 	push_comment(conv, format(u8"subscript {}", subscript->location));
 	auto element_size = get_size(subscript->type);
 	assert(element_size);
+
 
 	// TODO: order of evaluation matters
 
@@ -2860,9 +2916,16 @@ static ValueRegisters append(Converter &conv, AstSubscript *subscript) {
 
 		Optional<Register> addr_opt;
 		if (::is_pointer(subscript->expression->type)) {
+			// pointer indexing
 			append_to_stack(conv, subscript->expression);
 			I(pop_r, base_register);
+		} else if (auto span = as_span(subscript->expression->type)) {
+			// span indexing
+			append_to_stack(conv, subscript->expression);
+			I(pop_r, base_register);
+			I(add_rc, rs, context.stack_word_size);
 		} else {
+			// array indexing
 			addr_opt = load_address_of(conv, subscript->expression);
 			if (addr_opt) {
 				base_register = addr_opt.value_unchecked();
@@ -2887,8 +2950,17 @@ static ValueRegisters append(Converter &conv, AstSubscript *subscript) {
 	} else {
 		append_to_stack(conv, subscript->index_expression);
 		if (::is_pointer(subscript->expression->type)) {
+			// pointer indexing
 			append_to_stack(conv, subscript->expression);
+		} else if (auto span = as_span(subscript->expression->type)) {
+			// span indexing
+			append_to_stack(conv, subscript->expression);
+
+			// replace count with data
+			I(pop_r, r0);
+			I(mov8_mr, rs, r0);
 		} else {
+			// array indexing
 			// :PUSH_ADDRESS: TODO: Replace this with load_address_of
 			push_address_of(conv, subscript->expression);
 		}

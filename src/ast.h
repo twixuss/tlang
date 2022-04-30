@@ -39,8 +39,11 @@ struct Box {
     inline T *operator->() { return pointer; }
 };
 
-#define ENUMERATE_AST_KIND(e) \
-e(null) \
+// #define e(name)
+// ENUMERATE_AST_KIND
+// #undef e
+#define ENUMERATE_AST_KIND \
+e(unknown) \
 e(definition) \
 e(return) \
 e(lambda) \
@@ -55,6 +58,7 @@ e(expression_statement) \
 e(unary_operator) \
 e(while) \
 e(subscript) \
+e(span) \
 e(block) \
 e(tuple) \
 e(test) \
@@ -68,11 +72,22 @@ e(parse) \
 
 enum AstKind : u8 {
 #define e(name) Ast_ ## name,
-	ENUMERATE_AST_KIND(e)
+	ENUMERATE_AST_KIND
 #undef e
 };
 
-umm append(StringBuilder &builder, AstKind kind);
+inline String as_string(AstKind kind) {
+	switch (kind) {
+#define e(name) case Ast_ ## name: return #name##str;
+	ENUMERATE_AST_KIND
+#undef e
+	}
+	invalid_code_path();
+}
+
+inline umm append(StringBuilder &builder, AstKind kind) {
+	return append(builder, as_string(kind));
+}
 
 struct AstNode;
 struct AstStatement;
@@ -221,7 +236,7 @@ T *NEW(TL_LPC) {
 extern s32 ast_node_uid_counter;
 
 struct AstNode {
-	AstKind kind = Ast_null;
+	AstKind kind = Ast_unknown;
 	Span<utf8, u32> location;
 
 #if TL_DEBUG
@@ -253,7 +268,7 @@ struct AstExpressionStatement : AstStatement, StatementPool<AstExpressionStateme
 
 struct AstExpression : AstNode {
 	Expression<> type = {};
-	Expression<AstLiteral> evaluated = {};
+	// Expression<AstLiteral> evaluated = {};
 	bool is_parenthesized : 1 = false;
 };
 
@@ -290,7 +305,6 @@ struct AstLiteral : AstExpression, ExpressionPool<AstLiteral> {
 	AstLiteral() {
 		memset(this, 0, sizeof(*this));
 		kind = Ast_literal;
-		evaluated = this;
 	}
 	~AstLiteral() {}
 };
@@ -306,6 +320,8 @@ struct AstDefinition : AstStatement, StatementPool<AstDefinition> {
 	Expression<> expression = {};
 	Expression<> type = {};
 	Expression<> parent_lambda_or_struct = {};
+
+	Box<AstLiteral> evaluated = {};
 
 	// REFERENCE32(Scope, parent_scope);
 
@@ -679,10 +695,12 @@ struct AstSubscript : AstExpression, ExpressionPool<AstSubscript> {
 	Expression<> expression = {};
 	Expression<> index_expression = {};
 
-	// u64 simd_size = 0;
-
 	bool is_prefix : 1 = false;
-	// bool is_simd   : 1 = false;
+};
+
+struct AstSpan : AstExpression, ExpressionPool<AstSpan> {
+	AstSpan() { kind = Ast_span; }
+	Expression<> expression = {};
 };
 
 struct AstTest : AstStatement, StatementPool<AstTest> {
@@ -941,3 +959,7 @@ inline AstUnaryOperator *as_option(AstExpression *expression) {
 	}
 	return 0;
 }
+AstLiteral *get_literal(AstExpression *expression);
+
+AstSubscript *as_array(AstExpression *type);
+AstSpan *as_span(AstExpression *type);

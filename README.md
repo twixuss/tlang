@@ -119,13 +119,6 @@ get_string :: () { // no need to put `:string` in gere
   return "what's up";
 }
 ```
-## Functions always initialize the return value.
-```rs
-forgot_to_return :: fn (): int {
-  // oops. no return statement! no worries. this will always return 0.
-  // compiler will warn you if you forget to explicitly return.
-}
-```
 ## Named return parameters
 ```rs
 test :: fn (): named_return_value: int {
@@ -146,7 +139,18 @@ process :: (data: Data): result: ProcessedData  {
   return if condition then process1(data) else process2(data);
 }
 ```
-## Polymorphic functions
+## Functions always initialize the return value
+```rs
+forgot_to_return :: fn (): int {
+  // oops. no return statement! no worries. this will always return 0.
+
+  // I don't know if compiler should always warn you if you forget to explicitly return.
+  // For example when using named return parameters, this warning becomes kinda annoying.
+  // For now it will issue a warning only for unnamed return parameters.
+}
+```
+## Functions templates
+Function template can be used to create multiple functions with different parameter types or values:
 ```rs
 poly :: fn (x) {
   print(x);
@@ -157,17 +161,54 @@ main :: fn () {
   poly("Hello!");
 }
 ```
-## A bit of syntactic sugar:
+In this example two functions will be created.
+## Constant parameters
+You can force the parameter to be constant by using % operator:
+```rs
+get :: fn (value: %int) {
+  return value * 7;
+}
+```
+That way you can use `value` in places that require a constant, like array sizes.
+
+To call this function, you'll have to pass a constant to it.
+```rs
+get(12); // ok
+x := 12;
+get(x); // error, x is not constant.
+```
+This is a kind of function template. For every unique constant you pass in, a copy of the template will be instantiated. This can be used not only with values, but also types:
+```rs
+new :: (T: %type): *T {
+  return @malloc(#sizeof T);
+}
+```
+## A bit of syntactic sugar
 ```rs
 sweet :: fn () => "YEP";
 // this is equivalent to
 sweet :: fn () { return "YEP"; }
 ```
-## A pointer to a function:
+## A pointer to a function
 ```rs
-ptr : * #type fn (): int; // the same syntax is used for types. so to distinguish a type from a value we have to use #type directive.
+ptr : * #type fn (): int; // the same syntax is used for types. Because of that it's ambiguous if it's a type or a lambda without a body. So to distinguish between them we have to use #type directive.
 ```
+# Autocast
+You can easily cast an expression to a known type by using @ operator:
+```rs
+a: int;
+b: *void;
+// a = b;     // error, *void is not implicitly convertible to int.
+a = b as int; // have to explicitly specify the type.
+a = @b;       // same as previous, but the type is inferred.
+```
+Because type is inferred from the destination, this operator can be used only in specific places:
+ * definitions with explicit type: `x: int = @y`
+ * assignments: `x = @y`
+ * returns (when return type is not deduced): `return @y`
+ * calls: `x(@y)`
 
+If @ operator is used in a context where destination type is not known, it is ignored.
 # Features
 * Compiled
 * Compile time execution (only basic operations are supported for now)
