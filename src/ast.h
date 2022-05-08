@@ -69,6 +69,7 @@ e(defer) \
 e(print) \
 e(operator_definition) \
 e(parse) \
+e(pack) \
 
 enum AstKind : u8 {
 #define e(name) Ast_ ## name,
@@ -98,6 +99,8 @@ struct AstStruct;
 struct AstLiteral;
 struct AstDefer;
 struct AstCall;
+struct AstIdentifier;
+struct AstPack;
 
 #pragma pack(push, 1)
 template <class T>
@@ -274,6 +277,7 @@ struct AstExpression : AstNode {
 
 enum class LiteralKind : u8 {
 	none,
+	null,
 	integer,
 	boolean,
 	string,
@@ -320,6 +324,7 @@ struct AstDefinition : AstStatement, StatementPool<AstDefinition> {
 	Expression<> expression = {};
 	Expression<> type = {};
 	Expression<> parent_lambda_or_struct = {};
+	Expression<AstIdentifier> poly_ident = {};
 
 	Box<AstLiteral> evaluated = {};
 
@@ -334,6 +339,8 @@ struct AstDefinition : AstStatement, StatementPool<AstDefinition> {
 	bool built_in            : 1 = false;
 	bool is_return_parameter : 1 = false;
 	bool is_poly             : 1 = false;
+	bool is_pack             : 1 = false;
+	bool depends_on_poly     : 1 = false;
 };
 
 // Started with 176
@@ -351,7 +358,7 @@ struct AstIdentifier : AstExpression, ExpressionPool<AstIdentifier> {
 
 	KeyString name;
 
-	Statement<AstDefinition> definition;
+	AstDefinition *definition() { return possible_definitions.count == 1 ? possible_definitions.data[0] : 0; }
 
 	DefinitionList possible_definitions;
 
@@ -422,11 +429,14 @@ struct AstLambda : AstExpression, ExpressionPool<AstLambda> {
 	List<HardenedPoly> hardened_polys;
 	Expression<AstLambda> original_poly = {};
 
+	Statement<AstDefinition> pack = {};
+
 	bool has_body                   : 1 = true;
 	bool is_type                    : 1 = false;
 	bool finished_typechecking_head : 1 = false;
 	bool is_intrinsic               : 1 = false;
 	bool is_poly                    : 1 = false;
+	bool is_member                  : 1 = false;
 
 	ExternLanguage extern_language = {};
 	String extern_library;
@@ -455,8 +465,8 @@ struct AstTuple : AstExpression, ExpressionPool<AstTuple> {
 	List<Expression<>> expressions;
 };
 
-struct CallArgument {
-	Expression<> expression;
+struct NamedArgument {
+	AstExpression *expression;
 	KeyString name;
 };
 
@@ -464,8 +474,10 @@ struct AstCall : AstExpression, ExpressionPool<AstCall> {
 	AstCall() { kind = Ast_call; }
 
 	Expression<> callable = {};
-	List<CallArgument> arguments = {};
+	List<NamedArgument> unsorted_arguments = {};
+	List<AstExpression *> sorted_arguments = {};
 
+	Expression<AstLambdaType> lambda_type = {};
 };
 
 enum class StructLayout {
@@ -641,6 +653,7 @@ enum class UnaryOperation : u8 {
 	Sizeof,      // #sizeof
 	typeof,      // #typeof
 	option,      // ?
+	poly,        // $
 	count,
 	pointer_or_dereference_or_unwrap,
 };
@@ -659,9 +672,13 @@ inline String as_string(UnaryOperation unop) {
 		case Sizeof:      return "#sizeof"str;
 		case typeof:      return "#typeof"str;
 		case option:      return "?"str;
+		case poly:        return "$"str;
 		case pointer_or_dereference_or_unwrap: return "pointer_or_dereference_or_unwrap"str;
 	}
 	invalid_code_path();
+}
+inline umm append(StringBuilder &builder, UnaryOperation unop) {
+	return append(builder, as_string(unop));
 }
 
 inline Optional<UnaryOperation> as_unary_operation(Token token) {
@@ -674,6 +691,7 @@ inline Optional<UnaryOperation> as_unary_operation(Token token) {
 		case '*': return pointer_or_dereference_or_unwrap;
 		case '?': return option;
 		case '@': return autocast;
+		case '$': return poly;
 		case Token_directive:
 			if (token.string == "#sizeof") return Sizeof;
 			if (token.string == "#typeof") return typeof;
@@ -775,6 +793,13 @@ struct AstOperatorDefinition : AstStatement, StatementPool<AstOperatorDefinition
 	bool is_implicit : 1 = false;
 };
 
+struct AstPack : AstExpression, ExpressionPool<AstPack> {
+	AstPack() {
+		kind = Ast_pack;
+	}
+	List<AstExpression *> expressions = {};
+};
+
 extern AstStruct *type_type; // These can be referenced by user programmer
 extern AstStruct *type_void;
 extern AstStruct *type_bool;
@@ -833,8 +858,8 @@ inline Optional<BigInteger> get_constant_integer(AstExpression *expression) {
 		}
 		case Ast_identifier: {
 			auto ident = (AstIdentifier *)expression;
-			if (ident->definition && ident->definition->is_constant) {
-				return get_constant_integer(ident->definition->expression);
+			if (ident->definition() && ident->definition()->is_constant) {
+				return get_constant_integer(ident->definition()->expression);
 			}
 			break;
 		}
@@ -953,8 +978,8 @@ inline AstUnaryOperator *as_option(AstExpression *expression) {
 		}
 		case Ast_identifier: {
 			auto ident = (AstIdentifier *)expression;
-			assert(ident->definition->expression);
-			return as_option(ident->definition->expression);
+			assert(ident->definition()->expression);
+			return as_option(ident->definition()->expression);
 		}
 	}
 	return 0;
@@ -963,3 +988,5 @@ AstLiteral *get_literal(AstExpression *expression);
 
 AstSubscript *as_array(AstExpression *type);
 AstSpan *as_span(AstExpression *type);
+
+bool is_addressable(AstExpression *expression);

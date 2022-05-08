@@ -189,8 +189,8 @@ HeapString where(utf8 *location) {
 }
 
 void print_report(Report r) {
-	if (r.where.count)
-		print("{}: ", r.where);
+	if (r.location.data)
+		print("{}: ", where(r.location.data));
 	else
 		print(" ================ ");
 	switch (r.kind) {
@@ -363,17 +363,17 @@ const Strings strings_en = {
     {} <path> [options]
 Option                             Description
 --print-ast <when>                 Print the abstract syntax tree of the program
-when variants:
     parse                          After parsing
     type                           After typechecking
 --keep-temp                        Keep temporary files (build.bat, *.asm, etc)
---output <path>                    Specify pathname of resulting executable.
---target <toolchain>               Generate the executable using specified toolchain.
-toolchain variants:
+--output <path>                    Specify pathname of resulting executable
+--target <toolchain>               Generate the executable using specified toolchain
     none
     fasm_x86_64_windows (default)
     nasm_x86_64_windows
---debug-path                       Print paths)",
+--debug-path                       Print paths
+--debug-poly                       Show polymorphic functions instantiations
+)",
 	.no_source_path_received = u8"No source path received.",
 	.error = u8"Error",
 	.warning = u8"Warning",
@@ -382,19 +382,18 @@ toolchain variants:
 const Strings strings_ru = {
 	.usage =u8R"(Использование:
     {} <путь> [опции]
-Опция                Описание
---print-ast <когда>  Вывести дерево программы
-    варианты:
-        parse        После парсинга
-        type         После проверки типов
---keep-temp          Сохранить временные файлы (build.bat, *.asm, etc)
---output <путь>      Путь к выходному исполняемому файлу.
---target <генератор> Генератор исполняемого файла.
-    варианты:
-        none
-        fasm_x86_64_windows (по умолчанию)
-        nasm_x86_64_windows
---debug-path         Вывести пути
+Опция                                  Описание
+--print-ast <когда>                    Вывести дерево программы
+    parse                              После парсинга
+    type                               После проверки типов
+--keep-temp                            Сохранить временные файлы (build.bat, *.asm, etc)
+--output <путь>                        Путь к выходному исполняемому файлу
+--target <генератор>                   Генератор исполняемого файла
+    none
+    fasm_x86_64_windows (по умолчанию)
+    nasm_x86_64_windows
+--debug-path                           Вывести пути
+--debug-poly                           Показать создание полиморфных функций
 )",
 	.no_source_path_received = u8"Не указан путь к исходному файлу.",
 	.error = u8"Ошибка",

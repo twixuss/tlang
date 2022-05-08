@@ -3,6 +3,10 @@
   "Id": "887185ac-60e5-40d9-bc99-f2de46cf0d29",
   "Items": [
     {
+      "Id": "b3d2ff19-d281-4ff1-9d54-ae7af5dc117a",
+      "Command": "--debug-poly"
+    },
+    {
       "Id": "c23521ab-0550-4dfa-b1ba-948610ced3db",
       "Command": "--target nasm_x86_64_windows"
     },

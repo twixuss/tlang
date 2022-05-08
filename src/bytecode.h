@@ -17,7 +17,9 @@ enum class Register : u8 {
 	r5,
 	r6,
 	r7,
-	r8, // rax
+	r8,  // rax
+	r9,  // r10
+	r10, // r11
 	rs,
 	rb,
 	count,
@@ -74,6 +76,8 @@ inline Address operator+(Address a, s64 c) {
 	a.c += c;
 	return a;
 }
+inline Address operator-(Register r, s64 c) { return r + (-c); }
+inline Address operator-(Address a, s64 c) { return a + (-c); }
 
 /*
 
@@ -108,6 +112,12 @@ enum class InstructionKind : u8 {
 	mov8_rm,
 	mov8_mc,
 	mov8_mr,
+
+	xchg_r,
+	xchg1_m,
+	xchg2_m,
+	xchg4_m,
+	xchg8_m,
 
 	movsx21_rm,
 	movsx41_rm,
@@ -236,10 +246,8 @@ enum class InstructionKind : u8 {
 
 	copyf_mmc,
 	copyb_mmc,
-	copyf_ssc,
-	copyb_ssc,
-	copyf_rrr,
-	copyb_rrr,
+	copyf_mmr,
+	copyb_mmr,
 
 	setf_mcc,
 	setb_mcc,
@@ -319,6 +327,12 @@ struct Instruction {
 		struct { Address d; Register s; } mov2_mr;
 		struct { Address d; Register s; } mov4_mr;
 		struct { Address d; Register s; } mov8_mr;
+
+		struct { Register a, b; } xchg_r;
+		struct { Address a; Register b; } xchg1_m;
+		struct { Address a; Register b; } xchg2_m;
+		struct { Address a; Register b; } xchg4_m;
+		struct { Address a; Register b; } xchg8_m;
 
 		struct { Register d; Address s; } movsx21_rm;
 		struct { Register d; Address s; } movsx41_rm;
@@ -447,12 +461,10 @@ struct Instruction {
 		struct { s64 offset; Register reg; } jz_cr;
 		struct { s64 offset; Register reg; } jnz_cr;
 
-		struct { Register d, s; s64 size; } copyf_mmc;
-		struct { Register d, s; s64 size; } copyb_mmc;
-		struct { s64 size; } copyf_ssc;
-		struct { s64 size; } copyb_ssc;
-		struct { Register d, s, size; } copyf_rrr;
-		struct { Register d, s, size; } copyb_rrr;
+		struct { Address d, s; s64 size; } copyf_mmc;
+		struct { Address d, s; s64 size; } copyb_mmc;
+		struct { Address d, s; Register size; } copyf_mmr;
+		struct { Address d, s; Register size; } copyb_mmr;
 
 		struct { Address d; s32 s, size; } setf_mcc;
 		struct { Address d; s32 s, size; } setb_mcc;

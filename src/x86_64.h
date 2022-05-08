@@ -106,6 +106,8 @@ static Span<utf8> as_string(Register8  r){using enum Register8 ;switch(r){C( al)
 	C(r6, r14) \
 	C(r7, r15) \
 	C(r8, rax) \
+	C(r9, r10) \
+	C(r10, r11) \
 	C(rs, rsp) \
 	C(rb, rbp)
 
@@ -433,11 +435,58 @@ inline void append_instruction(StringBuilder &builder, s64 idx, Instruction i) {
 		case jnz_cr: { auto reg = part1b(i.jnz_cr.reg); append_cformat(builder, "test {}, {}\njnz .{}", reg, reg, instruction_address(idx + i.jnz_cr.offset)); break; }
 
 			// Here move into rcx must be last, because it can be source for rdi or rsi
-		case copyf_mmc: append_cformat(builder, "mov rsi, {}\nmov rdi, {}\nmov rcx, {}\nrep movsb", i.copyf_mmc.s, i.copyf_mmc.d, i.copyf_mmc.size); break;
-		case copyb_mmc: append_cformat(builder, "lea rsi, [{} + {}]\nlea rdi, [{} + {}]\nmov rcx, {}\nstd\nrep movsb\ncld", i.copyb_mmc.s, i.copyb_mmc.size - 1, i.copyb_mmc.d, i.copyb_mmc.size - 1, i.copyb_mmc.size); break;
-		case copyf_ssc: append_cformat(builder, "pop rsi\npop rdi\nmov rcx, {}\nrep movsb", i.copyf_ssc.size); break;
-		case copyb_ssc: append_cformat(builder, "pop rsi\npop rdi\nadd rsi, {}\nadd rdi, {}\nmov rcx, {}\nstd\nrep movsb\ncld", i.copyb_ssc.size - 1, i.copyb_ssc.size - 1, i.copyb_ssc.size); break;
-		case copyf_rrr: append_cformat(builder, "mov rsi, {}\nmov rdi, {}\nmov rcx, {}\nrep movsb", i.copyf_rrr.s, i.copyf_rrr.d, i.copyf_rrr.size); break;
+		case copyf_mmc:
+			append_cformat(builder,
+				"lea rsi, {}\n"
+				"lea rdi, {}\n"
+				"mov rcx, {}\n"
+				"rep movsb",
+				i.copyf_mmc.s,
+				i.copyf_mmc.d,
+				i.copyf_mmc.size
+			);
+			break;
+		case copyb_mmc:
+			append_cformat(builder,
+				"lea rsi, {}\n"
+				"lea rdi, {}\n"
+				"mov rcx, {}\n"
+				"std\n"
+				"rep movsb\n"
+				"cld",
+				i.copyb_mmc.s + (i.copyb_mmc.size - 1),
+				i.copyb_mmc.d + (i.copyb_mmc.size - 1),
+				i.copyb_mmc.size
+			);
+			break;
+		case copyf_mmr:
+			append_cformat(builder,
+				"lea rsi, {}\n"
+				"lea rdi, {}\n"
+				"mov rcx, {}\n"
+				"rep movsb",
+				i.copyf_mmr.s,
+				i.copyf_mmr.d,
+				i.copyf_mmr.size
+			);
+			break;
+		case copyb_mmr:
+			append_cformat(builder,
+				"lea rsi, {}\n"
+				"lea rdi, {}\n"
+				"mov rcx, {}\n"
+				"add rsi, rcx\n"
+				"add rdi, rcx\n"
+				"dec rsi\n"
+				"dec rdi\n"
+				"std\n"
+				"rep movsb\n"
+				"cld",
+				i.copyb_mmr.s,
+				i.copyb_mmr.d,
+				i.copyb_mmr.size
+			);
+			break;
 		case setf_mcc: append_cformat(builder, "lea rdi, {}\nmov al, {}\nmov rcx, {}\nrep stosb", i.setf_mcc.d, i.setf_mcc.s, i.setf_mcc.size); break;
 		case setb_mcc: append_cformat(builder, "lea rdi, {}\nmov al, {}\nmov rcx, {}\nadd rdi, {}\nstd\nrep stosb\ncld", i.setb_mcc.d, i.setb_mcc.s, i.setb_mcc.size, i.setb_mcc.size-1); break;
 
@@ -706,8 +755,8 @@ inline void append_instruction(StringBuilder &builder, s64 idx, Instruction i) {
 					//"push rbp\n"
 					//"push r8\n"
 					//"push r9\n"
-					"push r10\n"
-					"push r11\n"
+					//"push r10\n"
+					//"push r11\n"
 					"push r12\n"
 					"push r13\n"
 					"push r14\n"
@@ -735,8 +784,8 @@ inline void append_instruction(StringBuilder &builder, s64 idx, Instruction i) {
 					"pop r14\n"
 					"pop r13\n"
 					"pop r12\n"
-					"pop r11\n"
-					"pop r10\n"
+					//"pop r11\n"
+					//"pop r10\n"
 					//"pop r9\n"
 					//"pop r8\n"
 					//"pop rbp\n"
@@ -753,7 +802,7 @@ inline void append_instruction(StringBuilder &builder, s64 idx, Instruction i) {
 
 			// keep the stack 16-byte aligned
 			if (count_bits(i.push_used_registers.mask) & 1)
-				append_cformat(builder, "add rsp, 8\n");
+				append_cformat(builder, "add rsp,8\n");
 
 			for (u64 bit = sizeof(i.push_used_registers.mask) * 8 - 1; bit != ~0; --bit) {
 				if ((i.push_used_registers.mask >> bit) & 1) {
@@ -761,6 +810,11 @@ inline void append_instruction(StringBuilder &builder, s64 idx, Instruction i) {
 				}
 			}
 			break;
+		case xchg_r: append_format(builder, "xchg {},{}", i.xchg_r.a, i.xchg_r.b); break;
+		case xchg1_m: append_format(builder, "xchg {},{}", i.xchg1_m.a, part1b(i.xchg1_m.b)); break;
+		case xchg2_m: append_format(builder, "xchg {},{}", i.xchg2_m.a, part2b(i.xchg2_m.b)); break;
+		case xchg4_m: append_format(builder, "xchg {},{}", i.xchg4_m.a, part4b(i.xchg4_m.b)); break;
+		case xchg8_m: append_format(builder, "xchg {},{}", i.xchg8_m.a, part8b(i.xchg8_m.b)); break;
 
 		default:invalid_code_path();
 	}

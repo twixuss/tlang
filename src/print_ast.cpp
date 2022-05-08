@@ -94,7 +94,7 @@ void print_ast(AstLambda *node) {
 	}
 }
 void print_ast(AstIdentifier *node) {
-	print_info("identifier - type: {}, uid: {}, definition.uid: {}\n", type_to_string(node->type, true), node->uid(), node->definition ? node->definition->uid() : -1);
+	print_info("identifier - type: {}, uid: {}, definition.uid: {}\n", type_to_string(node->type, true), node->uid(), node->definition() ? node->definition()->uid() : -1);
 }
 void print_ast(AstCall *node) {
 	print_info("call - type: {}, uid: {}\n", type_to_string(node->type, true), node->uid());
@@ -105,7 +105,7 @@ void print_ast(AstCall *node) {
 		tab_count -= 1;
 		print_label("arguments:\n");
 		tab_count += 1;
-		for (auto argument : node->arguments) {
+		for (auto argument : node->unsorted_arguments) {
 			print_ast(argument.expression);
 		}
 		tab_count -= 1;

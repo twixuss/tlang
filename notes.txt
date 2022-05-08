@@ -1,88 +1,15 @@
-CURRENT RESTRICTIONS:
+CURRENT LIMITATIONS:
     MAX 4 gb of definitions;
     MAX 4 gb of expressions;
-    MAX 4 gb source file
+    MAX 4 gb source file;
+    MAX 256 arguments;
+
+TODO: proper support for overload sets. get rid of hacks.
 
 /*
-Member access operator (dot) parsing right now is implemented as a special case binary operator.
-Maybe it makes more sense to do it in `parse_sub_expression_no_cast`?
-
-Should we check that all control paths return a value or just default initialize a return value by default?
-
-
-
-# Casting rules
-
-## Implicit cast
-
-- Integer conversion with no loss
-
-## Explicit cast
-
-- Integer conversion with loss
-- *X -> *Y
-- *X -> any int
-- any int -> *X
-
-
-
-
-Bytecode:
-
-Functions:
-
-Each parameter (including returned) is aligned to 8 byte boundary.
-First, space for return parameters is reserved.
-Then, arguments are pushed, the function is called, and parameters are erased from the stack
-
-Return from a function means just write in preallocated by the caller space
-
-Example state of the stack calling  fn (a: int, b: int): result: int
-
-local variables..
-result
-a
-b
-return address
-saved rbp <- rbp
-
-
-Example state of the stack calling  fn (a: int, b: []int): result: [4]int  with b=[4]int
-
-local variables..
-result[3]
-result[2]
-result[1]
-result[0]
-a
-b.count
-b.data -> ?
-return address
-saved rbp <- rbp
-
-
-
-idea for templated functions:
-To make a template, just don't specify the type of a parameter.
-The type then can be obtained using typeof directive:
-*/
-pow2 :: fn (x): #typeof x => x * x;
-/*
-Also it would be nice to add return type deduction. Like this:
-*/
-pow2 :: fn (x) => x * x;
-/*
-
-
-
-
 
 Why return type is after arguments?
 Because that way it can depend on input types.
-
-
-
-
 
 
 Thoughts about characters:

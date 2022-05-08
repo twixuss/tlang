@@ -61,12 +61,12 @@ Project("{911E67C6-3D85-4FCE-B560-20A9C3E3FF48}") = "opengl", "bin\opengl.exe", 
 		IORedirection = Auto
 	EndProjectSection
 EndProject
-Project("{911E67C6-3D85-4FCE-B560-20A9C3E3FF48}") = "main", "bin\main.exe", "{828FCB1A-C0E7-449E-A119-3DE02D2E2424}"
+Project("{911E67C6-3D85-4FCE-B560-20A9C3E3FF48}") = "main", "devtest\main.exe", "{8F715AF6-C73D-46FB-A071-922C2DAEECF0}"
 	ProjectSection(DebuggerProjectSystem) = preProject
 		PortSupplier = 00000000-0000-0000-0000-000000000000
-		Executable = F:\tlang\bin\main.exe
+		Executable = F:\tlang\devtest\main.exe
 		RemoteMachine = DESKTOP-2HA4U8E
-		StartingDirectory = F:\tlang\bin
+		StartingDirectory = F:\tlang\devtest
 		Environment = По умолчанию
 		LaunchingEngine = 00000000-0000-0000-0000-000000000000
 		UseLegacyDebugEngines = No
@@ -163,12 +163,12 @@ Global
 		{A86035D5-0807-4CE1-AE17-B426D64E42FE}.Release|x86.ActiveCfg = Release|x64
 		{A86035D5-0807-4CE1-AE17-B426D64E42FE}.UltraSpeed|x64.ActiveCfg = Release|x64
 		{A86035D5-0807-4CE1-AE17-B426D64E42FE}.UltraSpeed|x86.ActiveCfg = Release|x64
-		{828FCB1A-C0E7-449E-A119-3DE02D2E2424}.Debug|x64.ActiveCfg = Release|x64
-		{828FCB1A-C0E7-449E-A119-3DE02D2E2424}.Debug|x86.ActiveCfg = Release|x64
-		{828FCB1A-C0E7-449E-A119-3DE02D2E2424}.Release|x64.ActiveCfg = Release|x64
-		{828FCB1A-C0E7-449E-A119-3DE02D2E2424}.Release|x86.ActiveCfg = Release|x64
-		{828FCB1A-C0E7-449E-A119-3DE02D2E2424}.UltraSpeed|x64.ActiveCfg = Release|x64
-		{828FCB1A-C0E7-449E-A119-3DE02D2E2424}.UltraSpeed|x86.ActiveCfg = Release|x64
+		{8F715AF6-C73D-46FB-A071-922C2DAEECF0}.Debug|x64.ActiveCfg = Release|x64
+		{8F715AF6-C73D-46FB-A071-922C2DAEECF0}.Debug|x86.ActiveCfg = Release|x64
+		{8F715AF6-C73D-46FB-A071-922C2DAEECF0}.Release|x64.ActiveCfg = Release|x64
+		{8F715AF6-C73D-46FB-A071-922C2DAEECF0}.Release|x86.ActiveCfg = Release|x64
+		{8F715AF6-C73D-46FB-A071-922C2DAEECF0}.UltraSpeed|x64.ActiveCfg = Release|x64
+		{8F715AF6-C73D-46FB-A071-922C2DAEECF0}.UltraSpeed|x86.ActiveCfg = Release|x64
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

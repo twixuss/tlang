@@ -182,8 +182,8 @@ static void append_instructions(CompilerContext &context, StringBuilder &builder
 					i.copyb_mmc.s, i.copyb_mmc.size - 1, i.copyb_mmc.d, i.copyb_mmc.size - 1, i.copyb_mmc.size
 				);
 				break;
-			case copyf_ssc: append_format(builder, "pop rsi\npop rdi\nmov rcx, {}\ncld\nrep movsb", i.copyf_ssc.size); break;
-			case copyb_ssc: append_format(builder, "pop rsi\npop rdi\nadd rsi, {}\nadd rdi, {}\nmov rcx, {}\nstd\nrep movsb", i.copyb_ssc.size - 1, i.copyb_ssc.size - 1, i.copyb_ssc.size); break;
+			// case copyf_ssc: append_format(builder, "pop rsi\npop rdi\nmov rcx, {}\ncld\nrep movsb", i.copyf_ssc.size); break;
+			// case copyb_ssc: append_format(builder, "pop rsi\npop rdi\nadd rsi, {}\nadd rdi, {}\nmov rcx, {}\nstd\nrep movsb", i.copyb_ssc.size - 1, i.copyb_ssc.size - 1, i.copyb_ssc.size); break;
 			case setf_mcc: append_format(builder, "mov rdi, {}\nmov al, {}\nmov rcx, {}\ncld\nrep stosb", i.setf_mcc.d, i.setf_mcc.s, i.setf_mcc.size); break;
 			case setb_mcc: append_format(builder, "mov rdi, {}\nmov al, {}\nmov rcx, {}\nadd rdi, {}\nstd\nrep stosb", i.setb_mcc.d, i.setb_mcc.s, i.setb_mcc.size, i.setb_mcc.size-1); break;
 

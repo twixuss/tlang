@@ -170,7 +170,7 @@ void append_type(StringBuilder &builder, AstExpression *type, bool silent_error)
 		}
 		case Ast_identifier: {
 			auto identifier = (AstIdentifier *)type;
-			ensure(identifier->definition);
+			// ensure(identifier->definition);
 			// ensure(types_match(identifier->definition->expression->type, type_type));
 			append(builder, identifier->name);
 			break;
@@ -178,13 +178,8 @@ void append_type(StringBuilder &builder, AstExpression *type, bool silent_error)
 		case Ast_unary_operator: {
 			using enum UnaryOperation;
 			auto unop = (AstUnaryOperator *)type;
-			switch (unop->operation) {
-				case pointer:
-				case option:
-					append(builder, as_string(unop->operation));
-					append_type(builder, unop->expression, silent_error);
-					break;
-			}
+			append(builder, unop->operation);
+			append_type(builder, unop->expression, silent_error);
 			break;
 		}
 		case Ast_subscript: {
@@ -253,7 +248,7 @@ s64 get_size(AstExpression *type) {
 		}
 		case Ast_identifier: {
 			auto identifier = (AstIdentifier *)type;
-			return get_size(identifier->definition->expression);
+			return get_size(identifier->definition()->expression);
 		}
 		case Ast_unary_operator: {
 			using enum UnaryOperation;
@@ -294,7 +289,7 @@ s64 get_align(AstExpression *type) {
 		}
 		case Ast_identifier: {
 			auto identifier = (AstIdentifier *)type;
-			return get_align(identifier->definition->expression);
+			return get_align(identifier->definition()->expression);
 		}
 		case Ast_unary_operator: {
 			auto unop = (AstUnaryOperator *)type;
@@ -334,10 +329,10 @@ bool same_argument_and_return_types(AstLambda *a, AstLambda *b) {
 
 bool types_match_ns(AstExpression *a, AstExpression *b) {
 	while (a->kind == Ast_identifier) {
-		a = ((AstIdentifier *)a)->definition->expression;
+		a = ((AstIdentifier *)a)->definition()->expression;
 	}
 	while (b->kind == Ast_identifier) {
-		b = ((AstIdentifier *)b)->definition->expression;
+		b = ((AstIdentifier *)b)->definition()->expression;
 	}
 
 	if (a->kind != b->kind) {
@@ -402,9 +397,9 @@ AstExpression *direct(AstExpression *type) {
 		case Ast_identifier: {
 			do {
 				auto identifier = (AstIdentifier *)type;
-				if (!identifier->definition)
+				if (!identifier->definition())
 					return 0;
-				type = identifier->definition->expression;
+				type = identifier->definition()->expression;
 				if (!type)
 					return 0;
 			} while (type->kind == Ast_identifier);
@@ -431,7 +426,7 @@ AstStruct *get_struct(AstExpression *type) {
 
 AstExpression *get_definition_expression(AstExpression *expression) {
 	while (expression->kind == Ast_identifier)
-		expression = ((AstIdentifier *)expression)->definition->expression;
+		expression = ((AstIdentifier *)expression)->definition()->expression;
 	return expression;
 }
 
@@ -577,7 +572,7 @@ bool is_pointer(AstExpression *type) {
 	switch (type->kind) {
 		case Ast_identifier: {
 			auto ident = (AstIdentifier *)type;
-			return is_pointer(ident->definition->expression);
+			return is_pointer(ident->definition()->expression);
 		}
 		case Ast_unary_operator: {
 			auto unop = (AstUnaryOperator *)type;
@@ -605,7 +600,7 @@ AstUnaryOperator *as_pointer(AstExpression *type) {
 	switch (type->kind) {
 		case Ast_identifier: {
 			auto ident = (AstIdentifier *)type;
-			return as_pointer(ident->definition->expression);
+			return as_pointer(ident->definition()->expression);
 		}
 		case Ast_unary_operator: {
 			auto unop = (AstUnaryOperator *)type;
@@ -627,8 +622,8 @@ AstLiteral *get_literal(AstExpression *expression) {
         case Ast_literal: return (AstLiteral *)expression;
         case Ast_identifier: {
             auto identifier = (AstIdentifier *)expression;
-			if (identifier->definition) {
-				auto definition = identifier->definition;
+			if (identifier->definition()) {
+				auto definition = identifier->definition();
 				if (definition->is_constant) {
 					return get_literal(definition->expression);
 				}
@@ -655,9 +650,9 @@ bool is_constant(AstExpression *expression) {
 			return true;
 		}
 
-		assert(identifier->definition);
-        if (identifier->definition)
-            return identifier->definition->is_constant;
+		assert(identifier->definition());
+        if (identifier->definition())
+            return identifier->definition()->is_constant;
         return false;
     }
 
@@ -688,8 +683,14 @@ AstLambda *get_lambda(AstExpression *expression) {
 			return ((AstLambdaType *)expression)->lambda;
 		case Ast_identifier: {
 			auto ident = (AstIdentifier *)expression;
-			assert(ident->definition->expression);
-			return get_lambda(ident->definition->expression);
+			assert(ident->definition()->expression);
+			return get_lambda(ident->definition()->expression);
+		}
+		case Ast_binary_operator: {
+			auto bin = (AstBinaryOperator *)expression;
+			if (bin->operation == BinaryOperation::dot)
+				return get_lambda(bin->right);
+			break;
 		}
 	}
 	return 0;
@@ -745,4 +746,33 @@ AstSpan *as_span(AstExpression *type) {
 	if (d->kind == Ast_span)
 		return (AstSpan *)d;
 	return 0;
+}
+
+bool is_addressable(AstExpression *expression) {
+	switch (expression->kind) {
+		case Ast_identifier: {
+			return true;
+		}
+		case Ast_binary_operator: {
+			auto binop = (AstBinaryOperator *)expression;
+			if (binop->operation != BinaryOperation::dot)
+				break;
+
+			return is_addressable(binop->right);
+		}
+		case Ast_subscript: {
+			auto subscript = (AstSubscript *)expression;
+			assert(subscript->expression->kind == Ast_identifier);
+			auto identifier = (AstIdentifier *)subscript->expression;
+
+			return is_addressable(identifier);
+		}
+		case Ast_unary_operator: {
+			auto unop = (AstUnaryOperator *)expression;
+			if (unop->operation == UnaryOperation::dereference)
+				return true;
+			break;
+		}
+	}
+	return false;
 }

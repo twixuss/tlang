@@ -234,12 +234,7 @@ DECLARE_OUTPUT_BUILDER {
 
 		append_instructions(context, builder, bytecode.instructions);
 
-		{
-			auto file = open_file(asm_path, {.write = true});
-			defer { close(file); };
-
-			write(file, as_bytes(to_string(builder)));
-		}
+		write_entire_file(asm_path, as_bytes(to_string(builder)));
 	}
 
 	{
@@ -264,7 +259,7 @@ DECLARE_OUTPUT_BUILDER {
 			append_format(bat_builder, " {}.lib", library);
 		});
 
-		auto bat_path = to_pathchars(concatenate(context.compiler_directory, u8"\\nasm_build.bat"s));
+		auto bat_path = u8"nasm_build.bat"s;
 		write_entire_file(bat_path, as_bytes(to_string(bat_builder)));
 #if 1
 		timed_block(context.profiler, "nasm + link"s);
@@ -300,9 +295,13 @@ DECLARE_OUTPUT_BUILDER {
 			return;
 		}
 #endif
+		if (!context.keep_temp)
+			delete_file(bat_path);
 		print("Build succeeded\n");
 	}
 
+	if (!context.keep_temp)
+		delete_file(asm_path);
 }
 
 DECLARE_TARGET_INFORMATION_GETTER {

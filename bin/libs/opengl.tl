@@ -11,6 +11,7 @@ GLbyte     :: s8;
 GLshort    :: s16;
 GLint      :: s32;
 GLsizei    :: s32;
+GLsizeiptr :: int;
 GLubyte    :: u8;
 GLushort   :: u16;
 GLuint     :: u32;
@@ -490,3 +491,5 @@ glEnd   :: fn ();
 glFlush :: fn ();
 
 glGenBuffers_t :: #type fn (n: GLsizei, buffers: *GLuint);
+glBindBuffer_t :: #type fn (target: GLenum, buffer: GLuint);
+glBufferData_t :: #type fn (target: GLenum, size: GLsizeiptr, data: *GLvoid, usage: GLenum);

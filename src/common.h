@@ -188,6 +188,7 @@ struct CompilerContext {
 	s64 general_purpose_register_count = 0;
 	bool do_profile = false;
 	bool keep_temp = false;
+	bool debug_poly = false;
 };
 extern CompilerContext context;
 
@@ -216,7 +217,6 @@ enum class ReportKind {
 
 struct Report {
 	String location;
-	HeapString where;
 	HeapString message;
 	ReportKind kind;
 };
@@ -244,9 +244,6 @@ Report make_report(ReportKind kind, String location, Char const *format_string, 
 	Report r;
 	r.location = location;
 	r.kind = kind;
-	if (location.data) {
-		r.where = where(location.data);
-	}
 	r.message = (HeapString)format<MyAllocator>(format_string, args...);
 	return r;
 }

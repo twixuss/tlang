@@ -3,33 +3,33 @@
 
 #define ENUMERATE_KEYWORDS(E) \
 E(as,       'as') \
-E(return,   0x2000000) \
-E(fn,       0x2000001) \
-E(true,     0x2000002) \
-E(false,    0x2000003) \
-E(if,       0x2000004) \
-E(else,     0x2000005) \
-E(while,    0x2000007) \
-E(struct,   0x2000008) \
-E(import,   0x2000009) \
-E(null,     0x200000a) \
-/*E(unused, 0x200000b)*/ \
-E(then,     0x200000c) \
-E(simd,     0x200000d) \
-E(assert,   0x200000e) \
-E(defer,    0x200000f) \
-E(union,    0x2000010) \
-E(operator, 0x2000011) \
-E(implicit, 0x2000012) \
-E(explicit, 0x2000013) \
+E(fn,       'fn') \
+E(true,     'true') \
+E(if,       'if') \
+E(then,     'then') \
+E(else,     'else') \
+E(null,     'null') \
+E(this,     'this') \
+E(simd,     'simd') \
+E(return,   0x1000000) \
+E(false,    0x1000001) \
+E(while,    0x1000002) \
+E(struct,   0x1000003) \
+E(import,   0x1000004) \
+E(assert,   0x1000005) \
+E(defer,    0x1000006) \
+E(union,    0x1000007) \
+E(operator, 0x1000008) \
+E(implicit, 0x1000009) \
+E(explicit, 0x100000a) \
 
 #define ENUMERATE_TOKEN_KINDS(E) \
-E(identifier,        0x1000000) \
-E(integer_literal,   0x1000001) \
-E(string_literal,    0x1000002) \
-E(directive,         0x1000003) \
-E(character_literal, 0x1000004) \
-E(float_literal,     0x1000005) \
+E(identifier,        0x2000000) \
+E(integer_literal,   0x2000001) \
+E(string_literal,    0x2000002) \
+E(directive,         0x2000003) \
+E(character_literal, 0x2000004) \
+E(float_literal,     0x2000005) \
 ENUMERATE_KEYWORDS(E) \
 
 using TokenKind = u32;

@@ -106,16 +106,30 @@ Windows uses stdcall convention, so #stdcall directive says to use stdcall calli
 ```
 This directive says to use stdcall calling convention for ALL following functions. if you want to restore language default calling convention, use #tlangcall directive.
 # Types
-## optional
+## Optional
 ```rs
 func :: fn (a: ?string) {
   print(if a then *a else "a is empty");
 }
 ```
+## Array
+```rs
+array: [10]int;
+array[0] = 12;
+// pointer to first element is array.data
+// number of elements is array.count
+```
+## Span
+```rs
+span: []int;
+array: [5]int;
+span = array;
+// NOTE: when converting from an array to a span, if the array is not addressable (for example was returned from a function), the array is temporarily stored in a stack memory, which is cleared at the beginning of each statement. This allows to pass arrays to functions that accept spans. Be careful: do not store spans of temporaries and then try to access it in another statement.
+```
 # Functions
 ## Return type deduction
 ```rs
-get_string :: () { // no need to put `:string` in gere
+get_string :: () { // no need to put `:string` in here
   return "what's up";
 }
 ```
@@ -150,18 +164,19 @@ forgot_to_return :: fn (): int {
 }
 ```
 ## Functions templates
-Function template can be used to create multiple functions with different parameter types or values:
+Function template can be used to create multiple functions with different parameter types or values. You can create a template by making parameter's type polymorphic. A type is polymorphic if it contains `$` followed by a name.
 ```rs
-poly :: fn (x) {
-  print(x);
-  #print #typeof x; // will print int and string
+poly :: fn (x: $T) {
+  #print T; // prints at compile time
 }
-main :: fn () {
-  poly(123);  
-  poly("Hello!");
-}
+poly(123);      // prints int
+poly("Hello "); // prints string
+poly("World!"); // doesn't print anything because poly with string parameter is already instantiated and typechecked.
 ```
-In this example two functions will be created.
+If you don't need a type name, just omit the type completely:
+```rs
+poly :: fn (x) {...}
+```
 ## Constant parameters
 You can force the parameter to be constant by using % operator:
 ```rs
@@ -180,7 +195,7 @@ get(x); // error, x is not constant.
 This is a kind of function template. For every unique constant you pass in, a copy of the template will be instantiated. This can be used not only with values, but also types:
 ```rs
 new :: (T: %type): *T {
-  return @malloc(#sizeof T);
+  return malloc(#sizeof T) as *T;
 }
 ```
 ## A bit of syntactic sugar
@@ -192,6 +207,27 @@ sweet :: fn () { return "YEP"; }
 ## A pointer to a function
 ```rs
 ptr : * #type fn (): int; // the same syntax is used for types. Because of that it's ambiguous if it's a type or a lambda without a body. So to distinguish between them we have to use #type directive.
+```
+## Static functions
+```rs
+Thing :: struct {
+  static_function :: fn (...): ... {
+    ...
+  }
+}
+
+something := Thing.static_function(...);
+```
+## Member functions
+```rs
+Thing :: struct {
+  member_function :: fn (this, ...): ... {
+    ...
+  }
+}
+
+thing: Thing;
+something := thing.member_function(...);
 ```
 # Autocast
 You can easily cast an expression to a known type by using @ operator:
@@ -229,7 +265,7 @@ X :: 1337;
 #stdcall
 ExitProcess :: fn (ret: u32);
 ```
-* Source location constants
+* Source location
 ```rs
 print(#file); // source.tl
 print(#line); // 2
@@ -253,9 +289,7 @@ a :: 999999999999999999999999999 * 123456789;
 * Nested comments `/* /* /* */ */ */`
 
 ## TODO
-* Member functions
 * Builtin types
-  * union
   * variant
 * More useful standard library
 * SIMD
@@ -268,3 +302,21 @@ a :: 999999999999999999999999999 * 123456789;
 * Default arguments
 * Ability to specify the time at which an expression will be evaluated (compile time / runtime)
 * Caller argument expression string
+```rs
+func :: fn (a: string) {
+  #print #exprof a;
+}
+
+func(get_the_string(12, 34))
+
+// this should print "get_the_string(12, 34)"
+```
+* Deferred argument evaluation
+```rs
+func :: fn (defer a: string) {
+  if get_condition() print(a);
+}
+
+func(get_string());
+// get_string is called only if get_condition returned true
+```
