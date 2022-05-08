@@ -326,7 +326,7 @@ struct AstDefinition : AstStatement, StatementPool<AstDefinition> {
 	Expression<> parent_lambda_or_struct = {};
 	Expression<AstIdentifier> poly_ident = {};
 
-	Box<AstLiteral> evaluated = {};
+	AstLiteral *evaluated = {};
 
 	// REFERENCE32(Scope, parent_scope);
 
@@ -721,13 +721,11 @@ struct AstSpan : AstExpression, ExpressionPool<AstSpan> {
 	Expression<> expression = {};
 };
 
-struct AstTest : AstStatement, StatementPool<AstTest> {
+struct AstTest : AstExpression, ExpressionPool<AstTest> {
 	AstTest() {
 		kind = Ast_test;
 		scope.node = this;
 	}
-
-	bool should_compile = false;
 
 	Scope scope;
 };

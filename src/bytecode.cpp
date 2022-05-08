@@ -1529,6 +1529,9 @@ static void append(Converter &conv, Scope &scope) {
 				case Ast_definition:
 				case Ast_return:
 					break;
+				case Ast_if:
+					if (((AstIf *)statement)->is_constant)
+						break;
 				default:
 					assert(cursor_before == cursor_after);
 					break;
@@ -1548,8 +1551,8 @@ static void append(Converter &conv, Scope &scope) {
 }
 
 static void append(Converter &conv, AstDefinition *definition) {
-	if (definition->_uid == 99)
-		debug_break();
+	//if (definition->_uid == 99)
+	//	debug_break();
 
 	if (definition->built_in)
 		return;
@@ -1865,6 +1868,8 @@ static void append(Converter &conv, AstExpressionStatement *es) {
 	invalid_code_path();
 }
 static void append(Converter &conv, AstAssert *Assert) {
+	if (Assert->is_constant)
+		return;
 	push_comment(conv, format(u8"assert {}", Assert->location));
 
 	append_to_stack(conv, Assert->condition);
@@ -2496,7 +2501,7 @@ static ValueRegisters append(Converter &conv, AstIdentifier *identifier, Optiona
 	invalid_code_path();
 }
 static ValueRegisters append(Converter &conv, AstCall *call, Optional<Address> destination) {
-	//if (call->_uid == 1604)
+	//if (call->_uid == 1918)
 	//	debug_break();
 
 	assert(!destination);
@@ -2508,12 +2513,13 @@ static ValueRegisters append(Converter &conv, AstCall *call, Optional<Address> d
 
 	push_comment(conv, format(u8"call {}", call->callable->location));
 
-	auto lambda_type = get_lambda(call->lambda_type);
-	assert(lambda_type);
-	assert(lambda_type->parameters_size != -1);
+	//assert(lambda_type);
+	//assert(lambda_type->parameters_size != -1);
 
 	auto lambda = get_lambda(call->callable);
 	bool is_member = lambda && lambda->is_member;
+	assert(lambda->type->kind == Ast_lambda_type);
+	auto lambda_type = ((AstLambdaType *)lambda->type)->lambda;
 
 	// each argument's size is not more than context.stack_word_size.
 	// bigger arguments are passed as pointers.
@@ -2594,6 +2600,8 @@ static ValueRegisters append(Converter &conv, AstCall *call, Optional<Address> d
 	}
 
 	assert(context.stack_word_size == 8);
+
+	assert(call->sorted_arguments.count == call->unsorted_arguments.count);
 
 	auto &arguments = call->sorted_arguments;
 	bool lambda_is_constant = is_constant(call->callable);

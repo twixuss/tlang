@@ -47,6 +47,10 @@
       "Command": "../tests/implicit_casts.tl"
     },
     {
+      "Id": "cab5422f-cdb6-42e2-b063-344bbdc1b151",
+      "Command": "../tests/user_cast.tl"
+    },
+    {
       "Id": "7c05f5eb-beeb-4681-8aaa-9bf570d8c9d4",
       "Command": "F:\\tedit\\main.tl"
     }

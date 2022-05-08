@@ -62,6 +62,7 @@ static List<String> import_paths;
 
 AstDefinition *parse_definition(String name, Parser *parser);
 AstDefinition *parse_definition(Parser *parser);
+bool parse_block_or_single_statement(Parser *parser, Scope *scope);
 AstExpression *make_pointer_type(AstExpression *type);
 BinaryOperation binary_operation_from_token(TokenKind kind);
 
@@ -1523,6 +1524,18 @@ AstExpression *parse_expression_0(Parser *parser) {
 					result->location = parser->token->string;
 					parser->next();
 					return result;
+				} else if (parser->token->string == "#compiles"str) {
+					auto test = AstTest::create();
+					test->location = parser->token->string;
+
+					if (!parser->next_not_end())
+						return 0;
+
+					if (!parse_block_or_single_statement(parser, &test->scope)) {
+						return 0;
+					}
+
+					return test;
 				} else {
 					parser->reporter->error(parser->token->string, "Unexpected directive (expression).");
 					return 0;
@@ -1949,6 +1962,7 @@ bool simplify(Reporter *reporter, AstExpression **_expression) {
 			case Ast_subscript:
 			case Ast_span:
 			case Ast_ifx:
+			case Ast_test:
 				break;
 			default:
 				print(Print_warning, "unhandled case in simplify: {}\n", expression->kind);
@@ -2442,31 +2456,6 @@ void parse_statement(Parser *parser, AstStatement *&result) {
 
 				If->is_constant = true;
 				result = If;
-				return;
-			} else if (parser->token->string == "#test"str) {
-				auto test = AstTest::create();
-				test->location = parser->token->string;
-
-				if (!parser->next_not_end())
-					return;
-
-				if (parser->token->kind == Token_true) {
-					test->should_compile = true;
-				} else if (parser->token->kind == Token_false) {
-					test->should_compile = false;
-				} else {
-					parser->reporter->error(parser->token->string, "Unexpected token after #test directive, expected true or false.");
-					return;
-				}
-
-				if (!parser->next_not_end())
-					return;
-
-				if (!parse_block_or_single_statement(parser, &test->scope)) {
-					return;
-				}
-
-				result = test;
 				return;
 			} else if (parser->token->string == "#assert"str) {
 				auto assert = AstAssert::create();
@@ -2975,21 +2964,21 @@ void harden_type(AstExpression *expression) {
 	}
 }
 
-Box<AstLiteral> make_type_literal(AstExpression *type) {
+AstLiteral *make_type_literal(AstExpression *type) {
 	timed_function(context.profiler);
-	AstLiteral result;
-	result.literal_kind = LiteralKind::type;
-	result.type_value = type;
-	result.type = type_type;
+	auto result = AstLiteral::create();
+	result->literal_kind = LiteralKind::type;
+	result->type_value = type;
+	result->type = type_type;
 	return result;
 }
 
-Box<AstLiteral> make_bool(bool val) {
+AstLiteral *make_bool(bool val) {
 	timed_function(context.profiler);
-	AstLiteral result;
-	result.literal_kind = LiteralKind::boolean;
-	result.Bool = val;
-	result.type = type_bool;
+	auto result = AstLiteral::create();
+	result->literal_kind = LiteralKind::boolean;
+	result->Bool = val;
+	result->type = type_bool;
 	return result;
 }
 
@@ -3010,7 +2999,7 @@ void ensure_definition_is_resolved(TypecheckState *state, AstIdentifier *identif
 	}
 }
 
-Box<AstLiteral> evaluate(TypecheckState *state, AstExpression *expression) {
+AstLiteral *evaluate(TypecheckState *state, AstExpression *expression) {
 	timed_function(context.profiler);
 	switch (expression->kind) {
 		case Ast_literal: return (AstLiteral *)expression;
@@ -3097,6 +3086,13 @@ Box<AstLiteral> evaluate(TypecheckState *state, AstExpression *expression) {
 
 			switch (unop->operation) {
 				using enum UnaryOperation;
+				case bnot: {
+					auto child = evaluate(state, unop->expression);
+					if (!child)
+						return nullptr;
+					assert(child->literal_kind == LiteralKind::boolean);
+					return make_bool(!child->Bool);
+				}
 				case typeof:
 					return make_type_literal(unop->expression->type);
 				default: {
@@ -3473,6 +3469,7 @@ bool implicitly_cast(TypecheckState *state, Reporter *reporter, Expression<> *_e
 				call->location = expression->location;
 				call->callable = lambda;
 				call->unsorted_arguments = make_list({NamedArgument{expression}});
+				call->sorted_arguments = make_list({expression});
 				call->type = type;
 				expression = call;
 				state->no_progress_counter = 0;
@@ -3624,7 +3621,6 @@ AstOperatorDefinition  *deep_copy(AstOperatorDefinition  *);
 AstParse               *deep_copy(AstParse               *);
 AstPrint               *deep_copy(AstPrint               *);
 AstReturn              *deep_copy(AstReturn              *);
-AstTest                *deep_copy(AstTest                *);
 AstWhile               *deep_copy(AstWhile               *);
 AstExpression     *deep_copy(AstExpression     *);
 AstIdentifier     *deep_copy(AstIdentifier     *);
@@ -3636,6 +3632,7 @@ AstUnaryOperator  *deep_copy(AstUnaryOperator  *);
 AstStruct         *deep_copy(AstStruct         *);
 AstSubscript      *deep_copy(AstSubscript      *);
 AstIfx            *deep_copy(AstIfx            *);
+AstTest           *deep_copy(AstTest           *);
 
 template <class T>
 T *copy_node(T *node) {
@@ -3725,6 +3722,7 @@ AstExpression *deep_copy(AstExpression *expression) {
 		case Ast_struct         : return deep_copy((AstStruct         *)expression);
 		case Ast_subscript      : return deep_copy((AstSubscript      *)expression);
 		case Ast_ifx            : return deep_copy((AstIfx            *)expression);
+		case Ast_test           : return deep_copy((AstTest           *)expression);
 		default: invalid_code_path();
 	}
 }
@@ -3741,7 +3739,6 @@ AstStatement *deep_copy(AstStatement *statement) {
 		case Ast_parse:                return deep_copy((AstParse               *)statement);
 		case Ast_print:                return deep_copy((AstPrint               *)statement);
 		case Ast_return:               return deep_copy((AstReturn              *)statement);
-		case Ast_test:                 return deep_copy((AstTest                *)statement);
 		case Ast_while:                return deep_copy((AstWhile               *)statement);
 		default: invalid_code_path();
 	}
@@ -3752,7 +3749,7 @@ AstDefinition *deep_copy(AstDefinition *s) {
 	d->name = s->name;
 	d->expression = deep_copy(s->expression);
 	d->built_in = s->built_in;
-	d->evaluated = deep_copy(s->evaluated.pointer);
+	d->evaluated = deep_copy(s->evaluated);
 	d->is_constant = s->is_constant;
 	d->is_parameter = s->is_parameter;
 	d->is_return_parameter = s->is_return_parameter;
@@ -3808,12 +3805,6 @@ AstPrint *deep_copy(AstPrint *s) {
 AstReturn *deep_copy(AstReturn *s) {
 	auto d = copy_statement(s);
 	d->expression = deep_copy(s->expression);
-	return d;
-}
-AstTest *deep_copy(AstTest *s) {
-	auto d = copy_statement(s);
-	d->should_compile = s->should_compile;
-	deep_copy(&d->scope, &s->scope);
 	return d;
 }
 AstWhile *deep_copy(AstWhile *s) {
@@ -3885,6 +3876,11 @@ AstIfx *deep_copy(AstIfx *s) {
 	d->condition        = deep_copy(s->condition       );
 	d->true_expression  = deep_copy(s->true_expression );
 	d->false_expression = deep_copy(s->false_expression);
+	return d;
+}
+AstTest *deep_copy(AstTest *s) {
+	auto d = copy_expression(s);
+	deep_copy(&d->scope, &s->scope);
 	return d;
 }
 
@@ -4102,130 +4098,6 @@ void typecheck(TypecheckState *state, AstStatement *statement) {
 		case Ast_block: {
 			auto block = (AstBlock *)statement;
 			typecheck_scope(&block->scope);
-			break;
-		}
-		case Ast_test: {
-			auto test = (AstTest *)statement;
-
-			struct TestParams {
-				TypecheckState *state;
-				AstTest *test;
-			} test_params;
-			test_params.state = state;
-			test_params.test = test;
-
-#if USE_FIBERS
-			auto typechecker = [](LPVOID param) -> void {
-				auto test_params = (TestParams *)param;
-				auto state = test_params->state;
-				typecheck_scope(&test_params->test->scope);
-				yield(TypecheckResult::success);
-			};
-
-			auto fiberstate = CreateFiber(4096, typechecker, &test_params);
-			if (!fiberstate) {
-				immediate_error(statement->location, "INTERNAL COMPILER ERROR: Failed to create fiber");
-				exit(-1);
-			}
-			defer { DeleteFiber(fiberstate); };
-
-			auto original_parent_fiber = state->parent_fiber;
-			state->parent_fiber = state->fiber;
-			defer { state->parent_fiber = original_parent_fiber; };
-
-			auto original_fiber = state->fiber;
-			state->fiber = fiberstate;
-			defer { state->fiber = original_fiber; };
-
-			auto original_reporter = state->reporter;
-			state->reporter = {};
-			defer { state->reporter = original_reporter; };
-
-			while (1) {
-				SWITCH_TO_FIBER(fiberstate);
-				switch ((TypecheckResult)fiber_result) {
-					case TypecheckResult::success: {
-						if (!test->should_compile) {
-							original_reporter.error(test->location, "Test compiled, but it should not!");
-						}
-						goto _break;
-					}
-					case TypecheckResult::fail: {
-						if (test->should_compile) {
-							original_reporter.error(test->location, "Test did not compile, but it should!");
-							original_reporter.info("Here are reports:");
-							original_reporter.reports.add(state->reporter.reports);
-						}
-						state->no_progress_counter = 0;
-						goto _break;
-					}
-					case TypecheckResult::wait: {
-						scoped_replace(state->fiber, original_fiber);
-						fiber_result = TypecheckResult::wait;
-						SWITCH_TO_FIBER(original_parent_fiber);
-						break;
-					}
-					default: {
-						invalid_code_path("something wrong with fiberutines");
-					}
-				}
-			}
-		_break:
-#else
-			auto typechecker = [](CoroState *, size_t param) -> size_t {
-				auto test_params = (TestParams *)param;
-				auto state = test_params->state;
-				typecheck_scope(&test_params->test->scope);
-				return (size_t)TypecheckResult::success;
-			};
-
-			CoroState *corostate;
-			auto init_result = coro_init(&corostate, typechecker, 1024*1024);
-			if (init_result.is_error) {
-				state->reporter.error(test->location, init_result.error.message);
-				yield(TypecheckResult::fail);
-			}
-			defer { coro_free(&corostate); };
-
-			auto original_coro = state->coro;
-			state->coro = corostate;
-			defer { state->coro = original_coro; };
-
-			auto original_reporter = state->reporter;
-			state->reporter = {};
-			defer { state->reporter = original_reporter; };
-
-			while (1) {
-				switch ((TypecheckResult)coro_yield(corostate, (size_t)&test_params)) {
-					case TypecheckResult::success: {
-						if (!test->should_compile) {
-							original_reporter.error(test->location, "Test compiled, but it should not!");
-						}
-						goto _break;
-					}
-					case TypecheckResult::fail: {
-						if (test->should_compile) {
-							original_reporter.error(test->location, "Test did not compile, but it should!");
-							original_reporter.info("Here are reports:");
-							original_reporter.reports.add(state->reporter.reports);
-						}
-						state->no_progress_counter = 0;
-						goto _break;
-					}
-					case TypecheckResult::wait: {
-						auto old_coro = state->coro;
-						state->coro = original_coro;
-						defer { state->coro = old_coro; };
-						break;
-					}
-					default: {
-						invalid_code_path("something wrong with coroutines");
-					}
-				}
-			}
-		_break:
-#endif
-
 			break;
 		}
 		case Ast_assert: {
@@ -4461,11 +4333,19 @@ AstExpression *match_poly_type(AstExpression *poly_type, AstExpression *expr_typ
 	return 0;
 }
 
-// Right now this copies everyting.
-// Maybe copy only nodes that depend on a poly parameter?
-AstLambda *instantiate(TypecheckState *state, AstCall *call, AstLambda *lambda) {
-	auto &arguments = call->sorted_arguments;
+void report_poly_types(Reporter *reporter, AstLambda *lambda) {
+	// NOTE: statements are ordered, but definitions are not.
+	for (auto statement : lambda->type_scope.statements) {
+		assert(statement->kind == Ast_definition);
+		auto definition = (AstDefinition *)statement;
+		reporter->info("With {} = {}", definition->name, definition->expression->location);
+	}
+}
 
+// Right now these copy everything.
+// Maybe copy only nodes that depend on a poly parameter?
+AstLambda *instantiate_head(TypecheckState *state, Reporter *reporter, List<AstExpression *> arguments, AstCall *call, AstLambda *lambda, bool *success) {
+	*success = false;
 	for (u32 i = 0; i < arguments.count; ++i) {
 		harden_type(arguments[i]);
 	}
@@ -4510,6 +4390,7 @@ AstLambda *instantiate(TypecheckState *state, AstCall *call, AstLambda *lambda) 
 		}
 		if (all_types_match) {
 			call->callable = resolved.lambda;
+			*success = true;
 			return resolved.lambda;
 		}
 	}
@@ -4527,7 +4408,6 @@ AstLambda *instantiate(TypecheckState *state, AstCall *call, AstLambda *lambda) 
 	auto hardened_lambda = AstLambda::create();
 
 	lambda->hardened_polys.add({.lambda=hardened_lambda,.call=call});
-	hardened_lambda->original_poly = lambda;
 
 	// hardened_lambda->is_poly = false;
 	hardened_lambda->convention = lambda->convention;
@@ -4544,11 +4424,14 @@ AstLambda *instantiate(TypecheckState *state, AstCall *call, AstLambda *lambda) 
 	hardened_lambda->type->type = type_type;
 	hardened_lambda->outer_scope()->parent = lambda->outer_scope()->parent;
 
+	List<AstDefinition *> hardened_params;
+	hardened_params.allocator = temporary_allocator;
+	hardened_params.resize(arguments.count);
+
 	for (u32 i = 0; i < arguments.count; ++i) {
 		auto &arg = arguments[i];
 		auto &param = lambda->parameters[i];
-
-		AstDefinition *hardened_param = 0;
+		auto &hardened_param = hardened_params[i];
 
 		if (param->is_poly) {
 			// insert the parameter's type when it's in $name form.
@@ -4559,13 +4442,14 @@ AstLambda *instantiate(TypecheckState *state, AstCall *call, AstLambda *lambda) 
 				type_def->name = ident->name;
 				type_def->expression = match_poly_type(param->type, arg->type);
 				if (!type_def->expression) {
-					state->reporter.error(arg->location, "Could not match the type {} to {}", type_to_string(arg->type), type_to_string(param->type));
-					state->reporter.info(param->location, "Declared here:");
-					yield(TypecheckResult::fail);
+					reporter->error(arg->location, "Could not match the type {} to {}", type_to_string(arg->type), type_to_string(param->type));
+					reporter->info(param->location, "Declared here:");
+					return hardened_lambda;
 				}
 				type_def->type = type_type;
 				type_def->parent_lambda_or_struct = hardened_lambda;
 				add_to_scope(type_def, &hardened_lambda->type_scope);
+				// TODO: do at parse time
 				if (hardened_lambda->type_scope.definitions.get_or_insert(type_def->name).count != 1) {
 					state->reporter.error(ident->location, "Redefinition of polymorpic argument");
 					yield(TypecheckResult::fail);
@@ -4592,7 +4476,15 @@ AstLambda *instantiate(TypecheckState *state, AstCall *call, AstLambda *lambda) 
 			hardened_param->parent_lambda_or_struct = hardened_lambda;
 			hardened_lambda->parameters.add(hardened_param);
 			add_to_scope(hardened_param, &hardened_lambda->parameter_scope);
+		}
+	}
 
+	for (u32 i = 0; i < arguments.count; ++i) {
+		auto &arg = arguments[i];
+		auto &param = lambda->parameters[i];
+		auto &hardened_param = hardened_params[i];
+
+		if (!param->is_poly) {
 			{
 				scoped_replace(state->current_scope, &hardened_lambda->parameter_scope);
 				typecheck(state, hardened_param);
@@ -4610,8 +4502,8 @@ AstLambda *instantiate(TypecheckState *state, AstCall *call, AstLambda *lambda) 
 				}
 			}
 
-			if (!implicitly_cast(state, &state->reporter, &arg, hardened_param->type)) {
-				yield(TypecheckResult::fail);
+			if (!implicitly_cast(state, reporter, &arg, hardened_param->type)) {
+				return hardened_lambda;
 			}
 
 			if (param->is_constant) {
@@ -4621,9 +4513,9 @@ AstLambda *instantiate(TypecheckState *state, AstCall *call, AstLambda *lambda) 
 
 		if (hardened_param->is_constant) {
 			if (!is_constant(arg)) {
-				state->reporter.error(arg->location, "Expected a constant argument.");
-				state->reporter.info(hardened_param->location, "Definition marked as constant.");
-				yield(TypecheckResult::fail);
+				reporter->error(arg->location, "Expected a constant argument.");
+				reporter->info(hardened_param->location, "Definition marked as constant.");
+				return hardened_lambda;
 			}
 		}
 	}
@@ -4634,10 +4526,7 @@ AstLambda *instantiate(TypecheckState *state, AstCall *call, AstLambda *lambda) 
 
 	if (context.debug_poly) {
 		state->reporter.info(call->location, "Instantiating poly: {}", type_to_string(hardened_lambda->type));
-		for_each (hardened_lambda->type_scope.definitions, [&](auto, auto types){
-			auto type = types[0];
-			state->reporter.info("With {} = {}", type->name, type->expression->location);
-		});
+		report_poly_types(&state->reporter, hardened_lambda);
 	}
 
 	if (lambda->return_parameter) {
@@ -4646,16 +4535,25 @@ AstLambda *instantiate(TypecheckState *state, AstCall *call, AstLambda *lambda) 
 		typecheck(state, hardened_lambda->return_parameter);
 	}
 
-	deep_copy(&hardened_lambda->body_scope, &lambda->body_scope);
+	*success = true;
+	return hardened_lambda;
+}
+void instantiate_body(TypecheckState *state, AstLambda *original_lambda, AstLambda *hardened_lambda) {
+	if (hardened_lambda->original_poly)
+		return;
+
+	scoped_replace(state->current_lambda_or_struct, hardened_lambda);
+	scoped_replace(state->current_lambda, hardened_lambda);
+	scoped_replace(state->current_scope, &hardened_lambda->parameter_scope);
+
+	hardened_lambda->original_poly = original_lambda;
+
+	deep_copy(&hardened_lambda->body_scope, &original_lambda->body_scope);
 	typecheck_body(state, hardened_lambda);
 
 	calculate_parameters_size(hardened_lambda);
 
 	hardened_lambda->return_parameter->parent_lambda_or_struct = hardened_lambda;
-
-	call->callable = hardened_lambda;
-
-	return hardened_lambda;
 }
 
 Optional<List<AstExpression *>> sort_arguments(Reporter *reporter, AstCall *call, AstLambda *lambda) {
@@ -4727,7 +4625,7 @@ AstExpression *typecheck(TypecheckState *state, AstIdentifier *identifier) {
 		identifier->possible_definitions.set(definition);
 		identifier->type = definition->type;
 
-		if (definition->is_constant) {
+		if (definition->is_constant && !is_type(definition->expression) && !is_lambda(definition->expression)) {
 			return evaluate(state, definition->expression);
 		}
 	} else {
@@ -4854,6 +4752,7 @@ AstExpression *typecheck(TypecheckState *state, AstCall *call) {
 				bool success = false;
 				AstDefinition *definition = 0;
 				AstLambda *lambda = 0;
+				AstLambda *instantiated_lambda = 0;
 				int distance = 0;
 				umm pack_start = (umm)-1;
 				umm pack_count = (umm)-1;
@@ -4876,6 +4775,8 @@ AstExpression *typecheck(TypecheckState *state, AstCall *call) {
 					reporter.error("This is not a lambda.");
 					continue;
 				}
+
+				resolution.definition = definition;
 
 				auto lambda = (AstLambda *)e;
 
@@ -4900,7 +4801,7 @@ AstExpression *typecheck(TypecheckState *state, AstCall *call) {
 						}
 
 						int total_distance = 2;
-
+/*
 						for (u32 i = 0; i < arguments.count; ++i) {
 							auto &argument = arguments[i];
 							auto &parameter = lambda->parameters[i];
@@ -4913,7 +4814,6 @@ AstExpression *typecheck(TypecheckState *state, AstCall *call) {
 									goto _continue_definition1;
 								}
 							} else {
-								// TODO: FIXME: It's not possible to resolve overloads with poly parameters without typechecking non-poly ones.
 								scoped_replace(state->current_scope, &lambda->parameter_scope);
 								// NOTE: may be redundant
 								typecheck(state, parameter);
@@ -4933,11 +4833,16 @@ AstExpression *typecheck(TypecheckState *state, AstCall *call) {
 							}
 							total_distance += distance;
 						}
+*/
+
+						bool success;
+						resolution.instantiated_lambda = instantiate_head(state, &reporter, arguments, call, lambda, &success);
+						if (!success)
+							continue;
 
 						min_distance = min(min_distance, total_distance);
 
 						resolution.success = true;
-						resolution.definition = definition;
 						resolution.lambda = lambda;
 						resolution.distance = total_distance;
 						matches.add(&resolution);
@@ -5014,7 +4919,6 @@ AstExpression *typecheck(TypecheckState *state, AstCall *call) {
 						min_distance = min(min_distance, total_distance);
 
 						resolution.success = true;
-						resolution.definition = definition;
 						resolution.lambda = lambda;
 						resolution.distance = total_distance;
 						resolution.pack_start = pack_start;
@@ -5051,7 +4955,6 @@ AstExpression *typecheck(TypecheckState *state, AstCall *call) {
 						min_distance = min(min_distance, total_distance);
 
 						resolution.success = true;
-						resolution.definition = definition;
 						resolution.lambda = lambda;
 						resolution.distance = total_distance;
 						matches.add(&resolution);
@@ -5062,19 +4965,34 @@ AstExpression *typecheck(TypecheckState *state, AstCall *call) {
 			Resolution *match = 0;
 			if (matches.count == 0) {
 				if (identifier->possible_definitions.count) {
-					state->reporter.error(call->location, "No matching lambda was found for {}", call->callable->location);
-					//state->reporter.info("Here is the list of possible overloads:");
-					//for (auto definition : identifier->possible_definitions) {
-					//	defer { ++overload_index; };
-					//	state->reporter.info(definition->location, "Overload #{}:", overload_index);
-					//}
-					//state->reporter.info("Here are the reasons of failed overload resolutions:");
-					//overload_index = 0;
-					for (umm definition_index = 0; definition_index != identifier->possible_definitions.count; ++definition_index) {
-						auto &definition = identifier->possible_definitions[definition_index];
-						auto &reporter = resolutions[definition_index].reporter;
-						state->reporter.info(definition->location, "Overload #{}:", definition_index);
+					if (identifier->possible_definitions.count > 1) {
+						state->reporter.error(call->location, "No matching lambda was found for {}", call->callable->location);
+						//state->reporter.info("Here is the list of possible overloads:");
+						//for (auto definition : identifier->possible_definitions) {
+						//	defer { ++overload_index; };
+						//	state->reporter.info(definition->location, "Overload #{}:", overload_index);
+						//}
+						//state->reporter.info("Here are the reasons of failed overload resolutions:");
+						//overload_index = 0;
+						for (umm definition_index = 0; definition_index != identifier->possible_definitions.count; ++definition_index) {
+							auto &resolution = resolutions[definition_index];
+							auto &definition = resolution.definition;
+							auto &reporter = resolution.reporter;
+							state->reporter.info(definition->location, "Overload #{}:", definition_index);
+							state->reporter.reports.add(reporter.reports);
+							if (resolution.instantiated_lambda) {
+								report_poly_types(&state->reporter, resolution.instantiated_lambda);
+							}
+						}
+					} else {
+						auto &resolution = resolutions[0];
+						auto &definition = resolution.definition;
+						auto &reporter = resolution.reporter;
 						state->reporter.reports.add(reporter.reports);
+						state->reporter.info(definition->location, "Defined here:");
+						if (resolution.instantiated_lambda) {
+							report_poly_types(&state->reporter, resolution.instantiated_lambda);
+						}
 					}
 				} else {
 					state->reporter.error(call->location, "Lambda with that name was not defined");
@@ -5106,7 +5024,9 @@ AstExpression *typecheck(TypecheckState *state, AstCall *call) {
 			//identifier->possible_definitions = {}; // actually this is redundant
 
 			if (match->lambda->is_poly) {
-				match->lambda = instantiate(state, call, match->lambda);
+				instantiate_body(state, match->lambda, match->instantiated_lambda);
+				match->lambda = match->instantiated_lambda;
+				call->callable = match->instantiated_lambda;
 			}
 
 			if (match->pack_count != -1) {
@@ -5163,6 +5083,9 @@ AstExpression *typecheck(TypecheckState *state, AstLiteral *literal) {
 		using enum LiteralKind;
 		case integer:
 			literal->type = type_unsized_integer;
+			break;
+		case Float:
+			literal->type = type_unsized_float;
 			break;
 		case boolean:
 			literal->type = type_bool;
@@ -5669,6 +5592,8 @@ AstExpression *typecheck(TypecheckState *state, AstBinaryOperator *bin) {
 			call->location = bin->location;
 			call->unsorted_arguments.add({bin->left});
 			call->unsorted_arguments.add({bin->right});
+			call->sorted_arguments.add(bin->left);
+			call->sorted_arguments.add(bin->right);
 			call->callable = overloaded;
 			call->type = overloaded->return_parameter->type;
 			return call;
@@ -6012,6 +5937,124 @@ AstExpression *typecheck(TypecheckState *state, AstIfx *If) {
 	If->type = If->true_expression->type;
 	return If;
 }
+AstExpression *typecheck(TypecheckState *state, AstTest *test) {
+	struct TestParams {
+		TypecheckState *state;
+		AstTest *test;
+	} test_params;
+	test_params.state = state;
+	test_params.test = test;
+
+#if USE_FIBERS
+	auto typechecker = [](LPVOID param) -> void {
+		auto test_params = (TestParams *)param;
+		auto state = test_params->state;
+		typecheck_scope(&test_params->test->scope);
+		yield(TypecheckResult::success);
+	};
+
+	auto fiberstate = CreateFiber(4096, typechecker, &test_params);
+	if (!fiberstate) {
+		immediate_error(test->location, "INTERNAL COMPILER ERROR: Failed to create fiber");
+		exit(-1);
+	}
+	defer { DeleteFiber(fiberstate); };
+
+	auto original_parent_fiber = state->parent_fiber;
+	state->parent_fiber = state->fiber;
+	defer { state->parent_fiber = original_parent_fiber; };
+
+	auto original_fiber = state->fiber;
+	state->fiber = fiberstate;
+	defer { state->fiber = original_fiber; };
+
+	auto original_reporter = state->reporter;
+	state->reporter = {};
+	defer { state->reporter = original_reporter; };
+
+	bool did_compile = false;
+
+	while (1) {
+		SWITCH_TO_FIBER(fiberstate);
+		switch ((TypecheckResult)fiber_result) {
+			case TypecheckResult::success: {
+				did_compile = true;
+				goto _break;
+			}
+			case TypecheckResult::fail: {
+				did_compile = false;
+				state->no_progress_counter = 0;
+				goto _break;
+			}
+			case TypecheckResult::wait: {
+				scoped_replace(state->fiber, original_fiber);
+				fiber_result = TypecheckResult::wait;
+				SWITCH_TO_FIBER(original_parent_fiber);
+				break;
+			}
+			default: {
+				invalid_code_path("something wrong with fiberutines");
+			}
+		}
+	}
+_break:
+#else
+	auto typechecker = [](CoroState *, size_t param) -> size_t {
+		auto test_params = (TestParams *)param;
+		auto state = test_params->state;
+		typecheck_scope(&test_params->test->scope);
+		return (size_t)TypecheckResult::success;
+	};
+
+	CoroState *corostate;
+	auto init_result = coro_init(&corostate, typechecker, 1024*1024);
+	if (init_result.is_error) {
+		state->reporter.error(test->location, init_result.error.message);
+		yield(TypecheckResult::fail);
+	}
+	defer { coro_free(&corostate); };
+
+	auto original_coro = state->coro;
+	state->coro = corostate;
+	defer { state->coro = original_coro; };
+
+	auto original_reporter = state->reporter;
+	state->reporter = {};
+	defer { state->reporter = original_reporter; };
+
+	while (1) {
+		switch ((TypecheckResult)coro_yield(corostate, (size_t)&test_params)) {
+			case TypecheckResult::success: {
+				if (!test->should_compile) {
+					original_reporter.error(test->location, "Test compiled, but it should not!");
+				}
+				goto _break;
+			}
+			case TypecheckResult::fail: {
+				if (test->should_compile) {
+					original_reporter.error(test->location, "Test did not compile, but it should!");
+					original_reporter.info("Here are reports:");
+					original_reporter.reports.add(state->reporter.reports);
+				}
+				state->no_progress_counter = 0;
+				goto _break;
+			}
+			case TypecheckResult::wait: {
+				auto old_coro = state->coro;
+				state->coro = original_coro;
+				defer { state->coro = old_coro; };
+				break;
+			}
+			default: {
+				invalid_code_path("something wrong with coroutines");
+			}
+		}
+	}
+_break:
+#endif
+
+	return make_bool(did_compile);
+}
 void typecheck(TypecheckState *state, Expression<> &expression) {
 	assert(expression);
 
@@ -6037,6 +6080,7 @@ void typecheck(TypecheckState *state, Expression<> &expression) {
 		case Ast_subscript:       expression = typecheck(state, (AstSubscript      *)expression); return;
 		case Ast_span:            expression = typecheck(state, (AstSpan           *)expression); return;
 		case Ast_ifx:             expression = typecheck(state, (AstIfx            *)expression); return;
+		case Ast_test:            expression = typecheck(state, (AstTest           *)expression); return;
 		case Ast_import: {
 #if 0
 			auto import = (AstImport *)expression;
