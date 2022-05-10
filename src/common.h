@@ -189,6 +189,9 @@ struct CompilerContext {
 	bool do_profile = false;
 	bool keep_temp = false;
 	bool debug_poly = false;
+
+	List<AstLambda *> lambdas_with_body;
+	List<AstLambda *> lambdas_without_body;
 };
 extern CompilerContext context;
 
@@ -221,8 +224,12 @@ struct Report {
 	ReportKind kind;
 };
 
+u32 get_line_number(Span<String> lines, utf8 *from);
 u32 get_line_number(utf8 *from);
+
 u32 get_column_number(utf8 *from);
+
+HeapString where(SourceFileInfo *info, utf8 *location);
 HeapString where(utf8 *location);
 
 void print_report(Report r);

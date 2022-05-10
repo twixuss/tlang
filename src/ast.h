@@ -285,12 +285,12 @@ enum class LiteralKind : u8 {
 	noinit,
 	Float,
 	type,
+	lambda_name,
 };
 
 using BigInteger = tl::impl::BigInt<List<u64, MyAllocator, u32>>;
 
 struct AstLiteral : AstExpression, ExpressionPool<AstLiteral> {
-
 	union {
 		BigInteger integer;
 		bool Bool;
@@ -429,7 +429,6 @@ struct AstLambda : AstExpression, ExpressionPool<AstLambda> {
 	List<HardenedPoly> hardened_polys;
 	Expression<AstLambda> original_poly = {};
 
-	Statement<AstDefinition> pack = {};
 
 	bool has_body                   : 1 = true;
 	bool is_type                    : 1 = false;
@@ -437,6 +436,7 @@ struct AstLambda : AstExpression, ExpressionPool<AstLambda> {
 	bool is_intrinsic               : 1 = false;
 	bool is_poly                    : 1 = false;
 	bool is_member                  : 1 = false;
+	bool has_pack                   : 1 = false;
 
 	ExternLanguage extern_language = {};
 	String extern_library;
@@ -447,6 +447,8 @@ struct AstLambda : AstExpression, ExpressionPool<AstLambda> {
 
 	CallingConvention convention = CallingConvention::none;
 
+	List<AstLiteral *> function_directives;
+	String type_name;
 
 	// For bytecode generation
 
@@ -817,6 +819,7 @@ extern AstStruct *type_unsized_integer;
 extern AstStruct *type_unsized_float;
 extern AstStruct *type_unknown;
 extern AstStruct *type_poly;
+extern AstStruct *type_overload_set;
 // inline constexpr u32 built_in_struct_count = 14;
 
 extern AstUnaryOperator *type_pointer_to_void;

@@ -29,6 +29,7 @@ AstStruct *type_default_signed_integer;
 AstStruct *type_default_unsigned_integer;
 AstStruct *type_default_integer;
 AstStruct *type_default_float;
+AstStruct *type_overload_set;
 AstUnaryOperator *type_pointer_to_void;
 
 AstIdentifier *type_int;
@@ -275,7 +276,7 @@ s64 get_size(AstExpression *type) {
 		}
 		default: {
 			invalid_code_path();
-			return 0;
+			return -1;
 		}
 	}
 }

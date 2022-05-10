@@ -413,8 +413,10 @@ Instruction *add_instruction(Converter &conv, Instruction next) {
 		case add_rc: {
 			REDECLARE_REF(next, next.add_rc);
 
+#if OPTIMIZE_BYTECODE
 			if (next.s == 0)
 				return 0;
+#endif
 
 			if (next.d == rs) {
 				assert((next.s % context.stack_word_size) == 0);
@@ -453,8 +455,10 @@ Instruction *add_instruction(Converter &conv, Instruction next) {
 		case sub_rc: {
 			REDECLARE_REF(next, next.sub_rc);
 
+#if OPTIMIZE_BYTECODE
 			if (next.s == 0)
 				return 0;
+#endif
 
 			if (next.d == rs) {
 				assert((next.s % context.stack_word_size) == 0);
@@ -972,6 +976,7 @@ static Optional<Register> load_address_of(Optional<Register> destination, Conver
 	s64 definition_size = ceil(get_size(definition->type), context.stack_word_size);
 
 	if (definition->parent_lambda_or_struct) {
+		assert(definition->bytecode_offset != -1);
 		if (definition->parent_lambda_or_struct->kind == Ast_lambda) {
 			auto parent_lambda = (AstLambda *)definition->parent_lambda_or_struct;
 
@@ -1068,8 +1073,6 @@ static Optional<Register> load_address_of(Optional<Register> destination, Conver
 		// by calculating global variables' offsets at typecheck time
 		//
 		if (definition->bytecode_offset == INVALID_DATA_OFFSET) {
-			if (definition->name == "glBindBuffer")
-				debug_break();
 			append(conv, definition);
 			assert(definition->bytecode_offset != INVALID_DATA_OFFSET);
 		}
@@ -1504,13 +1507,6 @@ static void push_zeros(Converter &conv, s64 size) {
 	}
 }
 
-static void ensure_present_in_bytecode(Converter &conv, AstLambda *lambda) {
-	if (lambda->location_in_bytecode == -1) {
-		assert_always(append(conv, lambda, false).count == 0);
-	}
-	assert(lambda->location_in_bytecode != -1);
-}
-
 static void append(Converter &conv, Scope &scope) {
 	scoped_replace(conv.ls->current_scope, &scope);
 	for (auto statement : scope.statements) {
@@ -1576,7 +1572,8 @@ static void append(Converter &conv, AstDefinition *definition) {
 	}
 
 	if (definition->expression && definition->expression->kind == Ast_lambda) {
-		assert_always(append(conv, (AstLambda *)definition->expression, false).count == 0);
+		// NOTE: no need to append lambdas here anymore. they are appended in build_bytecode
+		// assert_always(append(conv, (AstLambda *)definition->expression, false).count == 0);
 		return;
 	}
 
@@ -1584,9 +1581,10 @@ static void append(Converter &conv, AstDefinition *definition) {
 		if (definition->expression->kind == Ast_struct) {
 			auto Struct = (AstStruct *)definition->expression;
 			for_each (Struct->scope.definitions, [&](auto, auto members) {
-				auto member = members[0];
-				if (member->is_constant && member->expression && member->expression->kind == Ast_lambda) {
-					append(conv, member);
+				for (auto member : members) {
+					if (member->is_constant && member->expression && member->expression->kind == Ast_lambda) {
+						append(conv, member);
+					}
 				}
 			});
 		}
@@ -2449,6 +2447,9 @@ static ValueRegisters append(Converter &conv, AstBinaryOperator *bin, Optional<A
 	return {};
 }
 static ValueRegisters append(Converter &conv, AstIdentifier *identifier, Optional<Address> destination) {
+	//if (identifier->name == "abc")
+	//	debug_break();
+
 	assert(!destination);
 	push_comment(conv, format(u8"load identifer {}", identifier->location));
 
@@ -2461,7 +2462,7 @@ static ValueRegisters append(Converter &conv, AstIdentifier *identifier, Optiona
 		return {};
 	} else {
 		auto size = get_size(identifier->type); // NOT definition->type because it can be unsized (not hardened)
-		assert(size);
+		assert(size != -1);
 
 		if (size <= context.register_size) {
 			auto addr = load_address_of(conv, identifier);
@@ -2501,12 +2502,10 @@ static ValueRegisters append(Converter &conv, AstIdentifier *identifier, Optiona
 	invalid_code_path();
 }
 static ValueRegisters append(Converter &conv, AstCall *call, Optional<Address> destination) {
-	//if (call->_uid == 1918)
+	//if (call->callable->location == "thing.do")
 	//	debug_break();
 
 	assert(!destination);
-	//if (where(call->location.data) == "main.tl:40:5")
-	//	debug_break();
 
 	auto dont_care_about_definition_spacing = conv.dont_care_about_definition_spacing;
 	conv.dont_care_about_definition_spacing = false;
@@ -2541,21 +2540,18 @@ static ValueRegisters append(Converter &conv, AstCall *call, Optional<Address> d
 		assert(context.stack_word_size == 8);
 
 		// Append all arguments to stack
-		if (is_member) {
-			assert(call->callable->kind == Ast_binary_operator);
-			auto bin = (AstBinaryOperator *)call->callable;
-			assert(bin->operation == BinaryOperation::dot);
-			assert(is_addressable(bin->left));
-			push_address_of(conv, bin->left);
-		}
+		// if (is_member) {
+		// 	assert(call->callable->kind == Ast_binary_operator);
+		// 	auto bin = (AstBinaryOperator *)call->callable;
+		// 	assert(bin->operation == BinaryOperation::dot);
+		// 	assert(is_addressable(bin->left));
+		// 	push_address_of(conv, bin->left);
+		// }
 
-		for (umm i = 0; i < call->sorted_arguments.count; ++i) {
-			auto arg = call->sorted_arguments[i];
-			auto param = lambda_type->parameters[i];
+		for (auto param : lambda_type->parameters)
+			assert(!param->is_constant); // not implemented: need to erase constants from call->sorted_arguments first
 
-			if (param->is_constant)
-				continue;
-
+		for (auto arg : call->sorted_arguments) {
 			append_to_stack(conv, arg);
 
 			auto size = ceil(get_size(arg->type), context.stack_word_size);
@@ -2601,7 +2597,10 @@ static ValueRegisters append(Converter &conv, AstCall *call, Optional<Address> d
 
 	assert(context.stack_word_size == 8);
 
-	assert(call->sorted_arguments.count == call->unsorted_arguments.count);
+	if (is_member)
+		assert(call->sorted_arguments.count == lambda->parameters.count+1);
+	else
+		assert(call->sorted_arguments.count == lambda->parameters.count);
 
 	auto &arguments = call->sorted_arguments;
 	bool lambda_is_constant = is_constant(call->callable);
@@ -3204,233 +3203,232 @@ static ValueRegisters append(Converter &conv, AstSubscript *subscript, Optional<
 }
 static ValueRegisters append(Converter &conv, AstLambda *lambda, bool push_address, Optional<Address> destination) {
 	assert(!destination);
-	if (lambda->is_poly) {
-		assert(!push_address);
+	if (lambda->location_in_bytecode == -1) {
+		if (lambda->is_poly) {
+			assert(!push_address);
 
-		for (auto hardened : lambda->hardened_polys) {
-			append(conv, hardened.lambda, false);
-		}
-		return {};
-	}
-
-	//if (lambda->original_poly)
-	//	debug_break();
-
-	lambda->return_parameter->bytecode_offset = 0;
-	assert(lambda->return_parameter->parent_lambda_or_struct);
-	assert(lambda->return_parameter->is_return_parameter);
-	assert(!lambda->return_parameter->is_parameter);
-
-	if (lambda->has_body) {
-		if (types_match(lambda->return_parameter->type, type_type)) {
-			if (push_address) {
-				// TODO: this should work at runtime in the future
-				invalid_code_path("can't push address of lambda that returns a type");
+			for (auto hardened : lambda->hardened_polys) {
+				append(conv, hardened.lambda, false);
 			}
 			return {};
 		}
 
-		LambdaState ls;
-		ls.init();
-		ls.stack_state.init(get_size(lambda->return_parameter->type));
+		lambda->return_parameter->bytecode_offset = 0;
+		assert(lambda->return_parameter->parent_lambda_or_struct);
+		assert(lambda->return_parameter->is_return_parameter);
+		assert(!lambda->return_parameter->is_parameter);
 
-		ls.current_scope = &lambda->body_scope;
+		if (lambda->has_body) {
+			if (types_match(lambda->return_parameter->type, type_type)) {
+				if (push_address) {
+					// TODO: this should work at runtime in the future
+					invalid_code_path("can't push address of lambda that returns a type");
+				}
+				return {};
+			}
 
-		auto old_ls = conv.ls;
-		conv.ls = &ls;
-		defer {
-			conv.ls = old_ls;
-			ls.free();
-		};
+			LambdaState ls;
+			ls.init();
+			ls.stack_state.init(get_size(lambda->return_parameter->type));
 
-		scoped_replace(conv.lambda, lambda);
+			ls.current_scope = &lambda->body_scope;
 
-		auto return_value_size = ceil(get_size(lambda->return_parameter->type), context.stack_word_size);
-
-		//if (lambda->definition->name == u8"print_string"s)
-		//	debug_break();
-
-		ls.push_used_registers = I(push_used_registers);
-
-		if (lambda->convention == CallingConvention::stdcall) {
-			assert(context.stack_word_size == 8);
-			using namespace x86_64;
-
-			// what we have right now is:
-			//
-			// REGISTERS:
-			// arg0 rcx or xmm0
-			// arg1	rdx or xmm1
-			// arg2	r8  or xmm2
-			// arg3	r9  or xmm3
-			//
-			// STACK:
-			// arg5
-			// arg4
-			// shadow
-			// shadow
-			// shadow
-			// shadow <- rsp aligned to 16
-			//
-			// we need to get this:
-			//
-			// arg0
-			// arg1
-			// arg2
-			// arg3
-			// arg4
-			// arg5 <- rsp aligned to 16
-			//
-
-			auto push_argument = [&](int arg_index) {
-				if (lambda->parameters.count > arg_index)
-					if (::is_float(lambda->parameters[arg_index]->type))
-						I(push_f, stdcall_float_registers[arg_index]);
-					else
-						I(push_r, to_bc_register(stdcall_int_registers[arg_index]));
+			auto old_ls = conv.ls;
+			conv.ls = &ls;
+			defer {
+				conv.ls = old_ls;
+				ls.free();
 			};
 
-			push_comment(conv, u8"reserve space for return value"s);
-			I(sub_rc, rs, return_value_size);
+			scoped_replace(conv.lambda, lambda);
 
-			push_argument(0);
-			push_argument(1);
-			push_argument(2);
-			push_argument(3);
+			auto return_value_size = ceil(get_size(lambda->return_parameter->type), context.stack_word_size);
 
-			if (lambda->parameters.count > 4) {
-				constexpr s64 return_address_size = 8;
-				constexpr s64 shadow_space_size = 32;
-				constexpr s64 first_four_arguments_size = 32;
+			//if (lambda->definition->name == u8"print_string"s)
+			//	debug_break();
 
-				s64 offset = first_four_arguments_size + return_value_size + return_address_size + shadow_space_size;
-				for (s64 i = 4; i < lambda->parameters.count; ++i) {
-					I(push_m, rs + offset);
-					offset += 16;
+			ls.push_used_registers = I(push_used_registers);
+
+			if (lambda->convention == CallingConvention::stdcall) {
+				assert(context.stack_word_size == 8);
+				using namespace x86_64;
+
+				// what we have right now is:
+				//
+				// REGISTERS:
+				// arg0 rcx or xmm0
+				// arg1	rdx or xmm1
+				// arg2	r8  or xmm2
+				// arg3	r9  or xmm3
+				//
+				// STACK:
+				// arg5
+				// arg4
+				// shadow
+				// shadow
+				// shadow
+				// shadow <- rsp aligned to 16
+				//
+				// we need to get this:
+				//
+				// arg0
+				// arg1
+				// arg2
+				// arg3
+				// arg4
+				// arg5 <- rsp aligned to 16
+				//
+
+				auto push_argument = [&](int arg_index) {
+					if (lambda->parameters.count > arg_index)
+						if (::is_float(lambda->parameters[arg_index]->type))
+							I(push_f, stdcall_float_registers[arg_index]);
+						else
+							I(push_r, to_bc_register(stdcall_int_registers[arg_index]));
+				};
+
+				push_comment(conv, u8"reserve space for return value"s);
+				I(sub_rc, rs, return_value_size);
+
+				push_argument(0);
+				push_argument(1);
+				push_argument(2);
+				push_argument(3);
+
+				if (lambda->parameters.count > 4) {
+					constexpr s64 return_address_size = 8;
+					constexpr s64 shadow_space_size = 32;
+					constexpr s64 first_four_arguments_size = 32;
+
+					s64 offset = first_four_arguments_size + return_value_size + return_address_size + shadow_space_size;
+					for (s64 i = 4; i < lambda->parameters.count; ++i) {
+						I(push_m, rs + offset);
+						offset += 16;
+					}
+				}
+				push_comment(conv, u8"dummy return address"s);
+				I(push_c, 0xdeadc0d);
+			}
+
+			I(push_r, rb);
+			I(mov_rr, rb, rs);
+
+			push_comment(conv, u8"zero out the return value"s);
+			auto address = load_address_of(conv, lambda->return_parameter);
+			append_memory_set(conv, address.value(), 0, return_value_size, false);
+
+			ls.temporary_reserver = II(noop);
+
+			append(conv, lambda->body_scope);
+
+			if (ls.temporary_size) {
+				*ls.temporary_reserver = MI(sub_rc, rs, ceil(ls.temporary_size, 16ll));
+				set_comment(ls.temporary_reserver, "maybe reserve space for temporary values."str);
+				for (auto i : ls.local_references) {
+					switch (i->kind) {
+						using enum InstructionKind;
+						case lea:
+							i->lea.s.c -= ls.temporary_size;
+							break;
+						case add_mc:
+							i->add_mc.s -= ls.temporary_size;
+							break;
+					}
 				}
 			}
-			push_comment(conv, u8"dummy return address"s);
-			I(push_c, 0xdeadc0d);
-		}
 
-		I(push_r, rb);
-		I(mov_rr, rb, rs);
+			lambda->return_location = count_of(conv.ls->body_builder);
 
-		push_comment(conv, u8"zero out the return value"s);
-		auto address = load_address_of(conv, lambda->return_parameter);
-		append_memory_set(conv, address.value(), 0, return_value_size, false);
+			I(jmp_label);
+			I(mov_rr, rs, rb);
+			I(pop_r, rb);
 
-		ls.temporary_reserver = II(noop);
-
-		append(conv, lambda->body_scope);
-
-		if (ls.temporary_size) {
-			*ls.temporary_reserver = MI(sub_rc, rs, ceil(ls.temporary_size, 16ll));
-			set_comment(ls.temporary_reserver, "maybe reserve space for temporary values."str);
-			for (auto i : ls.local_references) {
-				switch (i->kind) {
-					using enum InstructionKind;
-					case lea:
-						i->lea.s.c -= ls.temporary_size;
-						break;
-					case add_mc:
-						i->add_mc.s -= ls.temporary_size;
-						break;
-				}
+			if (lambda->convention == CallingConvention::stdcall) {
+				push_comment(conv, u8"pop dummy return address and arguments"s);
+				s64 const return_address_size = context.stack_word_size;
+				I(add_rc, rs, return_address_size + (s64)lambda->parameters.count * context.stack_word_size);
+				push_comment(conv, u8"put return value into rax"s);
+				I(pop_r, x86_64::to_bc_register(x86_64::Register64::rax));
 			}
-		}
 
-		lambda->return_location = count_of(conv.ls->body_builder);
+			ls.pop_used_registers = I(pop_used_registers);
 
-		I(jmp_label);
-		I(mov_rr, rs, rb);
-		I(pop_r, rb);
-
-		if (lambda->convention == CallingConvention::stdcall) {
-			push_comment(conv, u8"pop dummy return address and arguments"s);
-			s64 const return_address_size = context.stack_word_size;
-			I(add_rc, rs, return_address_size + (s64)lambda->parameters.count * context.stack_word_size);
-			push_comment(conv, u8"put return value into rax"s);
-			I(pop_r, x86_64::to_bc_register(x86_64::Register64::rax));
-		}
-
-		ls.pop_used_registers = I(pop_used_registers);
-
-		s64 additional_rb_parameter_offset = 0;
-		if (lambda->convention == CallingConvention::stdcall) {
-			// FIXME: push and pop only necessary registers
-			// HACK: -1 means push all non-volatile registers according to x64 stdcall convention.
-			ls.push_used_registers->mask =
-			ls. pop_used_registers->mask = -1;
-			// additional_rb_parameter_offset = -8; //
-			// additional_rb_parameter_offset = ceil(9u*8, 16u);
-		} else {
-			ls.push_used_registers->mask =
-			ls. pop_used_registers->mask = ls.used_registers_mask;
-			additional_rb_parameter_offset = ceil(count_bits(ls.used_registers_mask)*8, 16u);
-		}
-
-		if (additional_rb_parameter_offset) {
-			for (auto instr : ls.parameter_load_offsets) {
-				switch (instr->kind) {
-					using enum InstructionKind;
-					// These are used for loading parameter address
-					case lea:
-						instr->lea.s.c += additional_rb_parameter_offset;
-						break;
-					case add_mc:
-						instr->add_mc.s += additional_rb_parameter_offset;
-						break;
-					// This is used to zero out return parameter.
-					case mov8_mc:
-						instr->mov8_mc.s += additional_rb_parameter_offset;
-						break;
-					case mov8_rm:
-						instr->mov8_rm.s.c += additional_rb_parameter_offset;
-						break;
-					default:
-						invalid_code_path();
-				}
-			}
-		}
-
-
-		I(ret);
-
-
-		lambda->location_in_bytecode = count_of(conv.builder);
-
-		lambda->first_instruction = &conv.builder.add(MI(jmp_label));
-
-		if (lambda->definition) {
-			lambda->first_instruction->comment = format(u8"lambda {} {}", lambda->definition->name, lambda->location);
-		} else {
-			lambda->first_instruction->comment = format(u8"lambda {} {}", where(lambda->location.data), lambda->location);
-		}
-
-
-		auto used_bytes = ls.stack_state.max_cursor*context.stack_word_size + ls.temporary_size;
-		if (used_bytes >= 4096) {
-			conv.builder.add(MI(prepare_stack, used_bytes));
-		}
-
-		for (auto i : lambda->return_jumps) {
-			auto offset = lambda->return_location - i.index;
-			if (offset == 1) {
-				i.jmp->kind = InstructionKind::noop; // TODO: this instruction can be removed. but i don't know if it should be.
+			s64 additional_rb_parameter_offset = 0;
+			if (lambda->convention == CallingConvention::stdcall) {
+				// FIXME: push and pop only necessary registers
+				// HACK: -1 means push all non-volatile registers according to x64 stdcall convention.
+				ls.push_used_registers->mask =
+				ls. pop_used_registers->mask = -1;
+				// additional_rb_parameter_offset = -8; //
+				// additional_rb_parameter_offset = ceil(9u*8, 16u);
 			} else {
-				i.jmp->jmp.offset = offset;
+				ls.push_used_registers->mask =
+				ls. pop_used_registers->mask = ls.used_registers_mask;
+				additional_rb_parameter_offset = ceil(count_bits(ls.used_registers_mask)*8, 16u);
 			}
-		}
+
+			if (additional_rb_parameter_offset) {
+				for (auto instr : ls.parameter_load_offsets) {
+					switch (instr->kind) {
+						using enum InstructionKind;
+						// These are used for loading parameter address
+						case lea:
+							instr->lea.s.c += additional_rb_parameter_offset;
+							break;
+						case add_mc:
+							instr->add_mc.s += additional_rb_parameter_offset;
+							break;
+						// This is used to zero out return parameter.
+						case mov8_mc:
+							instr->mov8_mc.s += additional_rb_parameter_offset;
+							break;
+						case mov8_rm:
+							instr->mov8_rm.s.c += additional_rb_parameter_offset;
+							break;
+						default:
+							invalid_code_path();
+					}
+				}
+			}
+
+
+			I(ret);
+
+
+			lambda->location_in_bytecode = count_of(conv.builder);
+
+			lambda->first_instruction = &conv.builder.add(MI(jmp_label));
+
+			if (lambda->definition) {
+				lambda->first_instruction->comment = format(u8"lambda {} {}", lambda->definition->name, lambda->location);
+			} else {
+				lambda->first_instruction->comment = format(u8"lambda {} {}", where(lambda->location.data), lambda->location);
+			}
+
+
+			auto used_bytes = ls.stack_state.max_cursor*context.stack_word_size + ls.temporary_size;
+			if (used_bytes >= 4096) {
+				conv.builder.add(MI(prepare_stack, used_bytes));
+			}
+
+			for (auto i : lambda->return_jumps) {
+				auto offset = lambda->return_location - i.index;
+				if (offset == 1) {
+					i.jmp->kind = InstructionKind::noop; // TODO: this instruction can be removed. but i don't know if it should be.
+				} else {
+					i.jmp->jmp.offset = offset;
+				}
+			}
 #if 1
-		add_steal(&conv.builder, &conv.ls->body_builder);
+			add_steal(&conv.builder, &conv.ls->body_builder);
 #else
-		add(&conv.builder, conv.ls->body_builder);
+			add(&conv.builder, conv.ls->body_builder);
 #endif
-	} else {
-		lambda->definition->bytecode_offset = 0;
-		if (lambda->extern_library.data) {
-			conv.extern_libraries.get_or_insert(lambda->extern_library).add(lambda->definition->name);
+		} else {
+			lambda->definition->bytecode_offset = 0;
+			if (lambda->extern_library.data) {
+				conv.extern_libraries.get_or_insert(lambda->extern_library).add(lambda->definition->name);
+			}
 		}
 	}
 
@@ -3493,8 +3491,10 @@ static ValueRegisters append(Converter &conv, AstIfx *If, Optional<Address> dest
 }
 static ValueRegisters append(Converter &conv, AstPack *pack, Optional<Address> destination) {
 	assert(!destination);
+	assert(pack->type->kind == Ast_subscript);
+	auto type = ((AstSubscript *)pack->type)->expression;
 
-	auto elem_size = ceil(get_size(pack->expressions[0]->type), context.stack_word_size);
+	auto elem_size = ceil(get_size(type), context.stack_word_size);
 	auto total_size = (s64)pack->expressions.count * elem_size;
 
 	I(sub_rc, rs, total_size);
@@ -3520,6 +3520,16 @@ Bytecode build_bytecode() {
 	defer { delete _conv; };
 
 	auto &conv = *_conv;
+
+	for (auto lambda : context.lambdas_with_body) {
+		append(conv, lambda, false);
+	}
+
+	for (auto lambda : context.lambdas_without_body) {
+		if (lambda->extern_library.data) {
+			conv.extern_libraries.get_or_insert(lambda->extern_library).add(lambda->definition->name);
+		}
+	}
 
 	for_each(global_scope.statements, [&](auto statement) {
 		append(conv, statement);

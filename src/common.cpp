@@ -3,12 +3,10 @@
 #include <Windows.h>
 CompilerContext context;
 
-SourceFileInfo &get_source_info(utf8 *location);
+SourceFileInfo *get_source_info(utf8 *location);
 
 
-u32 get_line_number(utf8 *from) {
-	auto lines = get_source_info(from).lines;
-
+u32 get_line_number(Span<String> lines, utf8 *from) {
 	// lines will be empty at lexing time.
 	// So if an error occurs at lexing time,
 	// slower algorithm is executed.
@@ -43,6 +41,10 @@ u32 get_line_number(utf8 *from) {
 			result += (*from == '\n');
 		return result;
 	}
+}
+u32 get_line_number(utf8 *from) {
+	auto info = get_source_info(from);
+	return info ? get_line_number(info->lines, from) : 0;
 }
 
 u32 get_column_number(utf8 *from) {
@@ -80,10 +82,13 @@ PrintKind get_print_kind(ReportKind kind) {
 	invalid_code_path();
 }
 
-void print_source_line(ReportKind kind, Span<utf8> location) {
+void print_source_line(SourceFileInfo *info, ReportKind kind, Span<utf8> location) {
 
-	if (location.data == nullptr) {
+	if (!location.data) {
 		// print("(null location)\n\n");
+		return;
+	}
+	if (!info) {
 		return;
 	}
 
@@ -109,7 +114,7 @@ void print_source_line(ReportKind kind, Span<utf8> location) {
 
 
 	auto error_line = Span(error_line_begin, error_line_end);
-	auto error_line_number = get_line_number(error_line_begin);
+	auto error_line_number = get_line_number(info->lines, error_line_begin);
 
 	auto print_line = [&](auto line) {
 		return print("{} | ", Format{line, align_right(5, ' ')});
@@ -171,28 +176,36 @@ void print_source_line(ReportKind kind, Span<utf8> location) {
 	print("\n");
 }
 
-SourceFileInfo &get_source_info(utf8 *location) {
+SourceFileInfo *get_source_info(utf8 *location) {
 	for (auto &source : context.sources) {
 		if (source.source.begin() <= location && location < source.source.end()) {
-			return source;
+			return &source;
 		}
 	}
-	invalid_code_path();
+	return 0;
 }
 
-HeapString where(utf8 *location) {
+HeapString where(SourceFileInfo *info, utf8 *location) {
 	if (location) {
-		return format<MyAllocator>(u8"{}:{}:{}", parse_path(get_source_info(location).path).name_and_extension(), get_line_number(location), get_column_number(location));
-	} else {
-		return {};
+		if (info) {
+			return format<MyAllocator>(u8"{}:{}:{}", parse_path(info->path).name_and_extension(), get_line_number(info->lines, location), get_column_number(location));
+		}
 	}
+	return {};
+}
+HeapString where(utf8 *location) {
+	return where(get_source_info(location), location);
 }
 
 void print_report(Report r) {
-	if (r.location.data)
-		print("{}: ", where(r.location.data));
-	else
+	auto source_info = r.location.data ? get_source_info(r.location.data) : 0;
+	if (r.location.data) {
+		if (source_info) {
+			print("{}: ", where(source_info, r.location.data));
+		}
+	} else {
 		print(" ================ ");
+	}
 	switch (r.kind) {
 		case ReportKind::info:    print(Print_info,    strings.info);  break;
 		case ReportKind::warning: print(Print_warning, strings.warning); break;
@@ -200,7 +213,7 @@ void print_report(Report r) {
 		default: invalid_code_path();
 	}
 	print(": {}\n", r.message);
-	print_source_line(r.kind, r.location);
+	print_source_line(source_info, r.kind, r.location);
 }
 
 struct AllocationBlock {
