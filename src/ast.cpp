@@ -23,6 +23,7 @@ AstStruct *type_noinit;
 AstStruct *type_unsized_integer;
 AstStruct *type_unsized_float;
 AstStruct *type_unknown;
+AstStruct *type_unknown_enum;
 AstStruct *type_poly;
 AstStruct *type_void;
 AstStruct *type_default_signed_integer;
@@ -30,7 +31,9 @@ AstStruct *type_default_unsigned_integer;
 AstStruct *type_default_integer;
 AstStruct *type_default_float;
 AstStruct *type_overload_set;
+AstStruct *type_typeinfo;
 AstUnaryOperator *type_pointer_to_void;
+AstUnaryOperator *type_pointer_to_typeinfo;
 
 AstIdentifier *type_int;
 AstIdentifier *type_sint;
@@ -59,9 +62,9 @@ bool struct_is_built_in(AstStruct *type) {
 }
 bool type_is_built_in(AstExpression *type) {
 	switch (type->kind) {
-		case Ast_struct: return struct_is_built_in((AstStruct *)type);
-		case Ast_unary_operator: return true;
-		case Ast_subscript: return true;
+		case Ast_Struct: return struct_is_built_in((AstStruct *)type);
+		case Ast_UnaryOperator: return true;
+		case Ast_Subscript: return true;
 	}
 	invalid_code_path();
 	return {};
@@ -84,33 +87,33 @@ void unlock(Scope *scope) {
 // HashMap<String, AstDefinition *> names_not_available_for_globals;
 
 bool needs_semicolon(AstExpression *node) {
-	// if (node->kind == Ast_unary_operator)
+	// if (node->kind == Ast_UnaryOperator)
 	// 	return needs_semicolon(((AstUnaryOperator *)node)->expression);
 
-	if (node->kind == Ast_lambda && ((AstLambda *)node)->has_body == false)
+	if (node->kind == Ast_Lambda && ((AstLambda *)node)->has_body == false)
 		return true;
 
-	return node->kind != Ast_lambda && node->kind != Ast_struct;
+	return node->kind != Ast_Lambda && node->kind != Ast_Struct && node->kind != Ast_Enum;
 }
 
 bool can_be_global(AstStatement *statement) {
 	switch (statement->kind) {
-		case Ast_expression_statement: {
+		case Ast_ExpressionStatement: {
 			auto expression = ((AstExpressionStatement *)statement)->expression;
 			switch (expression->kind) {
-				case Ast_import:
+				case Ast_Import:
 					return true;
 			}
 			return false;
 		}
-		case Ast_if: {
+		case Ast_If: {
 			auto If = (AstIf *)statement;
 			return If->is_constant;
 		}
-		case Ast_definition:
-		case Ast_operator_definition:
-		case Ast_assert:
-		case Ast_print:
+		case Ast_Definition:
+		case Ast_OperatorDefinition:
+		case Ast_Assert:
+		case Ast_Print:
 			return true;
 
 		default:
@@ -141,13 +144,13 @@ void append_type(StringBuilder &builder, AstExpression *type, bool silent_error)
 
 	// ensure(is_type(type));
 	switch (type->kind) {
-		case Ast_struct: {
+		case Ast_Struct: {
 			auto Struct = (AstStruct *)type;
 			ensure(Struct->definition);
 			append(builder, Struct->definition->name);
 			break;
 		}
-		case Ast_lambda_type: {
+		case Ast_LambdaType: {
 			auto lambda = ((AstLambdaType *)type)->lambda;
 
 			append(builder, "fn ");
@@ -169,21 +172,21 @@ void append_type(StringBuilder &builder, AstExpression *type, bool silent_error)
 			}
 			break;
 		}
-		case Ast_identifier: {
+		case Ast_Identifier: {
 			auto identifier = (AstIdentifier *)type;
 			// ensure(identifier->definition);
 			// ensure(types_match(identifier->definition->expression->type, type_type));
 			append(builder, identifier->name);
 			break;
 		}
-		case Ast_unary_operator: {
+		case Ast_UnaryOperator: {
 			using enum UnaryOperation;
 			auto unop = (AstUnaryOperator *)type;
 			append(builder, unop->operation);
 			append_type(builder, unop->expression, silent_error);
 			break;
 		}
-		case Ast_subscript: {
+		case Ast_Subscript: {
 			auto subscript = (AstSubscript *)type;
 			append(builder, '[');
 			append(builder, (s64)get_constant_integer(subscript->index_expression).value());
@@ -191,10 +194,16 @@ void append_type(StringBuilder &builder, AstExpression *type, bool silent_error)
 			append_type(builder, subscript->expression, silent_error);
 			break;
 		}
-		case Ast_span: {
+		case Ast_Span: {
 			auto subscript = (AstSpan *)type;
 			append(builder, "[]");
 			append_type(builder, subscript->expression, silent_error);
+			break;
+		}
+		case Ast_Enum: {
+			auto Enum = (AstEnum *)type;
+			ensure(Enum->definition);
+			append(builder, Enum->definition->name);
 			break;
 		}
 		default: {
@@ -243,15 +252,15 @@ HeapString type_name(AstExpression *type, bool silent_error) {
 s64 get_size(AstExpression *type) {
 	assert(type);
 	switch (type->kind) {
-		case Ast_struct: {
+		case Ast_Struct: {
 			auto Struct = (AstStruct *)type;
 			return Struct->size;
 		}
-		case Ast_identifier: {
+		case Ast_Identifier: {
 			auto identifier = (AstIdentifier *)type;
 			return get_size(identifier->definition()->expression);
 		}
-		case Ast_unary_operator: {
+		case Ast_UnaryOperator: {
 			using enum UnaryOperation;
 			auto unop = (AstUnaryOperator *)type;
 			switch (unop->operation) {
@@ -261,17 +270,21 @@ s64 get_size(AstExpression *type) {
 				default: invalid_code_path();
 			}
 		}
-		case Ast_subscript: {
+		case Ast_Subscript: {
 			auto subscript = (AstSubscript *)type;
 			auto count = get_constant_integer(subscript->index_expression);
 			assert(count.has_value());
 
 			return get_size(subscript->expression) * (s64)count.value();
 		}
-		case Ast_span: {
+		case Ast_Span: {
 			return context.stack_word_size*2; // pointer+count;
 		}
-		case Ast_lambda_type: {
+		case Ast_LambdaType: {
+			return context.stack_word_size;
+		}
+		case Ast_Enum: {
+			assert(!((AstEnum *)type)->underlying_type, "not implemented");
 			return context.stack_word_size;
 		}
 		default: {
@@ -284,15 +297,15 @@ s64 get_size(AstExpression *type) {
 s64 get_align(AstExpression *type) {
 	assert(type);
 	switch (type->kind) {
-		case Ast_struct: {
+		case Ast_Struct: {
 			auto Struct = (AstStruct *)type;
 			return Struct->alignment;
 		}
-		case Ast_identifier: {
+		case Ast_Identifier: {
 			auto identifier = (AstIdentifier *)type;
 			return get_align(identifier->definition()->expression);
 		}
-		case Ast_unary_operator: {
+		case Ast_UnaryOperator: {
 			auto unop = (AstUnaryOperator *)type;
 			switch (unop->operation) {
 				using enum UnaryOperation;
@@ -300,11 +313,11 @@ s64 get_align(AstExpression *type) {
 				default: invalid_code_path();
 			}
 		}
-		case Ast_subscript: {
+		case Ast_Subscript: {
 			auto subscript = (AstSubscript *)type;
 			return get_align(subscript->expression);
 		}
-		case Ast_lambda_type: {
+		case Ast_LambdaType: {
 			return 8;
 		}
 		default: {
@@ -328,29 +341,28 @@ bool same_argument_and_return_types(AstLambda *a, AstLambda *b) {
 	return true;
 }
 
-bool types_match_ns(AstExpression *a, AstExpression *b) {
-	while (a->kind == Ast_identifier) {
-		a = ((AstIdentifier *)a)->definition()->expression;
-	}
-	while (b->kind == Ast_identifier) {
-		b = ((AstIdentifier *)b)->definition()->expression;
-	}
+bool types_match(AstExpression *a, AstExpression *b) {
+	if (a == b)
+		return true;
+
+	a = direct(a);
+	b = direct(b);
 
 	if (a->kind != b->kind) {
 		return false;
 	}
 
 	switch (a->kind) {
-		case Ast_struct:
+		case Ast_Struct:
 			return a == b;
-		case Ast_unary_operator: {
+		case Ast_UnaryOperator: {
 			auto au = (AstUnaryOperator *)a;
 			auto bu = (AstUnaryOperator *)b;
 			return types_match(au->expression, bu->expression);
 		}
 
 
-		case Ast_subscript: {
+		case Ast_Subscript: {
 			auto eq = [](auto a, auto b) {
 				if (!a.has_value()) return false;
 				if (!b.has_value()) return false;
@@ -361,12 +373,12 @@ bool types_match_ns(AstExpression *a, AstExpression *b) {
 			return types_match(as->expression, bs->expression) &&
 				eq(get_constant_integer(as->index_expression), get_constant_integer(bs->index_expression));
 		}
-		case Ast_span: {
+		case Ast_Span: {
 			auto as = (AstSpan *)a;
 			auto bs = (AstSpan *)b;
 			return types_match(as->expression, bs->expression);
 		}
-		case Ast_lambda_type: {
+		case Ast_LambdaType: {
 			auto al = ((AstLambdaType *)a)->lambda;
 			auto bl = ((AstLambdaType *)b)->lambda;
 
@@ -381,21 +393,13 @@ bool types_match_ns(AstExpression *a, AstExpression *b) {
 
 			return true;
 		}
-
-		default: invalid_code_path();
 	}
-}
-
-bool types_match(AstExpression *type_a, AstExpression *type_b) {
-	if (type_a == type_b)
-		return true;
-
-	return types_match_ns(type_a, type_b) || types_match_ns(type_b, type_a);
+	invalid_code_path();
 }
 
 AstExpression *direct(AstExpression *type) {
 	switch (type->kind) {
-		case Ast_identifier: {
+		case Ast_Identifier: {
 			do {
 				auto identifier = (AstIdentifier *)type;
 				if (!identifier->definition())
@@ -403,10 +407,10 @@ AstExpression *direct(AstExpression *type) {
 				type = identifier->definition()->expression;
 				if (!type)
 					return 0;
-			} while (type->kind == Ast_identifier);
+			} while (type->kind == Ast_Identifier);
 			break;
 		}
-		case Ast_binary_operator: {
+		case Ast_BinaryOperator: {
 			auto binop = (AstBinaryOperator *)type;
 			return direct(binop->right);
 		}
@@ -417,16 +421,8 @@ AstExpression *direct(AstExpression *type) {
 	return type;
 }
 
-AstStruct *get_struct(AstExpression *type) {
-	type = direct(type);
-	if (type->kind == Ast_struct)
-		return (AstStruct *)type;
-
-	return 0;
-}
-
 AstExpression *get_definition_expression(AstExpression *expression) {
-	while (expression->kind == Ast_identifier)
+	while (expression->kind == Ast_Identifier)
 		expression = ((AstIdentifier *)expression)->definition()->expression;
 	return expression;
 }
@@ -458,42 +454,6 @@ String as_string(BinaryOperation op) {
 #define e(name, token) case name: return #token##str;
 	ENUMERATE_BINARY_OPERATIONS
 #undef e
-	}
-	invalid_code_path();
-	return {};
-}
-
-String operator_string(u64 op) {
-	switch (op) {
-		case '!': return u8"!"s;
-		case '+': return u8"+"s;
-		case '-': return u8"-"s;
-		case '*': return u8"*"s;
-		case '/': return u8"/"s;
-		case '%': return u8"%"s;
-		case '|': return u8"|"s;
-		case '&': return u8"&"s;
-		case '^': return u8"^"s;
-		case '.': return u8"."s;
-		case '>': return u8">"s;
-		case '<': return u8"<"s;
-		case '>=': return u8">="s;
-		case '<=': return u8"<="s;
-		case '==': return u8"=="s;
-		case '!=': return u8"!="s;
-		case '=': return u8"="s;
-		case '+=': return u8"+="s;
-		case '-=': return u8"-="s;
-		case '*=': return u8"*="s;
-		case '/=': return u8"/="s;
-		case '%=': return u8"%="s;
-		case '|=': return u8"|="s;
-		case '&=': return u8"&="s;
-		case '^=': return u8"^="s;
-		case '>>': return u8">>"s;
-		case '<<': return u8"<<"s;
-		case '>>=': return u8">>="s;
-		case '<<=': return u8"<<="s;
 	}
 	invalid_code_path();
 	return {};
@@ -571,11 +531,11 @@ void operator delete(void *data, umm size) {
 
 bool is_pointer(AstExpression *type) {
 	switch (type->kind) {
-		case Ast_identifier: {
+		case Ast_Identifier: {
 			auto ident = (AstIdentifier *)type;
 			return is_pointer(ident->definition()->expression);
 		}
-		case Ast_unary_operator: {
+		case Ast_UnaryOperator: {
 			auto unop = (AstUnaryOperator *)type;
 			if (unop->operation == UnaryOperation::pointer_or_dereference_or_unwrap) {
 				// This fails at parse time.
@@ -587,23 +547,16 @@ bool is_pointer(AstExpression *type) {
 	}
 	return false;
 }
-bool is_lambda_type(AstExpression *type) {
-	auto d = direct(type);
-	if (!d)
-		return false;
-	return d->kind == Ast_lambda_type;
-}
-
 bool is_pointer_internally(AstExpression *type) {
 	return is_lambda_type(type) || is_pointer(type);
 }
 AstUnaryOperator *as_pointer(AstExpression *type) {
 	switch (type->kind) {
-		case Ast_identifier: {
+		case Ast_Identifier: {
 			auto ident = (AstIdentifier *)type;
 			return as_pointer(ident->definition()->expression);
 		}
-		case Ast_unary_operator: {
+		case Ast_UnaryOperator: {
 			auto unop = (AstUnaryOperator *)type;
 			switch (unop->operation) {
 				case UnaryOperation::pointer_or_dereference_or_unwrap:
@@ -620,8 +573,8 @@ AstUnaryOperator *as_pointer(AstExpression *type) {
 
 AstLiteral *get_literal(AstExpression *expression) {
     switch (expression->kind) {
-        case Ast_literal: return (AstLiteral *)expression;
-        case Ast_identifier: {
+        case Ast_Literal: return (AstLiteral *)expression;
+        case Ast_Identifier: {
             auto identifier = (AstIdentifier *)expression;
 			if (identifier->definition()) {
 				auto definition = identifier->definition();
@@ -636,58 +589,66 @@ AstLiteral *get_literal(AstExpression *expression) {
 }
 
 bool is_constant(AstExpression *expression) {
-    if (expression->kind == Ast_literal)
-        return true;
-
-    if (expression->kind == Ast_identifier) {
-        auto identifier = (AstIdentifier *)expression;
-
-		if (identifier->possible_definitions.count) {
-			// HACK: TODO: FIXME: this is to make passing overloaded functions working.
-			for (auto definition : identifier->possible_definitions) {
-				if (!definition->is_constant)
-					return false;
-			}
+	switch (expression->kind) {
+		case Ast_Literal:
+		case Ast_Lambda:
+		case Ast_Import:
 			return true;
+		case Ast_BinaryOperator: {
+			auto binop = (AstBinaryOperator *)expression;
+			return is_constant(binop->left) && is_constant(binop->right);
 		}
+		case Ast_Identifier: {
+			auto identifier = (AstIdentifier *)expression;
 
-		assert(identifier->definition());
-        if (identifier->definition())
-            return identifier->definition()->is_constant;
-        return false;
-    }
+			if (identifier->possible_definitions.count) {
+				// HACK: TODO: FIXME: this is to make passing overloaded functions working.
+				for (auto definition : identifier->possible_definitions) {
+					if (!definition->is_constant)
+						return false;
+				}
+				return true;
+			}
 
-    if (expression->kind == Ast_binary_operator) {
-        auto binop = (AstBinaryOperator *)expression;
-        return is_constant(binop->left) && is_constant(binop->right);
-    }
+			assert(identifier->definition());
+			if (identifier->definition())
+				return identifier->definition()->is_constant;
+			return false;
+		}
+		case Ast_Call: {
+			auto call = (AstCall *)expression;
+			if (auto Struct = direct_as<AstStruct>(call->callable)) {
+				for (auto arg : call->unsorted_arguments) {
+					if (!is_constant(arg.expression))
+						return false;
+				}
+				return true;
+			}
+			break;
+		}
+	}
 
-    if (expression->kind == Ast_lambda) {
-        return true;
-    }
 
-    if (expression->kind == Ast_import) {
-        return true;
-    }
 
     if (is_type(expression))
         return true;
+
 
     return false;
 }
 
 AstLambda *get_lambda(AstExpression *expression) {
 	switch (expression->kind) {
-		case Ast_lambda:
+		case Ast_Lambda:
 			return (AstLambda *)expression;
-		case Ast_lambda_type:
+		case Ast_LambdaType:
 			return ((AstLambdaType *)expression)->lambda;
-		case Ast_identifier: {
+		case Ast_Identifier: {
 			auto ident = (AstIdentifier *)expression;
 			assert(ident->definition()->expression);
 			return get_lambda(ident->definition()->expression);
 		}
-		case Ast_binary_operator: {
+		case Ast_BinaryOperator: {
 			auto bin = (AstBinaryOperator *)expression;
 			if (bin->operation == BinaryOperation::dot)
 				return get_lambda(bin->right);
@@ -697,11 +658,18 @@ AstLambda *get_lambda(AstExpression *expression) {
 	return 0;
 }
 
-bool is_lambda(AstExpression *expression) {
-	auto d = direct(expression);
-	if (!d)
-		return false;
-	return d->kind == Ast_lambda;
+AstLambdaType *get_lambda_type(AstExpression *type) {
+	switch (type->kind) {
+		case Ast_LambdaType:
+			return (AstLambdaType *)type;
+		case Ast_Identifier: {
+			auto ident = (AstIdentifier *)type;
+			if (!ident->definition()->expression)
+				return 0;
+			return get_lambda_type(ident->definition()->expression);
+		}
+	}
+	return 0;
 }
 
 Comparison comparison_from_binary_operation(BinaryOperation operation) {
@@ -718,7 +686,7 @@ Comparison comparison_from_binary_operation(BinaryOperation operation) {
 /*
 List<Expression<> *> get_arguments_addresses(AstCall *call) {
 	switch (call->argument->kind) {
-		case Ast_tuple:
+		case Ast_Tuple:
 			return map(((AstTuple *)call->argument)->expressions, [](auto &e) { return &e; });
 		default: invalid_code_path();
 	}
@@ -726,49 +694,49 @@ List<Expression<> *> get_arguments_addresses(AstCall *call) {
 
 List<Expression<>> get_arguments(AstCall *call) {
 	switch (call->argument->kind) {
-		case Ast_tuple: return ((AstTuple *)call->argument)->expressions;
+		case Ast_Tuple: return ((AstTuple *)call->argument)->expressions;
 		default: invalid_code_path();
 	}
 }
 */
 
 bool is_sized_array(AstExpression *type) {
-	return type->kind == Ast_subscript;
+	return type->kind == Ast_Subscript;
 }
 
 AstSubscript *as_array(AstExpression *type) {
 	auto d = direct(type);
-	if (d->kind == Ast_subscript)
+	if (d->kind == Ast_Subscript)
 		return (AstSubscript *)d;
 	return 0;
 }
 AstSpan *as_span(AstExpression *type) {
 	auto d = direct(type);
-	if (d->kind == Ast_span)
+	if (d->kind == Ast_Span)
 		return (AstSpan *)d;
 	return 0;
 }
 
 bool is_addressable(AstExpression *expression) {
 	switch (expression->kind) {
-		case Ast_identifier: {
+		case Ast_Identifier: {
 			return true;
 		}
-		case Ast_binary_operator: {
+		case Ast_BinaryOperator: {
 			auto binop = (AstBinaryOperator *)expression;
 			if (binop->operation != BinaryOperation::dot)
 				break;
 
 			return is_addressable(binop->right);
 		}
-		case Ast_subscript: {
+		case Ast_Subscript: {
 			auto subscript = (AstSubscript *)expression;
-			assert(subscript->expression->kind == Ast_identifier);
+			assert(subscript->expression->kind == Ast_Identifier);
 			auto identifier = (AstIdentifier *)subscript->expression;
 
 			return is_addressable(identifier);
 		}
-		case Ast_unary_operator: {
+		case Ast_UnaryOperator: {
 			auto unop = (AstUnaryOperator *)expression;
 			if (unop->operation == UnaryOperation::dereference)
 				return true;

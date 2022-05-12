@@ -286,6 +286,8 @@ DECLARE_OUTPUT_BUILDER {
 
 		assert(count_of(bytecode.extern_libraries) == 0);
 
+		not_implemented("data sections");
+#if 0
 		if (bytecode.constant_data.count) {
 			append(builder, "constants: db ");
 			for (auto byte : bytecode.constant_data) {
@@ -301,6 +303,7 @@ DECLARE_OUTPUT_BUILDER {
 			}
 			append(builder, '\n');
 		}
+#endif
 
 		if (bytecode.zero_data_size) {
 			append_format(builder, "zeros: resb {}\n", bytecode.zero_data_size);

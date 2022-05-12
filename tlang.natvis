@@ -5,23 +5,25 @@
     </Type>
     <Type Name="AstNode" Inheritable="false">
         <Expand>
-            <Item Name="[value]" Condition="kind==Ast_definition          " Optional="true">*(AstDefinition         *)this</Item>
-            <Item Name="[value]" Condition="kind==Ast_return              " Optional="true">*(AsReturn              *)this</Item>
-            <Item Name="[value]" Condition="kind==Ast_lambda              " Optional="true">*(AstLambda             *)this</Item>
-            <Item Name="[value]" Condition="kind==Ast_lambda_type         " Optional="true">*(AstLambdaType         *)this</Item>
-            <Item Name="[value]" Condition="kind==Ast_identifier          " Optional="true">*(AstIdentifier         *)this</Item>
-            <Item Name="[value]" Condition="kind==Ast_literal             " Optional="true">*(AstLiteral            *)this</Item>
-            <Item Name="[value]" Condition="kind==Ast_call                " Optional="true">*(AstCall               *)this</Item>
-            <Item Name="[value]" Condition="kind==Ast_binary_operator     " Optional="true">*(AstBinaryOperator     *)this</Item>
-            <Item Name="[value]" Condition="kind==Ast_struct              " Optional="true">*(AstStruct             *)this</Item>
-            <Item Name="[value]" Condition="kind==Ast_if                  " Optional="true">*(AstIf                 *)this</Item>
-            <Item Name="[value]" Condition="kind==Ast_unary_operator      " Optional="true">*(AstUnaryOperator      *)this</Item>
-            <Item Name="[value]" Condition="kind==Ast_expression_statement" Optional="true">*(AstExpressionStatement*)this</Item>
-            <Item Name="[value]" Condition="kind==Ast_while               " Optional="true">*(AstWhile              *)this</Item>
-            <Item Name="[value]" Condition="kind==Ast_subscript           " Optional="true">*(AstSubscript          *)this</Item>
-            <Item Name="[value]" Condition="kind==Ast_block               " Optional="true">*(AstBlock              *)this</Item>
-            <Item Name="[value]" Condition="kind==Ast_cast                " Optional="true">*(AstCast               *)this</Item>
-            <Item Name="[value]" Condition="kind==Ast_tuple               " Optional="true">*(AstTuple              *)this</Item>
+            <Item Name="[value]" Condition="kind==Ast_Definition         " Optional="true">*(AstDefinition         *)this</Item>
+            <Item Name="[value]" Condition="kind==Ast_Return             " Optional="true">*(AsReturn              *)this</Item>
+            <Item Name="[value]" Condition="kind==Ast_Lambda             " Optional="true">*(AstLambda             *)this</Item>
+            <Item Name="[value]" Condition="kind==Ast_LambdaType         " Optional="true">*(AstLambdaType         *)this</Item>
+            <Item Name="[value]" Condition="kind==Ast_Identifier         " Optional="true">*(AstIdentifier         *)this</Item>
+            <Item Name="[value]" Condition="kind==Ast_Literal            " Optional="true">*(AstLiteral            *)this</Item>
+            <Item Name="[value]" Condition="kind==Ast_Call               " Optional="true">*(AstCall               *)this</Item>
+            <Item Name="[value]" Condition="kind==Ast_BinaryOperator     " Optional="true">*(AstBinaryOperator     *)this</Item>
+            <Item Name="[value]" Condition="kind==Ast_Struct             " Optional="true">*(AstStruct             *)this</Item>
+            <Item Name="[value]" Condition="kind==Ast_If                 " Optional="true">*(AstIf                 *)this</Item>
+            <Item Name="[value]" Condition="kind==Ast_UnaryOperator      " Optional="true">*(AstUnaryOperator      *)this</Item>
+            <Item Name="[value]" Condition="kind==Ast_ExpressionStatement" Optional="true">*(AstExpressionStatement*)this</Item>
+            <Item Name="[value]" Condition="kind==Ast_While              " Optional="true">*(AstWhile              *)this</Item>
+            <Item Name="[value]" Condition="kind==Ast_Subscript          " Optional="true">*(AstSubscript          *)this</Item>
+            <Item Name="[value]" Condition="kind==Ast_Block              " Optional="true">*(AstBlock              *)this</Item>
+            <Item Name="[value]" Condition="kind==Ast_Cast               " Optional="true">*(AstCast               *)this</Item>
+            <Item Name="[value]" Condition="kind==Ast_Tuple              " Optional="true">*(AstTuple              *)this</Item>
+            <Item Name="[value]" Condition="kind==Ast_Span               " Optional="true">*(AstSpan               *)this</Item>
+            <Item Name="[value]" Condition="kind==Ast_Enum               " Optional="true">*(AstEnum               *)this</Item>
         </Expand>
     </Type>
     <Type Name="Token">

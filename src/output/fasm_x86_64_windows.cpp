@@ -76,6 +76,8 @@ section '.idata' import data readable writeable
 
 		append_instructions(context, builder, bytecode.instructions);
 
+		not_implemented("data sections");
+#if 0
 		if (bytecode.constant_data.count) {
 			append(builder, "section '.rodata' data readable\nconstants db ");
 			append_format(builder, "{}", bytecode.constant_data[0]);
@@ -104,6 +106,7 @@ section '.idata' import data readable writeable
 			}
 			append(builder, '\n');
 		}
+#endif
 		if (bytecode.zero_data_size) {
 			append_format(builder, "section '.bss' data readable writeable\nzeros rb {}\n", bytecode.zero_data_size);
 		}

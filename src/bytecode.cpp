@@ -177,8 +177,8 @@ struct InstructionThatReferencesLambda {
 
 struct Converter {
 	InstructionList builder;
-	StringBuilder constant_data_builder;
-	StringBuilder data_builder;
+	SectionBuilder constant_data_builder;
+	SectionBuilder data_builder;
 	umm zero_data_size = 0;
 	AstLambda *lambda = 0;
 
@@ -208,23 +208,20 @@ void free_register(Converter &conv, Register reg) {
 	conv.ls->available_registers.push(reg);
 }
 
-s64 allocate_data(StringBuilder &conv, Span<u8> string) {
-	auto result = conv.count();
-	append_bytes(conv, string);
-	return result;
-}
-s64 allocate_data(StringBuilder &conv, s64 count) {
-	auto result = conv.count();
-	while (count--)
-		append_bytes(conv, '\0');
-	return result;
-}
-
 s64 allocate_zero_data(Converter &conv, s64 byte_count) {
 	auto result = conv.zero_data_size;
 	conv.zero_data_size += byte_count;
 	return result;
 }
+
+s64 allocate_reference_to_constant_data_in_constant_data(Converter &conv, s64 reference) {
+	auto result = conv.constant_data_builder.count;
+	conv.constant_data_builder.parts.back().reference = reference;
+	conv.constant_data_builder.parts.add();
+	conv.constant_data_builder.count += context.stack_word_size;
+	return result;
+}
+
 
 #if BYTECODE_DEBUG
 
@@ -869,15 +866,15 @@ ValueRegisters value_registers(Register a, Register b) {
 // TODO: make destination address not optional
 [[nodiscard]] static ValueRegisters append(Converter &conv, AstExpression *expression, Optional<Address> destination = {}) {
 	switch (expression->kind) {
-		case Ast_identifier:           return append(conv, (AstIdentifier *)expression, destination);
-		case Ast_literal:              return append(conv, (AstLiteral *)expression, destination);
-		case Ast_call:                 return append(conv, (AstCall *)expression, destination);
-		case Ast_binary_operator:      return append(conv, (AstBinaryOperator*)expression, destination);
-		case Ast_unary_operator:       return append(conv, (AstUnaryOperator*)expression, destination);
-		case Ast_subscript:            return append(conv, (AstSubscript*)expression, destination);
-		case Ast_lambda:               return append(conv, (AstLambda*)expression, true, destination);
-		case Ast_ifx:                  return append(conv, (AstIfx*)expression, destination);
-		case Ast_pack:                 return append(conv, (AstPack*)expression, destination);
+		case Ast_Identifier:           return append(conv, (AstIdentifier *)expression, destination);
+		case Ast_Literal:              return append(conv, (AstLiteral *)expression, destination);
+		case Ast_Call:                 return append(conv, (AstCall *)expression, destination);
+		case Ast_BinaryOperator:      return append(conv, (AstBinaryOperator*)expression, destination);
+		case Ast_UnaryOperator:       return append(conv, (AstUnaryOperator*)expression, destination);
+		case Ast_Subscript:            return append(conv, (AstSubscript*)expression, destination);
+		case Ast_Lambda:               return append(conv, (AstLambda*)expression, true, destination);
+		case Ast_Ifx:                  return append(conv, (AstIfx*)expression, destination);
+		case Ast_Pack:                 return append(conv, (AstPack*)expression, destination);
 		default: invalid_code_path();
 	}
 }
@@ -904,24 +901,24 @@ static void append(Converter &, AstAssert *);
 
 static void append(Converter &conv, AstStatement *statement) {
 	switch (statement->kind) {
-		case Ast_definition:           return append(conv, (AstDefinition *)statement);
-		case Ast_return:               return append(conv, (AstReturn *)statement);
-		case Ast_if:                   return append(conv, (AstIf*)statement);
-		case Ast_expression_statement: return append(conv, (AstExpressionStatement*)statement);
-		case Ast_while:                return append(conv, (AstWhile*)statement);
-		case Ast_block:                return append(conv, (AstBlock*)statement);
-		case Ast_operator_definition:      append(conv, ((AstOperatorDefinition*)statement)->lambda, false); return;
-		case Ast_defer: {
+		case Ast_Definition:           return append(conv, (AstDefinition *)statement);
+		case Ast_Return:               return append(conv, (AstReturn *)statement);
+		case Ast_If:                   return append(conv, (AstIf*)statement);
+		case Ast_ExpressionStatement: return append(conv, (AstExpressionStatement*)statement);
+		case Ast_While:                return append(conv, (AstWhile*)statement);
+		case Ast_Block:                return append(conv, (AstBlock*)statement);
+		case Ast_OperatorDefinition:      append(conv, ((AstOperatorDefinition*)statement)->lambda, false); return;
+		case Ast_Defer: {
 			// defer is appended later, after appending a block.
 			auto Defer = (AstDefer *)statement;
 			Defer->scope.parent->bytecode_defers.add(Defer);
 			return;
 		}
-		case Ast_assert: return append(conv, (AstAssert *)statement);
-		case Ast_print:
-		case Ast_import:
-		case Ast_parse:
-		case Ast_test:                 return;
+		case Ast_Assert: return append(conv, (AstAssert *)statement);
+		case Ast_Print:
+		case Ast_Import:
+		case Ast_Parse:
+		case Ast_Test:                 return;
 		default: invalid_code_path();
 	}
 }
@@ -977,7 +974,7 @@ static Optional<Register> load_address_of(Optional<Register> destination, Conver
 
 	if (definition->parent_lambda_or_struct) {
 		assert(definition->bytecode_offset != -1);
-		if (definition->parent_lambda_or_struct->kind == Ast_lambda) {
+		if (definition->parent_lambda_or_struct->kind == Ast_Lambda) {
 			auto parent_lambda = (AstLambda *)definition->parent_lambda_or_struct;
 
 			// ret0
@@ -1097,7 +1094,7 @@ static Optional<Register> load_address_of(Optional<Register> destination, Conver
 static Optional<Register> load_address_of(Optional<Register> destination, Converter &conv, AstExpression *expression) {
 	push_comment(conv, format(u8"load_address_of {}", expression->location));
 	switch (expression->kind) {
-		case Ast_lambda: {
+		case Ast_Lambda: {
 		push_address_of_lambda:
 
 			auto lambda = (AstLambda *)expression;
@@ -1122,11 +1119,11 @@ static Optional<Register> load_address_of(Optional<Register> destination, Conver
 			}
 			return destination;
 		}
-		case Ast_identifier: {
+		case Ast_Identifier: {
 			auto identifier = (AstIdentifier *)expression;
 			auto definition = identifier->definition();
 
-			if (definition->expression && definition->expression->kind == Ast_lambda) {
+			if (definition->expression && definition->expression->kind == Ast_Lambda) {
 				expression = definition->expression;
 				goto push_address_of_lambda;
 
@@ -1135,11 +1132,11 @@ static Optional<Register> load_address_of(Optional<Register> destination, Conver
 			}
 			break;
 		}
-		case Ast_binary_operator: {
+		case Ast_BinaryOperator: {
 			auto binop = (AstBinaryOperator *)expression;
 			using enum BinaryOperation;
 			assert(binop->operation == dot);
-			assert(binop->right->kind == Ast_identifier);
+			assert(binop->right->kind == Ast_Identifier);
 			auto right = (AstIdentifier *)binop->right;
 			auto offset = right->definition()->offset_in_struct;
 			assert(offset != INVALID_MEMBER_OFFSET);
@@ -1152,7 +1149,7 @@ static Optional<Register> load_address_of(Optional<Register> destination, Conver
 			}
 			return destination;
 		}
-		case Ast_subscript: {
+		case Ast_Subscript: {
 			auto subscript = (AstSubscript *)expression;
 			auto element_size = get_size(subscript->type);
 
@@ -1204,7 +1201,7 @@ static Optional<Register> load_address_of(Optional<Register> destination, Conver
 			}
 			break;
 		}
-		case Ast_unary_operator: {
+		case Ast_UnaryOperator: {
 			auto unop = (AstUnaryOperator *)expression;
 			assert(unop->operation == UnaryOperation::dereference);
 			append_to_stack(conv, unop->expression);
@@ -1238,7 +1235,7 @@ static void push_address_of(Converter &conv, AstExpression *expression) {
 #else
 	push_comment(conv, format(u8"push_address_of {}", expression->location));
 	switch (expression->kind) {
-		case Ast_lambda: {
+		case Ast_Lambda: {
 		push_address_of_lambda:
 
 			auto lambda = (AstLambda *)expression;
@@ -1252,11 +1249,11 @@ static void push_address_of(Converter &conv, AstExpression *expression) {
 			}
 			break;
 		}
-		case Ast_identifier: {
+		case Ast_Identifier: {
 			auto identifier = (AstIdentifier *)expression;
 			auto definition = identifier->definition;
 
-			if (definition->expression && definition->expression->kind == Ast_lambda) {
+			if (definition->expression && definition->expression->kind == Ast_Lambda) {
 				expression = definition->expression;
 				goto push_address_of_lambda;
 
@@ -1264,7 +1261,7 @@ static void push_address_of(Converter &conv, AstExpression *expression) {
 				s64 size = get_size(definition->type);
 
 				if (definition->parent_lambda_or_struct) {
-					if (definition->parent_lambda_or_struct->kind == Ast_lambda) {
+					if (definition->parent_lambda_or_struct->kind == Ast_Lambda) {
 						auto parent_lambda = (AstLambda *)definition->parent_lambda_or_struct;
 
 						s64 offset = 0;
@@ -1312,12 +1309,12 @@ static void push_address_of(Converter &conv, AstExpression *expression) {
 			}
 			break;
 		}
-		case Ast_binary_operator: {
+		case Ast_BinaryOperator: {
 			auto binop = (AstBinaryOperator *)expression;
 			using enum BinaryOperation;
 			assert(binop->operation == dot);
 			push_address_of(conv, binop->left);
-			assert(binop->right->kind == Ast_identifier);
+			assert(binop->right->kind == Ast_Identifier);
 			auto offset = ((AstIdentifier *)binop->right)->definition->offset_in_struct;
 			assert(offset != INVALID_MEMBER_OFFSET);
 			if (offset) {
@@ -1325,7 +1322,7 @@ static void push_address_of(Converter &conv, AstExpression *expression) {
 			}
 			break;
 		}
-		case Ast_subscript: {
+		case Ast_Subscript: {
 			auto subscript = (AstSubscript *)expression;
 			push_address_of(conv, subscript->expression);
 
@@ -1522,10 +1519,10 @@ static void append(Converter &conv, Scope &scope) {
 			auto cursor_after = conv.ls->stack_state.cursor;
 
 			switch (statement->kind) {
-				case Ast_definition:
-				case Ast_return:
+				case Ast_Definition:
+				case Ast_Return:
 					break;
-				case Ast_if:
+				case Ast_If:
 					if (((AstIf *)statement)->is_constant)
 						break;
 				default:
@@ -1567,22 +1564,22 @@ static void append(Converter &conv, AstDefinition *definition) {
 	assert(definition_size != -1);
 
 	// Don't do anything for constant definitions in lambdas
-	if (definition->parent_lambda_or_struct && definition->parent_lambda_or_struct->kind != Ast_struct && definition->is_constant) {
+	if (definition->parent_lambda_or_struct && definition->parent_lambda_or_struct->kind != Ast_Struct && definition->is_constant) {
 		return;
 	}
 
-	if (definition->expression && definition->expression->kind == Ast_lambda) {
+	if (definition->expression && definition->expression->kind == Ast_Lambda) {
 		// NOTE: no need to append lambdas here anymore. they are appended in build_bytecode
 		// assert_always(append(conv, (AstLambda *)definition->expression, false).count == 0);
 		return;
 	}
 
 	if (definition->expression) {
-		if (definition->expression->kind == Ast_struct) {
+		if (definition->expression->kind == Ast_Struct) {
 			auto Struct = (AstStruct *)definition->expression;
 			for_each (Struct->scope.definitions, [&](auto, auto members) {
 				for (auto member : members) {
-					if (member->is_constant && member->expression && member->expression->kind == Ast_lambda) {
+					if (member->is_constant && member->expression && member->expression->kind == Ast_Lambda) {
 						append(conv, member);
 					}
 				}
@@ -1594,7 +1591,7 @@ static void append(Converter &conv, AstDefinition *definition) {
 		return;
 
 	if (definition->parent_lambda_or_struct) {
-		if (definition->parent_lambda_or_struct->kind == Ast_lambda) {
+		if (definition->parent_lambda_or_struct->kind == Ast_Lambda) {
 			auto parent_lambda = (AstLambda *)definition->parent_lambda_or_struct;
 			push_comment(conv, format(u8"definition {}", definition->name));
 			assert(!definition->is_parameter);
@@ -1637,7 +1634,7 @@ static void append(Converter &conv, AstDefinition *definition) {
 
 				switch (literal->literal_kind) {
 					case LiteralKind::integer: {
-						definition->bytecode_offset = allocate_data(conv.constant_data_builder, value_as_bytes((s64)literal->integer));
+						definition->bytecode_offset = conv.constant_data_builder.append(value_as_bytes((s64)literal->integer));
 						break;
 					}
 					case LiteralKind::string: {
@@ -1647,7 +1644,7 @@ static void append(Converter &conv, AstDefinition *definition) {
 							case 4: string_size = 8; break;
 							case 8: string_size = 16; break;
 						}
-						auto offset = allocate_data(conv.constant_data_builder, string_size);
+						auto offset = conv.constant_data_builder.allocate(string_size);
 						definition->bytecode_offset = offset;
 						conv.constant_strings.add({offset, literal->string_data_offset, true});
 						break;
@@ -1656,11 +1653,11 @@ static void append(Converter &conv, AstDefinition *definition) {
 						invalid_code_path();
 				}
 			} else {
-				definition->bytecode_offset = allocate_data(conv.constant_data_builder, get_size(definition->type));
+				definition->bytecode_offset = conv.constant_data_builder.allocate(get_size(definition->type));
 			}
 		} else {
 			if (definition->expression) {
-				definition->bytecode_offset = allocate_data(conv.data_builder, value_as_bytes((s64)get_constant_integer(definition->expression).value()));
+				definition->bytecode_offset = conv.data_builder.append(value_as_bytes((s64)get_constant_integer(definition->expression).value()));
 			} else {
 				definition->bytecode_offset = allocate_zero_data(conv, definition_size);
 			}
@@ -1829,7 +1826,7 @@ static void append(Converter &conv, AstBlock *block) {
 static void append(Converter &conv, AstExpressionStatement *es) {
 	append_to_stack(conv, es->expression);
 	switch (es->expression->kind) {
-		case Ast_binary_operator: {
+		case Ast_BinaryOperator: {
 			auto bin = (AstBinaryOperator *)es->expression;
 			using enum BinaryOperation;
 			if (
@@ -1850,7 +1847,7 @@ static void append(Converter &conv, AstExpressionStatement *es) {
 			}
 			break;
 		}
-		case Ast_call: {
+		case Ast_Call: {
 			// discard return value
 			auto call = (AstCall *)es->expression;
 			auto size = ceil(get_size(call->type), context.stack_word_size);
@@ -1859,7 +1856,7 @@ static void append(Converter &conv, AstExpressionStatement *es) {
 			}
 			return;
 		}
-		case Ast_import:
+		case Ast_Import:
 			return;
 	}
 
@@ -1883,6 +1880,35 @@ static Address allocate_temporary_space(Converter &conv, s64 size) {
 	return offset;
 }
 
+void append_struct_initializer(Converter &conv, AstStruct *Struct, SmallList<AstExpression *> values) {
+	auto struct_size = ceil(get_size(Struct), 8ll);
+
+	I(sub_rc, rs, struct_size);
+
+	for (umm i = 0; i < values.count; ++i) {
+		auto arg = values[i];
+		auto member = Struct->data_members[i];
+		auto arg_size = get_size(member->type);
+
+		auto member_pointer = rs + arg_size + member->offset_in_struct;
+
+		if (arg) {
+			assert(types_match(arg->type, member->type));
+
+			append_to_stack(conv, arg);
+
+
+			append_memory_copy_a(conv, member_pointer, rs, arg_size, false, "arg"str, "member"str);
+
+			I(add_rc, rs, arg_size);
+		} else {
+			// zero initialize
+
+			append_memory_set(conv, member_pointer, 0, arg_size, false);
+		}
+	}
+}
+
 static ValueRegisters append(Converter &conv, AstBinaryOperator *bin, Optional<Address> destination) {
 	assert(!destination);
 	push_comment(conv, format(u8"binary {}"s, bin->location));
@@ -1893,21 +1919,21 @@ static ValueRegisters append(Converter &conv, AstBinaryOperator *bin, Optional<A
 	using enum BinaryOperation;
 	if (bin->operation == dot) {
 		switch (right->kind) {
-			case Ast_identifier: {
+			case Ast_Identifier: {
 				AstStruct *Struct = 0;
 				bool is_pointer = false;
 				if (auto pointer = as_pointer(left->type)) {
-					Struct = get_struct(pointer->expression);
+					Struct = direct_as<AstStruct>(pointer->expression);
 					is_pointer = true;
 				} else {
-					Struct = get_struct(left->type);
+					Struct = direct_as<AstStruct>(left->type);
 				}
 
 				if (Struct) {
 					auto struct_size = get_size(left->type);
 
 
-					assert(right->kind == Ast_identifier);
+					assert(right->kind == Ast_Identifier);
 					auto ident = (AstIdentifier *)right;
 					auto member = ident->definition();
 					assert(member);
@@ -2027,18 +2053,19 @@ static ValueRegisters append(Converter &conv, AstBinaryOperator *bin, Optional<A
 	} else if (bin->operation == as) {
 		auto cast = bin;
 
-		AstExpression *from = 0;
-		AstExpression *to = 0;
-		if (is_pointer_internally(cast->left->type))
-			from = type_u64;
-		else
-			from = direct(cast->left->type);
+		auto get_internal_representation = [&](AstExpression *type) -> AstExpression * {
+			if (is_pointer_internally(type))
+				return type_u64;
+			else if (auto Enum = direct_as<AstEnum>(type)) {
+				assert(!Enum->underlying_type, "not implemented");
+				return type_s64;
+			} else
+				return direct(type);
+			return 0;
+		};
 
-		if (is_pointer_internally(cast->type))
-			to = type_u64;
-		else
-			to = direct(cast->type);
-
+		AstExpression *from = get_internal_representation(cast->left->type);
+		AstExpression *to = get_internal_representation(cast->type);
 
 		{
 			auto array = as_array(from);
@@ -2200,19 +2227,16 @@ static ValueRegisters append(Converter &conv, AstBinaryOperator *bin, Optional<A
 			return {};
 		}
 
-		{
-			auto option = as_option(to);
-			if (option) {
-				assert(types_match(option->expression, from));
-				//     string as ?string
-				//      count    count
-				// rs -> data    data
-				//               has_value <- rs
+		if (auto option = as_option(to)) {
+			assert(types_match(option->expression, from));
+			//     string as ?string
+			//      count    count
+			// rs -> data    data
+			//               has_value <- rs
 
-				I(sub_rc, rs, get_align(from));
-				I(mov1_mc, rs, 1);
-				return {};
-			}
+			I(sub_rc, rs, get_align(from));
+			I(mov1_mc, rs, 1);
+			return {};
 		}
 
 		invalid_code_path();
@@ -2454,9 +2478,8 @@ static ValueRegisters append(Converter &conv, AstIdentifier *identifier, Optiona
 	push_comment(conv, format(u8"load identifer {}", identifier->location));
 
 	auto definition = identifier->definition();
-	assert(definition->bytecode_offset != -1);
 
-	if (definition->expression && definition->expression->kind == Ast_lambda) {
+	if (definition->expression && definition->expression->kind == Ast_Lambda) {
 		// :PUSH_ADDRESS: TODO: Replace this with load_address_of
 		push_address_of(conv, identifier);
 		return {};
@@ -2515,271 +2538,278 @@ static ValueRegisters append(Converter &conv, AstCall *call, Optional<Address> d
 	//assert(lambda_type);
 	//assert(lambda_type->parameters_size != -1);
 
-	auto lambda = get_lambda(call->callable);
-	bool is_member = lambda && lambda->is_member;
-	assert(lambda->type->kind == Ast_lambda_type);
-	auto lambda_type = ((AstLambdaType *)lambda->type)->lambda;
+	if (call->lambda_type) {
+		auto lambda = call->lambda_type->lambda;
+		bool is_member = lambda->is_member;
 
-	// each argument's size is not more than context.stack_word_size.
-	// bigger arguments are passed as pointers.
-	s64 bytes_will_be_pushed = (tl::count(lambda_type->parameters, [](auto param){return !param->is_constant;}) + is_member) * context.stack_word_size;
+		// each argument's size is not more than context.stack_word_size.
+		// bigger arguments are passed as pointers.
+		s64 bytes_will_be_pushed = (tl::count(lambda->parameters, [](auto param){return !param->is_constant;}) + is_member) * context.stack_word_size;
 
-	bool did_align = false;
+		bool did_align = false;
 
-	auto move_from_stack_to_temporary = [&](s64 size) {
-		assert(lambda_type->convention != CallingConvention::stdcall);
+		auto move_from_stack_to_temporary = [&](s64 size) {
+			assert(lambda->convention != CallingConvention::stdcall);
 
-		auto offset = allocate_temporary_space(conv, size);
-		append_memory_copy_a(conv, offset, rs, size, false, "argument"str, "temporary"str);
+			auto offset = allocate_temporary_space(conv, size);
+			append_memory_copy_a(conv, offset, rs, size, false, "argument"str, "temporary"str);
 
-		return offset;
-	};
+			return offset;
+		};
 
-	auto append_arguments_to_stack = [&] {
-		// TODO: implement for 32-bit
+		auto append_arguments_to_stack = [&] {
+			// TODO: implement for 32-bit
+			assert(context.stack_word_size == 8);
+
+			// Append all arguments to stack
+			// if (is_member) {
+			// 	assert(call->callable->kind == Ast_BinaryOperator);
+			// 	auto bin = (AstBinaryOperator *)call->callable;
+			// 	assert(bin->operation == BinaryOperation::dot);
+			// 	assert(is_addressable(bin->left));
+			// 	push_address_of(conv, bin->left);
+			// }
+
+			for (auto param : lambda->parameters)
+				assert(!param->is_constant); // not implemented: need to erase constants from call->sorted_arguments first
+
+			for (auto arg : call->sorted_arguments) {
+				append_to_stack(conv, arg);
+
+				auto size = ceil(get_size(arg->type), context.stack_word_size);
+				if (size > context.stack_word_size) {
+					// Put argument into temporary space and pass a pointer to it
+					auto offset = move_from_stack_to_temporary(size);
+
+					I(add_rc, rs, size);
+					I(lea, r0, offset);
+					I(push_r, r0);
+				} else {
+					// leave small argument as is.
+				}
+			}
+		};
+
+		auto align_stack = [&] {
+			if ((((conv.ls->stack_state.cursor-conv.ls->stack_state.rb_offset+1)*context.stack_word_size + bytes_will_be_pushed) % 16) != 0){
+				push_comment(conv, "align stack"str);
+				I(sub_rc, rs, 8);
+				did_align = true;
+			}
+		};
+
+		if (lambda->is_intrinsic) {
+			auto name = lambda->definition->name;
+			if (name == "debug_break") {
+				I(debug_break);
+			} else if (name == "memcpy") {
+				append_arguments_to_stack();
+				auto rdst = r0;
+				auto rsrc = r1;
+				auto rsize = r2;
+				I(pop_r, rsize);
+				I(pop_r, rsrc);
+				I(pop_r, rdst);
+				I(copyf_mmr, rdst, rsrc, rsize);
+			} else {
+				invalid_code_path("Unknown intrinsic");
+			}
+			return {};
+		}
+
 		assert(context.stack_word_size == 8);
 
-		// Append all arguments to stack
-		// if (is_member) {
-		// 	assert(call->callable->kind == Ast_binary_operator);
-		// 	auto bin = (AstBinaryOperator *)call->callable;
-		// 	assert(bin->operation == BinaryOperation::dot);
-		// 	assert(is_addressable(bin->left));
-		// 	push_address_of(conv, bin->left);
-		// }
+		if (is_member)
+			assert(call->sorted_arguments.count == lambda->parameters.count+1);
+		else
+			assert(call->sorted_arguments.count == lambda->parameters.count);
 
-		for (auto param : lambda_type->parameters)
-			assert(!param->is_constant); // not implemented: need to erase constants from call->sorted_arguments first
+		auto &arguments = call->sorted_arguments;
+		bool lambda_is_constant = is_constant(call->callable);
 
-		for (auto arg : call->sorted_arguments) {
-			append_to_stack(conv, arg);
+		auto start_stack_size = conv.ls->stack_state.cursor;
+		auto expected_result_size = ceil(get_size(lambda->return_parameter->type), 8ll);
+		defer {
+			// ensure we have the right amount of data on the stack
+			auto actual_size = (conv.ls->stack_state.cursor - start_stack_size) * 8;
+			assert(expected_result_size == actual_size);
 
-			auto size = ceil(get_size(arg->type), context.stack_word_size);
-			if (size > context.stack_word_size) {
-				// Put argument into temporary space and pass a pointer to it
-				auto offset = move_from_stack_to_temporary(size);
+			// make these visible in debugger
+			auto x = call;
+			auto y = lambda;
+		};
 
-				I(add_rc, rs, size);
-				I(lea, r0, offset);
-				I(push_r, r0);
-			} else {
-				// leave small argument as is.
-			}
-		}
-	};
-
-	auto align_stack = [&] {
-		if ((((conv.ls->stack_state.cursor-conv.ls->stack_state.rb_offset+1)*context.stack_word_size + bytes_will_be_pushed) % 16) != 0){
-			push_comment(conv, "align stack"str);
-			I(sub_rc, rs, 8);
-			did_align = true;
-		}
-	};
-
-	if (lambda_type->is_intrinsic) {
-		auto name = lambda_type->definition->name;
-		if (name == "debug_break") {
+		auto check_alignment = [&] {
+			push_comment(conv, "aligment check"str);
+			I(mov_rr, r0, rs);
+			I(and_rc, r0, 0xf);
+			I(jz_cr, 2, r0);
 			I(debug_break);
-		} else if (name == "memcpy") {
-			append_arguments_to_stack();
-			auto rdst = r0;
-			auto rsrc = r1;
-			auto rsize = r2;
-			I(pop_r, rsize);
-			I(pop_r, rsrc);
-			I(pop_r, rdst);
-			I(copyf_mmr, rdst, rsrc, rsize);
-		} else {
-			invalid_code_path("Unknown intrinsic");
-		}
-		return {};
-	}
+			I(jmp_label);
+		};
 
-	assert(context.stack_word_size == 8);
+		switch (lambda->convention) {
+			case CallingConvention::tlang: {
+				s64 return_parameters_size_on_stack = ceil(get_size(call->type), 8ll);
 
-	if (is_member)
-		assert(call->sorted_arguments.count == lambda->parameters.count+1);
-	else
-		assert(call->sorted_arguments.count == lambda->parameters.count);
+				push_comment(conv, u8"reserve space for return value"s);
+				I(sub_rc, rs, return_parameters_size_on_stack);
 
-	auto &arguments = call->sorted_arguments;
-	bool lambda_is_constant = is_constant(call->callable);
+				align_stack();
 
-	auto start_stack_size = conv.ls->stack_state.cursor;
-	auto expected_result_size = ceil(get_size(lambda_type->return_parameter->type), 8ll);
-	defer {
-		// ensure we have the right amount of data on the stack
-		auto actual_size = (conv.ls->stack_state.cursor - start_stack_size) * 8;
-		assert(expected_result_size == actual_size);
+				append_arguments_to_stack();
 
-		// make these visible in debugger
-		auto x = call;
-		auto y = lambda_type;
-	};
+				// check_alignment();
 
-	auto check_alignment = [&] {
-		push_comment(conv, "aligment check"str);
-		I(mov_rr, r0, rs);
-		I(and_rc, r0, 0xf);
-		I(jz_cr, 2, r0);
-		I(debug_break);
-		I(jmp_label);
-	};
-
-	switch (lambda_type->convention) {
-		case CallingConvention::tlang: {
-			s64 return_parameters_size_on_stack = ceil(get_size(call->type), 8ll);
-
-			push_comment(conv, u8"reserve space for return value"s);
-			I(sub_rc, rs, return_parameters_size_on_stack);
-
-			align_stack();
-
-			append_arguments_to_stack();
-
-			// check_alignment();
-
-			if (lambda_is_constant || is_member) {
-				if (lambda->definition) { // null if polymorphic
-					assert(lambda->definition->is_constant);
+				if (lambda_is_constant || is_member) {
+					if (lambda->definition) { // null if polymorphic
+						assert(lambda->definition->is_constant);
+					}
+					conv.instructions_that_reference_lambdas.add({
+						.instruction = II(call_c, -1),
+						.lambda = lambda,
+					});
+				} else {
+					append_to_stack(conv, call->callable);
+					auto rax = x86_64::to_bc_register(x86_64::Register64::rax);
+					I(pop_r, rax);
+					I(call_r, rax);
 				}
-				conv.instructions_that_reference_lambdas.add({
-					.instruction = II(call_c, -1),
-					.lambda = lambda_type,
-				});
-			} else {
-				append_to_stack(conv, call->callable);
-				auto rax = x86_64::to_bc_register(x86_64::Register64::rax);
-				I(pop_r, rax);
-				I(call_r, rax);
+				I(add_rc, rs, bytes_will_be_pushed);
+
+
+				// Allow local definitions to be spaced out by word size to avoid unnecessary copying.
+				if (dont_care_about_definition_spacing) {
+					if (did_align) {
+						expected_result_size += 8;
+					}
+				} else {
+					if (did_align) {
+						append_memory_copy_a(conv, rs+8, rs, return_parameters_size_on_stack, true, u8"16 aligned stack"s, u8"16 unaligned stack"s);
+						I(add_rc, rs, 8);
+					}
+				}
+
+				break;
 			}
-			I(add_rc, rs, bytes_will_be_pushed);
+			case CallingConvention::stdcall: {
 
+				using namespace x86_64;
 
-			// Allow local definitions to be spaced out by word size to avoid unnecessary copying.
-			if (dont_care_about_definition_spacing) {
-				if (did_align) {
-					expected_result_size += 8;
+				s64 const shadow_space_size = 32;
+
+				if (lambda->parameters.count < 4) {
+					// shadow space
+					bytes_will_be_pushed += 32;
 				}
-			} else {
+
+				for (auto argument : arguments) {
+					assert(get_size(argument->type) <= 8);
+				}
+
+				align_stack();
+
+				append_arguments_to_stack();
+
+				// check_alignment();
+
+				// we have this:
+				//
+				// STACK:
+				// arg0
+				// arg1
+				// arg2
+				// arg3
+				// arg4
+				// arg5 <- rs aligned to 16
+				//
+				// we need to get this:
+				// REGISTERS:
+				// arg0: rcx or xmm0
+				// arg1: rdx or xmm1
+				// arg2: r8  or xmm2
+				// arg3: r9  or xmm3
+				//
+				// STACK:
+				// arg5
+				// arg4
+				// shadow
+				// shadow
+				// shadow
+				// shadow <- rsp aligned to 16
+				//
+
+				auto move_arg = [&](int arg_index, s64 stack_offset) {
+		 			if (lambda->parameters.count > arg_index)
+						if (::is_float(lambda->parameters[arg_index]->type))
+							I(mov8_xm, stdcall_float_registers[arg_index], rs + (lambda->parameters.count*8 - stack_offset));
+						else
+							I(mov8_rm, to_bc_register(stdcall_int_registers[arg_index]), rs + (lambda->parameters.count*8 - stack_offset));
+				};
+
+		 		move_arg(0,  8);
+				move_arg(1, 16);
+				move_arg(2, 24);
+				move_arg(3, 32);
+
+				if (lambda->parameters.count > 4) {
+					push_comment(conv, "Swap argument order"str);
+
+					// these are not used in bytecode and stdcall
+					auto r0 = x86_64::to_bc_register(x86_64::Register64::r10);
+					auto r1 = x86_64::to_bc_register(x86_64::Register64::r11);
+
+					for (s64 i = 0; i < lambda->parameters.count / 2; ++i) {
+						auto m0 = rs + i * 8;
+						auto m1 = rs + (lambda->parameters.count-i-1)*8;
+						I(mov8_rm, r0, m0);
+						I(xchg8_m, m1, r0);
+						I(mov8_mr, m0, r0);
+					}
+				}
+
+				if (lambda->parameters.count < 4) {
+					push_comment(conv, u8"reserve shadow space"s);
+					I(sub_rc, rs, 32);
+				}
+
+				auto function_address_register = to_bc_register(Register64::rax);
+				if (lambda_is_constant) {
+					load_address_of(function_address_register, conv, call->callable);
+					I(call_r, function_address_register);
+				} else {
+					append_to_stack(conv, call->callable);
+					I(pop_r, function_address_register);
+					I(call_r, function_address_register);
+				}
+
+				push_comment(conv, u8"remove arguments"s);
+				I(add_rc, rs, bytes_will_be_pushed);
+
 				if (did_align) {
-					append_memory_copy_a(conv, rs+8, rs, return_parameters_size_on_stack, true, u8"16 aligned stack"s, u8"16 unaligned stack"s);
+					push_comment(conv, u8"restore stack before alignment"s);
 					I(add_rc, rs, 8);
 				}
-			}
 
-			break;
-		}
-		case CallingConvention::stdcall: {
-
-			using namespace x86_64;
-
-			s64 const shadow_space_size = 32;
-
-			if (lambda_type->parameters.count < 4) {
-				// shadow space
-				bytes_will_be_pushed += 32;
-			}
-
-			for (auto argument : arguments) {
-				assert(get_size(argument->type) <= 8);
-			}
-
-			align_stack();
-
-			append_arguments_to_stack();
-
-			// check_alignment();
-
-			// we have this:
-			//
-			// STACK:
-			// arg0
-			// arg1
-			// arg2
-			// arg3
-			// arg4
-			// arg5 <- rs aligned to 16
-			//
-			// we need to get this:
-			// REGISTERS:
-			// arg0: rcx or xmm0
-			// arg1: rdx or xmm1
-			// arg2: r8  or xmm2
-			// arg3: r9  or xmm3
-			//
-			// STACK:
-			// arg5
-			// arg4
-			// shadow
-			// shadow
-			// shadow
-			// shadow <- rsp aligned to 16
-			//
-
-			auto move_arg = [&](int arg_index, s64 stack_offset) {
-		 		if (lambda_type->parameters.count > arg_index)
-					if (::is_float(lambda_type->parameters[arg_index]->type))
-						I(mov8_xm, stdcall_float_registers[arg_index], rs + (lambda_type->parameters.count*8 - stack_offset));
-					else
-						I(mov8_rm, to_bc_register(stdcall_int_registers[arg_index]), rs + (lambda_type->parameters.count*8 - stack_offset));
-			};
-
-		 	move_arg(0,  8);
-			move_arg(1, 16);
-			move_arg(2, 24);
-			move_arg(3, 32);
-
-			if (lambda_type->parameters.count > 4) {
-				push_comment(conv, "Swap argument order"str);
-
-				// these are not used in bytecode and stdcall
-				auto r0 = x86_64::to_bc_register(x86_64::Register64::r10);
-				auto r1 = x86_64::to_bc_register(x86_64::Register64::r11);
-
-				for (s64 i = 0; i < lambda_type->parameters.count / 2; ++i) {
-					auto m0 = rs + i * 8;
-					auto m1 = rs + (lambda_type->parameters.count-i-1)*8;
-					I(mov8_rm, r0, m0);
-					I(xchg8_m, m1, r0);
-					I(mov8_mr, m0, r0);
+				if (!types_match(call->type, type_void)) {
+					assert(get_size(lambda->return_parameter->type) > 0);
+					I(push_r, to_bc_register(Register64::rax));
 				}
+
+				break;
 			}
-
-			if (lambda_type->parameters.count < 4) {
-				push_comment(conv, u8"reserve shadow space"s);
-				I(sub_rc, rs, 32);
-			}
-
-			auto function_address_register = to_bc_register(Register64::rax);
-			if (lambda_is_constant) {
-				load_address_of(function_address_register, conv, call->callable);
-				I(call_r, function_address_register);
-			} else {
-				append_to_stack(conv, call->callable);
-				I(pop_r, function_address_register);
-				I(call_r, function_address_register);
-			}
-
-			push_comment(conv, u8"remove arguments"s);
-			I(add_rc, rs, bytes_will_be_pushed);
-
-			if (did_align) {
-				push_comment(conv, u8"restore stack before alignment"s);
-				I(add_rc, rs, 8);
-			}
-
-			if (!types_match(call->type, type_void)) {
-				assert(get_size(lambda_type->return_parameter->type) > 0);
-				I(push_r, to_bc_register(Register64::rax));
-			}
-
-			break;
+			default:
+				invalid_code_path();
 		}
-		default:
-			invalid_code_path();
+		return {};
+	} else {
+		auto Struct = direct_as<AstStruct>(call->callable);
+		assert(Struct);
+
+		append_struct_initializer(conv, Struct, call->sorted_arguments);
+		return {};
 	}
-	return {};
+	invalid_code_path();
 }
 static ValueRegisters append(Converter &conv, AstLiteral *literal, Optional<Address> destination) {
 	if (literal->literal_kind == LiteralKind::string)
@@ -2860,7 +2890,7 @@ static ValueRegisters append(Converter &conv, AstLiteral *literal, Optional<Addr
 	// 				auto f = (f64)(s64)literal->integer;
 	// 				I(mov_rc, destination, *(s64 *)&f);
 	// 			}
-	// 			else if (literal->type->kind == Ast_unary_operator && ((AstUnaryOperator *)literal->type)->operation == '*')
+	// 			else if (literal->type->kind == Ast_UnaryOperator && ((AstUnaryOperator *)literal->type)->operation == '*')
 	// 				I(mov_rc, destination, (s64)literal->integer);
 	// 			else invalid_code_path();
 	// 			break;
@@ -2881,7 +2911,7 @@ static ValueRegisters append(Converter &conv, AstLiteral *literal, Optional<Addr
 				assert(context.stack_word_size == 8);
 				I(mov8_mc, destination+8, (s64)literal->string.count);
 
-				auto data = allocate_data(conv.constant_data_builder, as_bytes((Span<utf8>)literal->string));
+				auto data = conv.constant_data_builder.append(as_bytes((Span<utf8>)literal->string));
 				I(mov_ra, r0, data);
 				I(mov8_mr, destination, r0);
 
@@ -2920,7 +2950,7 @@ static ValueRegisters append(Converter &conv, AstLiteral *literal, Optional<Addr
 					auto f = (f64)(s64)literal->integer;
 					I(mov8_mc, destination, *(s64 *)&f);
 				}
-				else if (literal->type->kind == Ast_unary_operator && ((AstUnaryOperator *)literal->type)->operation == UnaryOperation::pointer)
+				else if (literal->type->kind == Ast_UnaryOperator && ((AstUnaryOperator *)literal->type)->operation == UnaryOperation::pointer)
 					I(mov8_mc, destination, (s64)literal->integer);
 				else invalid_code_path();
 				break;
@@ -2944,7 +2974,7 @@ static ValueRegisters append(Converter &conv, AstLiteral *literal, Optional<Addr
 
 			I(push_c, (s64)literal->string.count);
 
-			auto data = allocate_data(conv.constant_data_builder, as_bytes((Span<utf8>)literal->string));
+			auto data = conv.constant_data_builder.append(as_bytes((Span<utf8>)literal->string));
 			I(push_a, data);
 
 			literal->string_data_offset = data;
@@ -2987,13 +3017,24 @@ static ValueRegisters append(Converter &conv, AstLiteral *literal, Optional<Addr
 				auto f = (f64)(s64)literal->integer;
 				I(push_c, *(s64 *)&f);
 			}
-			else if (literal->type->kind == Ast_unary_operator && ((AstUnaryOperator *)literal->type)->operation == UnaryOperation::pointer)
+			else if (literal->type->kind == Ast_UnaryOperator && ((AstUnaryOperator *)literal->type)->operation == UnaryOperation::pointer)
 				I(push_c, (s64)literal->integer);
-			else invalid_code_path();
+			else if (auto Enum = direct_as<AstEnum>(dtype)) {
+				assert(!Enum->underlying_type, "not implemented");
+				I(push_c, (s64)literal->integer);
+			} else invalid_code_path();
 			break;
 		}
 		case null: {
 			I(push_c, 0);
+			break;
+		}
+		case Struct: {
+			auto Struct = direct_as<AstStruct>(literal->type);
+			assert(Struct);
+
+			append_struct_initializer(conv, Struct, literal->struct_values);
+
 			break;
 		}
 		default: invalid_code_path();
@@ -3115,6 +3156,33 @@ static ValueRegisters append(Converter &conv, AstUnaryOperator *unop, Optional<A
 		}
 		case autocast: {
 			return append(conv, unop->expression);
+		}
+		case typeinfo: {
+
+			// TODO: deduplicate
+
+			/*
+
+			typeinfo :: struct {
+				name: string;
+			}
+
+
+			name_data;
+			name_count;
+
+			*/
+
+			auto name = type_name(direct(unop->expression));
+			auto name_pointer = conv.constant_data_builder.append(as_bytes(name));
+
+			auto typeinfo_pointer = allocate_reference_to_constant_data_in_constant_data(conv, name_pointer);
+
+			assert(context.stack_word_size == 8);
+			conv.constant_data_builder.append(value_as_bytes((u64)name.count));
+
+			I(push_a, typeinfo_pointer);
+			return {};
 		}
 	}
 	invalid_code_path();
@@ -3491,7 +3559,7 @@ static ValueRegisters append(Converter &conv, AstIfx *If, Optional<Address> dest
 }
 static ValueRegisters append(Converter &conv, AstPack *pack, Optional<Address> destination) {
 	assert(!destination);
-	assert(pack->type->kind == Ast_subscript);
+	assert(pack->type->kind == Ast_Subscript);
 	auto type = ((AstSubscript *)pack->type)->expression;
 
 	auto elem_size = ceil(get_size(type), context.stack_word_size);
@@ -3536,8 +3604,8 @@ Bytecode build_bytecode() {
 	});
 
 	result.instructions = conv.builder;
-	result.constant_data = (List<u8>)to_string(conv.constant_data_builder);
-	result.data = (List<u8>)to_string(conv.data_builder);
+	result.constant_data_builder = conv.constant_data_builder;
+	result.data_builder = conv.data_builder;
 	result.zero_data_size = conv.zero_data_size;
 	result.extern_libraries = conv.extern_libraries;
 

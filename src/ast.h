@@ -43,35 +43,36 @@ struct Box {
 // ENUMERATE_AST_KIND
 // #undef e
 #define ENUMERATE_AST_KIND \
-e(unknown) \
-e(definition) \
-e(return) \
-e(lambda) \
-e(lambda_type) \
-e(identifier) \
-e(literal) \
-e(call) \
-e(binary_operator) \
-e(struct) \
-e(if) \
-e(expression_statement) \
-e(unary_operator) \
-e(while) \
-e(subscript) \
-e(span) \
-e(block) \
-e(tuple) \
-e(test) \
-e(ifx) \
-e(assert) \
-e(import) \
-e(defer) \
-e(print) \
-e(operator_definition) \
-e(parse) \
-e(pack) \
+e(Definition) \
+e(Return) \
+e(Lambda) \
+e(LambdaType) \
+e(Identifier) \
+e(Literal) \
+e(Call) \
+e(BinaryOperator) \
+e(Struct) \
+e(If) \
+e(ExpressionStatement) \
+e(UnaryOperator) \
+e(While) \
+e(Subscript) \
+e(Span) \
+e(Block) \
+e(Tuple) \
+e(Test) \
+e(Ifx) \
+e(Assert) \
+e(Import) \
+e(Defer) \
+e(Print) \
+e(OperatorDefinition) \
+e(Parse) \
+e(Pack) \
+e(Enum) \
 
 enum AstKind : u8 {
+	Ast_Unknown = 0,
 #define e(name) Ast_ ## name,
 	ENUMERATE_AST_KIND
 #undef e
@@ -85,6 +86,16 @@ inline String as_string(AstKind kind) {
 	}
 	invalid_code_path();
 }
+
+#define e(name) struct Ast ## name;
+	ENUMERATE_AST_KIND
+#undef e
+
+template <class T>
+inline static constexpr AstKind kind_of = Ast_Unknown;
+#define e(name) template <> inline static constexpr AstKind kind_of<Ast##name> = Ast_##name;
+	ENUMERATE_AST_KIND
+#undef e
 
 inline umm append(StringBuilder &builder, AstKind kind) {
 	return append(builder, as_string(kind));
@@ -211,16 +222,16 @@ template <class T>
 forceinline T *raw(Statement<T> statement) { return statement.raw(); }
 #endif
 
-using DefinitionList = List<AstDefinition *, MyAllocator, u32>;
+using DefinitionList = SmallList<AstDefinition *>;
 
 struct Scope : DefaultAllocatable<Scope> {
 	AstNode *node = 0;
 	Scope *parent = 0;
 	u32 level = 0;
-	List<Scope *> children;
-	List<AstStatement *> statements;
+	SmallList<Scope *> children;
+	SmallList<AstStatement *> statements;
 	Map<KeyString, DefinitionList> definitions; // multiple definitions for a single name in case of function overloading
-	List<AstDefer *> bytecode_defers;
+	SmallList<AstDefer *> bytecode_defers;
 
 	void append(Scope &that) {
 		children.add(that.children);
@@ -239,7 +250,7 @@ T *NEW(TL_LPC) {
 extern s32 ast_node_uid_counter;
 
 struct AstNode {
-	AstKind kind = Ast_unknown;
+	AstKind kind = Ast_Unknown;
 	Span<utf8, u32> location;
 
 #if TL_DEBUG
@@ -257,7 +268,7 @@ struct AstStatement : AstNode {
 
 struct AstBlock : AstStatement, StatementPool<AstBlock> {
 	AstBlock() {
-		kind = Ast_block;
+		kind = Ast_Block;
 		scope.node = this;
 	}
 
@@ -265,7 +276,7 @@ struct AstBlock : AstStatement, StatementPool<AstBlock> {
 };
 
 struct AstExpressionStatement : AstStatement, StatementPool<AstExpressionStatement> {
-	AstExpressionStatement() { kind = Ast_expression_statement; }
+	AstExpressionStatement() { kind = Ast_ExpressionStatement; }
 	Expression<> expression = {};
 };
 
@@ -286,6 +297,7 @@ enum class LiteralKind : u8 {
 	Float,
 	type,
 	lambda_name,
+	Struct,
 };
 
 using BigInteger = tl::impl::BigInt<List<u64, MyAllocator, u32>>;
@@ -302,13 +314,14 @@ struct AstLiteral : AstExpression, ExpressionPool<AstLiteral> {
 		u32 character;
 		f64 Float;
 		Expression<> type_value;
+		SmallList<AstExpression *> struct_values;
 	};
 
 	LiteralKind literal_kind = {};
 
 	AstLiteral() {
 		memset(this, 0, sizeof(*this));
-		kind = Ast_literal;
+		kind = Ast_Literal;
 	}
 	~AstLiteral() {}
 };
@@ -319,7 +332,7 @@ inline static constexpr auto sizeof_AstLiteral = sizeof AstLiteral;
 #define INVALID_DATA_OFFSET (-1)
 
 struct AstDefinition : AstStatement, StatementPool<AstDefinition> {
-	AstDefinition() { kind = Ast_definition; }
+	AstDefinition() { kind = Ast_Definition; }
 
 	Expression<> expression = {};
 	Expression<> type = {};
@@ -347,14 +360,14 @@ struct AstDefinition : AstStatement, StatementPool<AstDefinition> {
 inline static constexpr auto sizeof_AstDefinition = sizeof AstDefinition;
 
 struct AstReturn : AstStatement, StatementPool<AstReturn> {
-	AstReturn() { kind = Ast_return; }
+	AstReturn() { kind = Ast_Return; }
 
 	Expression<> expression = {};
 	Expression<AstLambda> lambda = {};
 };
 
 struct AstIdentifier : AstExpression, ExpressionPool<AstIdentifier> {
-	AstIdentifier() { kind = Ast_identifier; }
+	AstIdentifier() { kind = Ast_Identifier; }
 
 	KeyString name;
 
@@ -384,13 +397,13 @@ enum class CallingConvention : u8 {
 };
 
 struct AstLambdaType : AstExpression, ExpressionPool<AstLambdaType> {
-	AstLambdaType() { kind = Ast_lambda_type; }
+	AstLambdaType() { kind = Ast_LambdaType; }
 	Expression<AstLambda> lambda;
 };
 
 struct AstLambda : AstExpression, ExpressionPool<AstLambda> {
 	AstLambda() {
-		kind = Ast_lambda;
+		kind = Ast_Lambda;
 		type_scope.node = this;
 		parameter_scope.node = this;
 		body_scope.node = this;
@@ -401,7 +414,7 @@ struct AstLambda : AstExpression, ExpressionPool<AstLambda> {
 
 	Statement<AstDefinition> definition = {}; // not null if lambda is named
 
-	List<AstReturn *> return_statements;
+	SmallList<AstReturn *> return_statements;
 	Statement<AstDefinition> return_parameter = {};
 
 	Statement<AstReturn> return_statement_type_deduced_from = {};
@@ -415,7 +428,7 @@ struct AstLambda : AstExpression, ExpressionPool<AstLambda> {
 
 	//DefinitionList return_parameters;
 
-	// List<AstStatement *> statements;
+	// SmallList<AstStatement *> statements;
 
 	Expression<AstLambda> parent_lambda = {};
 
@@ -426,7 +439,7 @@ struct AstLambda : AstExpression, ExpressionPool<AstLambda> {
 		AstCall *call;
 	};
 
-	List<HardenedPoly> hardened_polys;
+	SmallList<HardenedPoly> hardened_polys;
 	Expression<AstLambda> original_poly = {};
 
 
@@ -447,7 +460,7 @@ struct AstLambda : AstExpression, ExpressionPool<AstLambda> {
 
 	CallingConvention convention = CallingConvention::none;
 
-	List<AstLiteral *> function_directives;
+	SmallList<AstLiteral *> function_directives;
 	String type_name;
 
 	// For bytecode generation
@@ -458,13 +471,13 @@ struct AstLambda : AstExpression, ExpressionPool<AstLambda> {
 		Instruction *jmp;
 		s64 index;
 	};
-	List<ReturnInfo> return_jumps;
+	SmallList<ReturnInfo> return_jumps;
 };
 
 struct AstTuple : AstExpression, ExpressionPool<AstTuple> {
-	AstTuple() { kind = Ast_tuple; }
+	AstTuple() { kind = Ast_Tuple; }
 
-	List<Expression<>> expressions;
+	SmallList<Expression<>> expressions;
 };
 
 struct NamedArgument {
@@ -473,11 +486,11 @@ struct NamedArgument {
 };
 
 struct AstCall : AstExpression, ExpressionPool<AstCall> {
-	AstCall() { kind = Ast_call; }
+	AstCall() { kind = Ast_Call; }
 
 	Expression<> callable = {};
-	List<NamedArgument> unsorted_arguments = {};
-	List<AstExpression *> sorted_arguments = {};
+	SmallList<NamedArgument> unsorted_arguments = {};
+	SmallList<AstExpression *> sorted_arguments = {};
 
 	Expression<AstLambdaType> lambda_type = {};
 };
@@ -490,11 +503,12 @@ enum class StructLayout {
 
 struct AstStruct : AstExpression, ExpressionPool<AstStruct> {
 	AstStruct() {
-		kind = Ast_struct;
+		kind = Ast_Struct;
 		scope.node = this;
 	}
 
 	Statement<AstDefinition> definition = {};
+	DefinitionList data_members; // TODO: redundant with scope
 
 	Scope scope;
 
@@ -508,7 +522,7 @@ struct AstStruct : AstExpression, ExpressionPool<AstStruct> {
 
 struct AstIf : AstStatement, StatementPool<AstIf> {
 	AstIf() {
-		kind = Ast_if;
+		kind = Ast_If;
 		true_scope.node = this;
 		false_scope.node = this;
 	}
@@ -524,7 +538,7 @@ struct AstIf : AstStatement, StatementPool<AstIf> {
 
 struct AstWhile : AstStatement, StatementPool<AstWhile> {
 	AstWhile() {
-		kind = Ast_while;
+		kind = Ast_While;
 		scope.node = this;
 	}
 
@@ -576,6 +590,10 @@ enum class BinaryOperation {
 
 Optional<BinaryOperation> as_binary_operation(TokenKind kind);
 String as_string(BinaryOperation op);
+
+inline umm append(StringBuilder &builder, BinaryOperation op) {
+	return append(builder, as_string(op));
+}
 
 inline s32 get_precedence(BinaryOperation op) {
 	using enum BinaryOperation;
@@ -635,7 +653,7 @@ inline s32 get_precedence(BinaryOperation op) {
 
 // NOTE: Cast operator's right expression is it's type. So right expression pointer is wasted space...
 struct AstBinaryOperator : AstExpression, ExpressionPool<AstBinaryOperator> {
-	AstBinaryOperator() { kind = Ast_binary_operator; }
+	AstBinaryOperator() { kind = Ast_BinaryOperator; }
 
 	BinaryOperation operation = {};
 
@@ -656,6 +674,8 @@ enum class UnaryOperation : u8 {
 	typeof,      // #typeof
 	option,      // ?
 	poly,        // $
+	typeinfo,    // #typeinfo
+	dot,         // .
 	count,
 	pointer_or_dereference_or_unwrap,
 };
@@ -675,6 +695,8 @@ inline String as_string(UnaryOperation unop) {
 		case typeof:      return "#typeof"str;
 		case option:      return "?"str;
 		case poly:        return "$"str;
+		case typeinfo:    return "#typeinfo"str;
+		case dot:         return "."str;
 		case pointer_or_dereference_or_unwrap: return "pointer_or_dereference_or_unwrap"str;
 	}
 	invalid_code_path();
@@ -694,16 +716,18 @@ inline Optional<UnaryOperation> as_unary_operation(Token token) {
 		case '?': return option;
 		case '@': return autocast;
 		case '$': return poly;
+		case '.': return dot;
 		case Token_directive:
-			if (token.string == "#sizeof") return Sizeof;
-			if (token.string == "#typeof") return typeof;
+			if (token.string == "#sizeof")   return Sizeof;
+			if (token.string == "#typeof")   return typeof;
+			if (token.string == "#typeinfo") return typeinfo;
 			break;
 	}
 	return {};
 }
 
 struct AstUnaryOperator : AstExpression, ExpressionPool<AstUnaryOperator> {
-	AstUnaryOperator() { kind = Ast_unary_operator; }
+	AstUnaryOperator() { kind = Ast_UnaryOperator; }
 
 	UnaryOperation operation = {};
 
@@ -711,7 +735,7 @@ struct AstUnaryOperator : AstExpression, ExpressionPool<AstUnaryOperator> {
 };
 
 struct AstSubscript : AstExpression, ExpressionPool<AstSubscript> {
-	AstSubscript() { kind = Ast_subscript; }
+	AstSubscript() { kind = Ast_Subscript; }
 	Expression<> expression = {};
 	Expression<> index_expression = {};
 
@@ -719,13 +743,13 @@ struct AstSubscript : AstExpression, ExpressionPool<AstSubscript> {
 };
 
 struct AstSpan : AstExpression, ExpressionPool<AstSpan> {
-	AstSpan() { kind = Ast_span; }
+	AstSpan() { kind = Ast_Span; }
 	Expression<> expression = {};
 };
 
 struct AstTest : AstExpression, ExpressionPool<AstTest> {
 	AstTest() {
-		kind = Ast_test;
+		kind = Ast_Test;
 		scope.node = this;
 	}
 
@@ -734,7 +758,7 @@ struct AstTest : AstExpression, ExpressionPool<AstTest> {
 
 struct AstIfx : AstExpression, ExpressionPool<AstIfx> {
 	AstIfx() {
-		kind = Ast_ifx;
+		kind = Ast_Ifx;
 	}
 	Expression<> condition = {};
 	Expression<> true_expression = {};
@@ -743,7 +767,7 @@ struct AstIfx : AstExpression, ExpressionPool<AstIfx> {
 
 struct AstAssert : AstStatement, StatementPool<AstAssert> {
 	AstAssert() {
-		kind = Ast_assert;
+		kind = Ast_Assert;
 	}
 	Expression<> condition = {};
 	bool is_constant : 1 = false;
@@ -751,14 +775,14 @@ struct AstAssert : AstStatement, StatementPool<AstAssert> {
 
 struct AstPrint : AstStatement, StatementPool<AstPrint> {
 	AstPrint() {
-		kind = Ast_print;
+		kind = Ast_Print;
 	}
 	Expression<> expression = {};
 };
 
 struct AstParse : AstStatement, StatementPool<AstParse> {
 	AstParse() {
-		kind = Ast_parse;
+		kind = Ast_Parse;
 	}
 	Expression<> expression = {};
 };
@@ -767,7 +791,7 @@ struct AstParse : AstStatement, StatementPool<AstParse> {
 // MYTYPEISME
 struct AstImport : AstExpression, ExpressionPool<AstImport> {
 	AstImport() {
-		kind = Ast_import;
+		kind = Ast_Import;
 	}
 
 	String path;
@@ -777,7 +801,7 @@ struct AstImport : AstExpression, ExpressionPool<AstImport> {
 
 struct AstDefer : AstStatement, StatementPool<AstDefer> {
 	AstDefer() {
-		kind = Ast_defer;
+		kind = Ast_Defer;
 		scope.node = this;
 	}
 
@@ -785,7 +809,7 @@ struct AstDefer : AstStatement, StatementPool<AstDefer> {
 };
 
 struct AstOperatorDefinition : AstStatement, StatementPool<AstOperatorDefinition> {
-	AstOperatorDefinition() { kind = Ast_operator_definition; }
+	AstOperatorDefinition() { kind = Ast_OperatorDefinition; }
 
 	Expression<AstLambda> lambda = {};
 
@@ -795,12 +819,25 @@ struct AstOperatorDefinition : AstStatement, StatementPool<AstOperatorDefinition
 
 struct AstPack : AstExpression, ExpressionPool<AstPack> {
 	AstPack() {
-		kind = Ast_pack;
+		kind = Ast_Pack;
 	}
-	List<AstExpression *> expressions = {};
+	SmallList<AstExpression *> expressions = {};
 };
 
-extern AstStruct *type_type; // These can be referenced by user programmer
+struct AstEnum : AstExpression, ExpressionPool<AstEnum> {
+	AstEnum() {
+		kind = Ast_Enum;
+		scope.node = this;
+	}
+
+	Statement<AstDefinition> definition = {};
+
+	Scope scope;
+
+	Expression<> underlying_type = {};
+};
+
+extern AstStruct *type_type;
 extern AstStruct *type_void;
 extern AstStruct *type_bool;
 extern AstStruct *type_u8;
@@ -814,15 +851,18 @@ extern AstStruct *type_s64;
 extern AstStruct *type_f32;
 extern AstStruct *type_f64;
 extern AstStruct *type_string;
-extern AstStruct *type_noinit; // These are special, user can't use them directly. typeof'ing them should do what? i don't know. TODO
+extern AstStruct *type_typeinfo;
+
+extern AstStruct *type_noinit;
 extern AstStruct *type_unsized_integer;
 extern AstStruct *type_unsized_float;
 extern AstStruct *type_unknown;
+extern AstStruct *type_unknown_enum;
 extern AstStruct *type_poly;
 extern AstStruct *type_overload_set;
-// inline constexpr u32 built_in_struct_count = 14;
 
 extern AstUnaryOperator *type_pointer_to_void;
+extern AstUnaryOperator *type_pointer_to_typeinfo;
 extern AstStruct *type_default_signed_integer;
 extern AstStruct *type_default_unsigned_integer;
 extern AstStruct *type_default_integer;
@@ -850,21 +890,21 @@ AstStruct *find_built_in_type_from_token(TokenKind t);
 
 inline Optional<BigInteger> get_constant_integer(AstExpression *expression) {
 	switch (expression->kind) {
-		case Ast_literal: {
+		case Ast_Literal: {
 			auto literal = (AstLiteral *)expression;
 			if (literal->literal_kind == LiteralKind::integer) {
 				return literal->integer;
 			}
 			break;
 		}
-		case Ast_identifier: {
+		case Ast_Identifier: {
 			auto ident = (AstIdentifier *)expression;
 			if (ident->definition() && ident->definition()->is_constant) {
 				return get_constant_integer(ident->definition()->expression);
 			}
 			break;
 		}
-		case Ast_unary_operator: {
+		case Ast_UnaryOperator: {
 			auto unop = (AstUnaryOperator *)expression;
 			auto got_value = get_constant_integer(unop->expression);
 			if (!got_value)
@@ -879,7 +919,7 @@ inline Optional<BigInteger> get_constant_integer(AstExpression *expression) {
 			}
 			break;
 		}
-		case Ast_binary_operator: {
+		case Ast_BinaryOperator: {
 			auto binop = (AstBinaryOperator *)expression;
 			using enum BinaryOperation;
 			switch (binop->operation) {
@@ -923,15 +963,30 @@ bool types_match(AstExpression *type_a, AstExpression *type_b);
 
 bool is_type(AstExpression *expression);
 
-AstStruct *get_struct(AstExpression *type);
-AstExpression *direct(AstExpression *type);
 AstExpression *get_definition_expression(AstExpression *expression);
 
-String operator_string(u64 op);
+/*
+Returns the first expression assigned to an alias.
+For example:
+myint :: int;
+myint2 :: myint;
 
-inline umm append(StringBuilder &builder, BinaryOperation op) {
-	return append(builder, as_string(op));
+direct(identifier myint2) returns struct s64
+*/
+AstExpression *direct(AstExpression *type);
+
+template <class T>
+T *direct_as(AstExpression *type) {
+	auto directed = direct(type);
+	if (directed->kind == kind_of<T>) {
+		return (T *)directed;
+	}
+	return 0;
 }
+
+inline bool is_struct     (AstExpression *type) { return direct_as<AstStruct    >(type) != 0; }
+inline bool is_lambda_type(AstExpression *type) { return direct_as<AstLambdaType>(type) != 0; }
+inline bool is_lambda     (AstExpression *expression) { return direct_as<AstLambda>(expression) != 0; }
 
 bool is_integer(AstExpression *type);
 bool is_signed(AstExpression *type);
@@ -956,7 +1011,7 @@ AstUnaryOperator *as_pointer(AstExpression *type);
 
 bool is_constant(AstExpression *expression);
 AstLambda *get_lambda(AstExpression *expression);
-bool is_lambda(AstExpression *expression);
+AstLambdaType *get_lambda_type(AstExpression *expression);
 
 bool struct_is_built_in(AstStruct *type);
 bool type_is_built_in(AstExpression *type);
@@ -972,17 +1027,9 @@ bool is_sized_array(AstExpression *type);
 bool same_argument_and_return_types(AstLambda *a, AstLambda *b);
 
 inline AstUnaryOperator *as_option(AstExpression *expression) {
-	switch (expression->kind) {
-		case Ast_unary_operator: {
-			auto unop = (AstUnaryOperator *)expression;
-			return unop->operation == UnaryOperation::option ? unop : 0;
-		}
-		case Ast_identifier: {
-			auto ident = (AstIdentifier *)expression;
-			assert(ident->definition()->expression);
-			return as_option(ident->definition()->expression);
-		}
-	}
+	auto d = direct_as<AstUnaryOperator>(expression);
+	if (d && d->operation == UnaryOperation::option)
+		return d;
 	return 0;
 }
 AstLiteral *get_literal(AstExpression *expression);

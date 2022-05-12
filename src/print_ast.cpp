@@ -36,23 +36,23 @@ void print_ast(AstNode *node) {
 	print_tabs();
 	print("{}\n", node->location);
 	switch (node->kind) {
-		case Ast_definition: return print_ast((AstDefinition *)node);
-		case Ast_lambda:     return print_ast((AstLambda     *)node);
-		case Ast_identifier: return print_ast((AstIdentifier *)node);
-		case Ast_literal:    return print_ast((AstLiteral    *)node);
-		case Ast_return:     return print_ast((AstReturn     *)node);
-		case Ast_call:       return print_ast((AstCall       *)node);
-		case Ast_if:         return print_ast((AstIf         *)node);
-		case Ast_ifx:        return print_ast((AstIfx        *)node);
-		case Ast_while:      return print_ast((AstWhile      *)node);
-		case Ast_expression_statement: return print_ast((AstExpressionStatement *)node);
-		case Ast_binary_operator: return print_ast((AstBinaryOperator *)node);
-		case Ast_struct: return print_ast((AstStruct *)node);
-		case Ast_unary_operator: return print_ast((AstUnaryOperator *)node);
-		case Ast_subscript: return print_ast((AstSubscript *)node);
-		case Ast_tuple: return print_ast((AstTuple*)node);
-		case Ast_assert: return print_ast((AstAssert*)node);
-		case Ast_parse: return print_ast((AstParse*)node);
+		case Ast_Definition: return print_ast((AstDefinition *)node);
+		case Ast_Lambda:     return print_ast((AstLambda     *)node);
+		case Ast_Identifier: return print_ast((AstIdentifier *)node);
+		case Ast_Literal:    return print_ast((AstLiteral    *)node);
+		case Ast_Return:     return print_ast((AstReturn     *)node);
+		case Ast_Call:       return print_ast((AstCall       *)node);
+		case Ast_If:         return print_ast((AstIf         *)node);
+		case Ast_Ifx:        return print_ast((AstIfx        *)node);
+		case Ast_While:      return print_ast((AstWhile      *)node);
+		case Ast_ExpressionStatement: return print_ast((AstExpressionStatement *)node);
+		case Ast_BinaryOperator: return print_ast((AstBinaryOperator *)node);
+		case Ast_Struct: return print_ast((AstStruct *)node);
+		case Ast_UnaryOperator: return print_ast((AstUnaryOperator *)node);
+		case Ast_Subscript: return print_ast((AstSubscript *)node);
+		case Ast_Tuple: return print_ast((AstTuple*)node);
+		case Ast_Assert: return print_ast((AstAssert*)node);
+		case Ast_Parse: return print_ast((AstParse*)node);
 		default:
 			print_info("unknown - uid: {}\n", node->uid());
 			break;
@@ -149,7 +149,7 @@ void print_ast(AstLiteral *node) {
 		else if (types_match(node->type, type_string)) print_info("string literal - value: {}, uid: {}\n", node->location, node->uid());
 		else if (types_match(node->type, type_unsized_integer)) print_info("unsized integer literal - value: {}, uid: {}\n", (u64)node->integer, node->uid());
 		else if (types_match(node->type, type_unsized_float)) print_info("unsized float literal - value: {}, uid: {}\n", (f64)node->Float, node->uid());
-		else if (node->type->kind == Ast_unary_operator) print_info("pointer literal - value: {}, uid: {}\n", (s64)node->integer, node->uid());
+		else if (node->type->kind == Ast_UnaryOperator) print_info("pointer literal - value: {}, uid: {}\n", (s64)node->integer, node->uid());
 		else invalid_code_path();
 	} else {
 		switch (node->literal_kind) {

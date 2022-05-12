@@ -528,10 +528,40 @@ using ExternLibraries = Map<Span<utf8>, List<Span<utf8>>>;
 
 using InstructionList = BlockList<Instruction>;
 
+struct SectionBuilder {
+	struct Part {
+		BlockList<u8> builder;
+		s64 reference = -1;
+		bool is_constant = false;
+	};
+
+	List<Part> parts;
+	s64 count = 0;
+
+	SectionBuilder() {
+		parts.resize(1);
+	}
+
+	s64 append(Span<u8> string) {
+		auto result = count;
+		for (auto c : string)
+			parts.back().builder.add(c);
+		count += string.count;
+		return result;
+	}
+	s64 allocate(s64 count) {
+		auto result = this->count;
+		while (count--)
+			parts.back().builder.add(0);
+		this->count += count;
+		return result;
+	}
+};
+
 struct Bytecode {
 	InstructionList instructions;
-	List<u8> constant_data;
-	List<u8> data;
+	SectionBuilder constant_data_builder;
+	SectionBuilder data_builder;
 	umm zero_data_size;
 	ExternLibraries extern_libraries;
 };

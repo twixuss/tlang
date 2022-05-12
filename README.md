@@ -290,7 +290,16 @@ poly("World!"); // doesn't print anything because poly with string
 ```
 If you don't need a type name, just omit the type completely:
 ```rs
-poly :: fn (x) {...}
+poly :: fn (x) {}
+```
+## Function templates with packs
+You can make a pack be a template.
+```java
+poly :: fn (x: ..$T) {}
+
+// poly(); // error: could not determine $T type
+poly(1, 2);
+poly("x", "y");
 ```
 ## Constant parameters
 You can force the parameter to be constant by using % operator:

@@ -67,8 +67,11 @@ void init_my_allocator();
 template <class T>
 using Ptr32 = typename Pool32<T>::template Ptr<T>;
 
+template <class T>
+using SmallList = List<T, MyAllocator, u32>;
+
 using String = Span<utf8, u32>;
-using HeapString = List<utf8, MyAllocator, u32>;
+using HeapString = SmallList<utf8>;
 
 // this string is used as key into hashmap
 #if 0                        // parse time | type time | total

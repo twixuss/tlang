@@ -221,16 +221,26 @@ DECLARE_OUTPUT_BUILDER {
 			}
 		});
 
-		append(builder, "section .rodata\nconstants: db ");
-		for (auto byte : bytecode.constant_data) {
-			append_format(builder, "{},", byte);
-		}
-		append(builder, '\n');
-		append(builder, "section .data\nrwdata: db ");
-		for (auto byte : bytecode.data) {
-			append_format(builder, "{},", byte);
-		}
-		append_format(builder, "\nsection .bss\nzeros: resb {}\n", bytecode.zero_data_size);
+		auto append_data_section = [&](auto section_name, auto label, auto &data) {
+			append_format(builder, "section .{}\n{}:\n", section_name, label);
+			for (auto part : data.parts) {
+				if (part.builder.count) {
+					append(builder, "db ");
+					for (auto byte : part.builder) {
+						append_format(builder, "{},", byte);
+					}
+				}
+				append(builder, "\ndq ");
+				if (part.reference != -1) {
+					append_format(builder, "{}+{}", label, part.reference);
+				}
+				append(builder, "\n");
+			}
+		};
+		append_data_section("rodata", "constants", bytecode.constant_data_builder);
+		append_data_section("data", "rwdata", bytecode.data_builder);
+
+		append_format(builder, "section .bss\nzeros: resb {}\n", bytecode.zero_data_size);
 
 		append_instructions(context, builder, bytecode.instructions);
 

@@ -2,6 +2,7 @@
 #include <common.h>
 
 #define ENUMERATE_KEYWORDS(E) \
+E(eof,      'eof') \
 E(as,       'as') \
 E(fn,       'fn') \
 E(true,     'true') \
@@ -11,6 +12,7 @@ E(else,     'else') \
 E(null,     'null') \
 E(this,     'this') \
 E(simd,     'simd') \
+E(enum,     'enum') \
 E(return,   0x1000000) \
 E(false,    0x1000001) \
 E(while,    0x1000002) \
@@ -39,7 +41,7 @@ enum : TokenKind {
 #undef E
 };
 
-Span<utf8> token_kind_to_string(TokenKind kind);
+String token_kind_to_string(TokenKind kind);
 
 struct Token {
 	String string;
