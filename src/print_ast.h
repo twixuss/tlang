@@ -3,3 +3,5 @@
 
 void print_ast(AstNode *node);
 void print_ast();
+
+void print_lowered();

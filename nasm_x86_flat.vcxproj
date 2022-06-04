@@ -30,6 +30,7 @@
     <ClCompile Include="src\output\nasm_x86_flat.cpp" />
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="src\output\msvc.h" />
     <ClInclude Include="src\x86.h" />
   </ItemGroup>
   <PropertyGroup Label="Globals">

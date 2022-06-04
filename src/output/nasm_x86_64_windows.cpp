@@ -2,107 +2,11 @@
 #pragma warning(disable: 4702) // unreachable
 #include <bytecode.h>
 #include <ast.h>
-#include "../x86_64.h"
+#include "../x86_64_asm.h"
+#include "msvc.h"
+#include <tl/bits.h>
 
 using namespace x86_64;
-
-static Span<utf8> locate_msvc() {
-	Span<utf8> path = u8"C:\\Program Files (x86)\\Microsoft Visual Studio\\"s;
-
-	auto find_version = [&]() -> Span<utf8> {
-		Span<utf8> supported_versions[] = {
-			u8"2022"s,
-			u8"2019"s,
-			u8"2017"s,
-		};
-		auto found_versions = get_items_in_directory(path);
-		for (auto supported_version : supported_versions) {
-			for (auto found_version : found_versions) {
-				if (found_version.kind == FileItem_directory) {
-					auto name = found_version.name;
-					if (name == supported_version) {
-						return format(u8"{}{}", path, name);
-					}
-				}
-			}
-		}
-		return {};
-	};
-	auto find_edition = [&]() -> Span<utf8> {
-		auto found_editions = get_items_in_directory(path);
-		Span<utf8> supported_editions[] = {
-			u8"Community"s,
-			u8"Professional"s,
-		};
-		for (auto supported_edition : supported_editions) {
-			for (auto found_edition : found_editions) {
-				if (found_edition.kind == FileItem_directory) {
-					auto name = found_edition.name;
-					if (name == supported_edition) {
-						return format(u8"{}\\{}\\VC\\Tools\\MSVC\\", path, name);
-					}
-				}
-			}
-		}
-		return {};
-	};
-
-
-	path = find_version();
-	if (!path.data) {
-		return {};
-	}
-	path = find_edition();
-	if (!path.data) {
-		return {};
-	}
-
-	auto found_builds = get_items_in_directory(path);
-	if (!found_builds.count) {
-		return {};
-	}
-	path = format(u8"{}{}\\bin\\Hostx64\\x64\\", path, found_builds.back().name);
-
-	return path;
-}
-
-static Span<utf8> locate_wkits() {
-	Span<utf8> path = u8"C:\\Program Files (x86)\\Windows Kits\\"s;
-
-	auto find_version = [&]() -> Span<utf8> {
-		Span<utf8> supported_versions[] = {
-			u8"10"s,
-			u8"8.1"s,
-			u8"7"s,
-		};
-		auto found_versions = get_items_in_directory(path);
-		for (auto supported_version : supported_versions) {
-			for (auto found_version : found_versions) {
-				if (found_version.kind == FileItem_directory) {
-					auto name = found_version.name;
-					if (name == supported_version) {
-						return format(u8"{}{}\\Lib\\", path, name);
-					}
-				}
-			}
-		}
-		return {};
-	};
-
-	path = find_version();
-	if (!path.data) {
-		return {};
-	}
-
-	auto found_builds = get_items_in_directory(path);
-	if (!found_builds.count) {
-		return {};
-	}
-	// NOTE: no slash at the end because link.exe does not understand that
-	path = format(u8"{}{}\\um\\x64", path, found_builds.back().name);
-
-	return path;
-}
 
 static void append_instructions(CompilerContext &context, StringBuilder &builder, InstructionList instructions) {
 	timed_function(context.profiler);
@@ -135,6 +39,7 @@ static void append_instructions(CompilerContext &context, StringBuilder &builder
 			"mov rcx, rax\n"
 			"std\n"
 			"rep stosb\n"
+			"cld\n"
 			"pop rdi\n"
 			"pop rcx\n"
 			"ret\n"
@@ -159,31 +64,52 @@ static void append_instructions(CompilerContext &context, StringBuilder &builder
 	s64 idx = 0;
 	for (auto i : instructions) {
 #if BYTECODE_DEBUG
-		append_format(builder, "; #{} @ bytecode.cpp:{}\n", idx, i.line);
 		if (i.comment.data) {
 			split(i.comment, u8'\n', [&](auto part) {
 				append_format(builder, "; {}\n", part);
 			});
 		}
 #endif
-
+		umm n = 0;
 		if (i.kind == InstructionKind::jmp_label)
-			append_format(builder, ".{}: ", instruction_address(idx));
+			n += append_format(builder, ".{}: ", instruction_address(idx));
 		switch (i.kind) {
 			using enum InstructionKind;
-			case mov_re: append_format(builder, "mov {}, {}", i.mov_re.d, i.mov_re.s); break;
+			case mov_re: n += append_format(builder, "mov {}, {}", i.mov_re.d, i.mov_re.s); break;
 			case prepare_stack:
-				append_format(builder, "mov rax, {}\ncall ._ps", i.prepare_stack.byte_count);
+				n += append_format(builder, "mov rax, {}\ncall ._ps", i.prepare_stack.byte_count);
 
 				// HACK: bytecode does not change instructions that point to code after inserting `unguard_stack` instruction.
 				// This accounts for adding `jmp_label` and `unguard_stack` instructions.
 				// idx -= 2;
 
 				break;
-			default: append_instruction(builder, idx, i); break;
+			default: n += append_instruction(builder, idx, i); break;
 		}
-		append(builder, '\n');
+		for (umm i = n; i < 30; ++i)
+			append(builder, ' ');
+		append_format(builder, "; #{} @ bytecode.cpp:{}\n", idx, i.line);
 		++idx;
+	}
+}
+
+template <class T>
+T *find_binary(Span<T> span, T value) {
+	auto begin = span.begin();
+	auto end   = span.end();
+	while (1) {
+		if (begin == end)
+			return 0;
+
+		auto mid = begin + (end - begin) / 2;
+		if (value == *mid)
+			return mid;
+
+		if (value < *mid) {
+			end = mid;
+		} else {
+			begin = mid + 1;
+		}
 	}
 }
 
@@ -221,26 +147,40 @@ DECLARE_OUTPUT_BUILDER {
 			}
 		});
 
-		auto append_data_section = [&](auto section_name, auto label, auto &data) {
-			append_format(builder, "section .{}\n{}:\n", section_name, label);
-			for (auto part : data.parts) {
-				if (part.builder.count) {
-					append(builder, "db ");
-					for (auto byte : part.builder) {
-						append_format(builder, "{},", byte);
-					}
-				}
-				append(builder, "\ndq ");
-				if (part.reference != -1) {
-					append_format(builder, "{}+{}", label, part.reference);
-				}
-				append(builder, "\n");
-			}
-		};
-		append_data_section("rodata", "constants", bytecode.constant_data_builder);
-		append_data_section("data", "rwdata", bytecode.data_builder);
+		auto append_section = [&](auto name, auto label, auto &section) {
+			auto it = section.buffer.begin();
+			umm i = 0;
+			bool last_is_byte = true;
+			append_format(builder, "section {}\n{}:db ", name, label);
+			while (it != section.buffer.end()) {
+				auto relocation = find_binary(section.relocations, i);
+				if (relocation) {
+					u64 offset = 0;
+					for (umm j = 0; j < 8; ++j)
+						offset = (offset >> 8) | ((u64)*it++ << 56);
 
-		append_format(builder, "section .bss\nzeros: resb {}\n", bytecode.zero_data_size);
+					if (last_is_byte) {
+						append(builder, "\ndq ");
+						last_is_byte = false;
+					}
+					append_format(builder, "{}+{},", label, offset);
+
+					i += 8;
+				} else {
+					if (!last_is_byte) {
+						append(builder, "\ndb ");
+						last_is_byte = true;
+					}
+					append_format(builder, "{},", *it++);
+					i += 1;
+				}
+			}
+			append(builder, '\n');
+		};
+		append_section(".rodata", "constants", context.constant_section);
+		append_section(".data", "rwdata", context.data_section);
+
+		append_format(builder, "section .bss\nzeros: resb {}\n", context.zero_section_size);
 
 		append_instructions(context, builder, bytecode.instructions);
 

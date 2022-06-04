@@ -48,6 +48,20 @@
       <FileType>Document</FileType>
     </None>
   </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="fasm_x86_64_windows.vcxproj">
+      <Project>{98a1bc8c-c1f5-4832-b3bd-60f7b63ba55f}</Project>
+    </ProjectReference>
+    <ProjectReference Include="nasm_x86_64_windows.vcxproj">
+      <Project>{1af0bd2e-16b1-4c3d-ab7e-17a7c29e1787}</Project>
+    </ProjectReference>
+    <ProjectReference Include="nasm_x86_flat.vcxproj">
+      <Project>{babbd040-c55a-4bf1-ae0c-da7676ea8dba}</Project>
+    </ProjectReference>
+    <ProjectReference Include="x86_64_windows.vcxproj">
+      <Project>{93a7b294-a46d-471d-9eca-87872f92e205}</Project>
+    </ProjectReference>
+  </ItemGroup>
   <PropertyGroup Label="Globals">
     <VCProjectVersion>16.0</VCProjectVersion>
     <Keyword>Win32Proj</Keyword>

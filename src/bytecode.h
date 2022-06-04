@@ -9,19 +9,21 @@
 // registers r5-r7 are allocatable
 // register rs is a stack pointer, and it must be aligned to 16 bytes before executing a call instruction
 enum class Register : u8 {
-	r0,
-	r1,
-	r2,
-	r3,
-	r4,
-	r5,
-	r6,
-	r7,
+	r0,  // scratch
+	r1,  // scratch
+	r2,  // scratch
+	r3,  // allocatable
+	r4,  // allocatable
+	r5,  // allocatable
+	r6,  // allocatable
+	r7,  // allocatable
 	r8,  // rax
 	r9,  // r10
 	r10, // r11
-	rs,
-	rb,
+	rs,  //
+	rb,  // stack base
+	rpb, // parameter base
+	rlb, // locals base
 	count,
 };
 
@@ -31,10 +33,6 @@ enum class XRegister : u8 {
 	x1,
 	x2,
 	x3,
-};
-
-enum InstructionFlags : u8 {
-	labeled = 0x1,
 };
 
 inline static constexpr Array<u8, 5> lea_scales {
@@ -79,6 +77,24 @@ inline Address operator+(Address a, s64 c) {
 inline Address operator-(Register r, s64 c) { return r + (-c); }
 inline Address operator-(Address a, s64 c) { return a + (-c); }
 
+// enum class ValueLocation {
+// 	Register,       // value is in a register
+// 	address,        // value is in memory
+// 	address_itself, // value is an address itself
+// };
+
+struct RegisterOrAddress {
+	bool is_register : 1;
+	bool value_is_address : 1;
+	union {
+		Register reg;
+		Address address;
+	};
+
+	RegisterOrAddress(Register reg) : is_register(true), reg(reg) {}
+	RegisterOrAddress(Address address) : is_register(false), address(address) {}
+};
+
 /*
 
 Naming convention:
@@ -86,8 +102,14 @@ Naming convention:
 {instruction}_{param0, param1, ...}
 where param is any of:
 	c: constant,
-	r: register,
+	r: general purpose register,
+	f: floating point register,
 	m: memory,
+	x: memory or register,
+	a: constant section offset,
+	d: data section offset,
+	u: uninitialized section offset,
+	t: text section offset,
 
 Destination of an instruction is first
 
@@ -132,6 +154,20 @@ enum class InstructionKind : u8 {
 	movzx42_rm,
 	movzx82_rm,
 	movzx84_rm,
+
+	movsx21_rr,
+	movsx41_rr,
+	movsx81_rr,
+	movsx42_rr,
+	movsx82_rr,
+	movsx84_rr,
+
+	movzx21_rr,
+	movzx41_rr,
+	movzx81_rr,
+	movzx42_rr,
+	movzx82_rr,
+	movzx84_rr,
 
 	lea,
 
@@ -299,6 +335,9 @@ enum class InstructionKind : u8 {
 
 	prepare_stack,
 
+	debug_line,
+	debug_start_lambda,
+
 	count,
 };
 
@@ -347,6 +386,20 @@ struct Instruction {
 		struct { Register d; Address s; } movzx42_rm;
 		struct { Register d; Address s; } movzx82_rm;
 		struct { Register d; Address s; } movzx84_rm;
+
+		struct { Register d; Register s; } movsx21_rr;
+		struct { Register d; Register s; } movsx41_rr;
+		struct { Register d; Register s; } movsx81_rr;
+		struct { Register d; Register s; } movsx42_rr;
+		struct { Register d; Register s; } movsx82_rr;
+		struct { Register d; Register s; } movsx84_rr;
+
+		struct { Register d; Register s; } movzx21_rr;
+		struct { Register d; Register s; } movzx41_rr;
+		struct { Register d; Register s; } movzx81_rr;
+		struct { Register d; Register s; } movzx42_rr;
+		struct { Register d; Register s; } movzx82_rr;
+		struct { Register d; Register s; } movzx84_rr;
 
 		struct { Register d; Address s; } lea;
 
@@ -466,8 +519,8 @@ struct Instruction {
 		struct { Address d, s; Register size; } copyf_mmr;
 		struct { Address d, s; Register size; } copyb_mmr;
 
-		struct { Address d; s32 s, size; } setf_mcc;
-		struct { Address d; s32 s, size; } setb_mcc;
+		struct { Address d; s8 s; s32 size; } setf_mcc;
+		struct { Address d; s8 s; s32 size; } setb_mcc;
 
 		struct { AstLambda *lambda; CallingConvention convention; } begin_lambda;
 		struct { AstLambda *lambda; CallingConvention convention; } end_lambda;
@@ -514,6 +567,9 @@ struct Instruction {
 		struct { s64 byte_count; } prepare_stack;
 
 		struct {} debug_break;
+
+		struct { u32 line; } debug_line;
+		struct { Expression<AstLambda> lambda; } debug_start_lambda;
 	};
 	InstructionKind kind;
 #if BYTECODE_DEBUG
@@ -523,6 +579,9 @@ struct Instruction {
 };
 
 #pragma pack(pop)
+
+inline static constexpr auto QWERTY1 = sizeof RegisterOrAddress;
+inline static constexpr auto QWERTY2 = sizeof Instruction;
 
 using ExternLibraries = Map<Span<utf8>, List<Span<utf8>>>;
 
@@ -551,18 +610,15 @@ struct SectionBuilder {
 	}
 	s64 allocate(s64 count) {
 		auto result = this->count;
+		this->count += count;
 		while (count--)
 			parts.back().builder.add(0);
-		this->count += count;
 		return result;
 	}
 };
 
 struct Bytecode {
 	InstructionList instructions;
-	SectionBuilder constant_data_builder;
-	SectionBuilder data_builder;
-	umm zero_data_size;
 	ExternLibraries extern_libraries;
 };
 

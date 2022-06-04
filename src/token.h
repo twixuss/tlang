@@ -32,6 +32,7 @@ E(string_literal,    0x2000002) \
 E(directive,         0x2000003) \
 E(character_literal, 0x2000004) \
 E(float_literal,     0x2000005) \
+E(split_identifier,  0x2000006) \
 ENUMERATE_KEYWORDS(E) \
 
 using TokenKind = u32;

@@ -6,34 +6,39 @@ s32 ast_node_uid_counter;
 
 BlockList<AstDefinition> ast_definitions;
 
-AstStruct *type_bool;
-AstStruct *type_u8;
-AstStruct *type_u16;
-AstStruct *type_u32;
-AstStruct *type_u64;
-AstStruct *type_s8;
-AstStruct *type_s16;
-AstStruct *type_s32;
-AstStruct *type_s64;
-AstStruct *type_f32;
-AstStruct *type_f64;
-AstStruct *type_type;
-AstStruct *type_string;
-AstStruct *type_noinit;
-AstStruct *type_unsized_integer;
-AstStruct *type_unsized_float;
-AstStruct *type_unknown;
-AstStruct *type_unknown_enum;
-AstStruct *type_poly;
-AstStruct *type_void;
-AstStruct *type_default_signed_integer;
-AstStruct *type_default_unsigned_integer;
-AstStruct *type_default_integer;
-AstStruct *type_default_float;
-AstStruct *type_overload_set;
-AstStruct *type_typeinfo;
-AstUnaryOperator *type_pointer_to_void;
-AstUnaryOperator *type_pointer_to_typeinfo;
+BuiltinStruct builtin_type;
+BuiltinStruct builtin_void;
+BuiltinStruct builtin_bool;
+BuiltinStruct builtin_u8;
+BuiltinStruct builtin_u16;
+BuiltinStruct builtin_u32;
+BuiltinStruct builtin_u64;
+BuiltinStruct builtin_s8;
+BuiltinStruct builtin_s16;
+BuiltinStruct builtin_s32;
+BuiltinStruct builtin_s64;
+BuiltinStruct builtin_f32;
+BuiltinStruct builtin_f64;
+
+BuiltinStruct builtin_string;
+BuiltinStruct builtin_struct_member;
+BuiltinStruct builtin_typeinfo;
+BuiltinStruct builtin_any;
+
+BuiltinEnum builtin_type_kind;
+
+BuiltinStruct builtin_unsized_integer;
+BuiltinStruct builtin_unsized_float;
+BuiltinStruct builtin_noinit;
+BuiltinStruct builtin_unknown;
+BuiltinStruct builtin_unknown_enum;
+BuiltinStruct builtin_poly;
+BuiltinStruct builtin_overload_set;
+
+BuiltinStruct *builtin_default_signed_integer;
+BuiltinStruct *builtin_default_unsigned_integer;
+BuiltinStruct *builtin_default_integer;
+BuiltinStruct *builtin_default_float;
 
 AstIdentifier *type_int;
 AstIdentifier *type_sint;
@@ -42,23 +47,23 @@ AstIdentifier *type_float;
 
 bool struct_is_built_in(AstStruct *type) {
 	return
-		type == type_bool   ||
-		type == type_u8     ||
-		type == type_u16    ||
-		type == type_u32    ||
-		type == type_u64    ||
-		type == type_s8     ||
-		type == type_s16    ||
-		type == type_s32    ||
-		type == type_s64    ||
-		type == type_f32    ||
-		type == type_f64    ||
-		type == type_type   ||
-		type == type_string ||
-		type == type_noinit ||
-		type == type_unsized_integer ||
-		type == type_unsized_float ||
-		type == type_void;
+		type == builtin_bool           .Struct ||
+		type == builtin_u8             .Struct ||
+		type == builtin_u16            .Struct ||
+		type == builtin_u32            .Struct ||
+		type == builtin_u64            .Struct ||
+		type == builtin_s8             .Struct ||
+		type == builtin_s16            .Struct ||
+		type == builtin_s32            .Struct ||
+		type == builtin_s64            .Struct ||
+		type == builtin_f32            .Struct ||
+		type == builtin_f64            .Struct ||
+		type == builtin_type           .Struct ||
+		type == builtin_string         .Struct ||
+		type == builtin_noinit         .Struct ||
+		type == builtin_unsized_integer.Struct ||
+		type == builtin_unsized_float  .Struct ||
+		type == builtin_void           .Struct;
 }
 bool type_is_built_in(AstExpression *type) {
 	switch (type->kind) {
@@ -114,6 +119,7 @@ bool can_be_global(AstStatement *statement) {
 		case Ast_OperatorDefinition:
 		case Ast_Assert:
 		case Ast_Print:
+		case Ast_EmptyStatement:
 			return true;
 
 		default:
@@ -123,7 +129,7 @@ bool can_be_global(AstStatement *statement) {
 
 bool is_type(AstExpression *expression) {
 	assert(expression->type);
-	return types_match(expression->type, type_type);
+	return types_match(expression->type, builtin_type.Struct);
 }
 
 void append_type(StringBuilder &builder, AstExpression *type, bool silent_error) {
@@ -251,6 +257,7 @@ HeapString type_name(AstExpression *type, bool silent_error) {
 
 s64 get_size(AstExpression *type) {
 	assert(type);
+	assert(types_match(type->type, builtin_type), "attemt to get_size of an expression, not a type!");
 	switch (type->kind) {
 		case Ast_Struct: {
 			auto Struct = (AstStruct *)type;
@@ -309,7 +316,8 @@ s64 get_align(AstExpression *type) {
 			auto unop = (AstUnaryOperator *)type;
 			switch (unop->operation) {
 				using enum UnaryOperation;
-				case pointer: return 8;
+				case pointer:
+					return context.stack_word_size;
 				default: invalid_code_path();
 			}
 		}
@@ -318,7 +326,14 @@ s64 get_align(AstExpression *type) {
 			return get_align(subscript->expression);
 		}
 		case Ast_LambdaType: {
-			return 8;
+			return context.stack_word_size;
+		}
+		case Ast_Enum: {
+			assert(!((AstEnum *)type)->underlying_type);
+			return context.stack_word_size;
+		}
+		case Ast_Span: {
+			return context.stack_word_size;
 		}
 		default: {
 			invalid_code_path();
@@ -331,13 +346,14 @@ bool same_argument_and_return_types(AstLambda *a, AstLambda *b) {
 	if (a->parameters.count != b->parameters.count)
 		return false;
 
-	if (!types_match(a->return_parameter->type, b->return_parameter->type))
-		return false;
-
 	for (umm i = 0; i < a->parameters.count; ++i) {
 		if (!types_match(a->parameters[i]->type, b->parameters[i]->type))
 			return false;
 	}
+
+	if (!types_match(a->return_parameter->type, b->return_parameter->type))
+		return false;
+
 	return true;
 }
 
@@ -461,58 +477,58 @@ String as_string(BinaryOperation op) {
 
 bool is_integer(AstExpression *type) {
 	return
-		types_match(type, type_unsized_integer) ||
-		types_match(type, type_u8) ||
-		types_match(type, type_u16) ||
-		types_match(type, type_u32) ||
-		types_match(type, type_u64) ||
-		types_match(type, type_s8) ||
-		types_match(type, type_s16) ||
-		types_match(type, type_s32) ||
-		types_match(type, type_s64);
+		types_match(type, builtin_unsized_integer) ||
+		types_match(type, builtin_u8) ||
+		types_match(type, builtin_u16) ||
+		types_match(type, builtin_u32) ||
+		types_match(type, builtin_u64) ||
+		types_match(type, builtin_s8) ||
+		types_match(type, builtin_s16) ||
+		types_match(type, builtin_s32) ||
+		types_match(type, builtin_s64);
 }
 
 bool is_signed(AstExpression *type) {
 	return
-		types_match(type, type_s8) ||
-		types_match(type, type_s16) ||
-		types_match(type, type_s32) ||
-		types_match(type, type_s64);
+		types_match(type, builtin_s8) ||
+		types_match(type, builtin_s16) ||
+		types_match(type, builtin_s32) ||
+		types_match(type, builtin_s64);
 }
 
 bool is_integer(AstStruct *type) {
 	return
-		type == type_unsized_integer ||
-		type == type_u8 ||
-		type == type_u16 ||
-		type == type_u32 ||
-		type == type_u64 ||
-		type == type_s8 ||
-		type == type_s16 ||
-		type == type_s32 ||
-		type == type_s64;
+		type == builtin_unsized_integer.Struct ||
+		type == builtin_u8 .Struct||
+		type == builtin_u16 .Struct||
+		type == builtin_u32 .Struct||
+		type == builtin_u64 .Struct||
+		type == builtin_s8 .Struct||
+		type == builtin_s16 .Struct||
+		type == builtin_s32 .Struct||
+		type == builtin_s64.Struct;
 }
 
 bool is_signed(AstStruct *type) {
 	return
-		type == type_s8 ||
-		type == type_s16 ||
-		type == type_s32 ||
-		type == type_s64;
+		type == builtin_s8 .Struct||
+		type == builtin_s16 .Struct||
+		type == builtin_s32 .Struct||
+		type == builtin_s64.Struct;
 }
 
 bool is_float(AstExpression *type) {
 	return
-		types_match(type, type_unsized_float) ||
-		types_match(type, type_f32) ||
-		types_match(type, type_f64);
+		types_match(type, builtin_unsized_float) ||
+		types_match(type, builtin_f32) ||
+		types_match(type, builtin_f64);
 }
 
 bool is_float(AstStruct *type) {
 	return
-		type == type_unsized_float ||
-		type == type_f32 ||
-		type == type_f64;
+		type == builtin_unsized_float.Struct ||
+		type == builtin_f32 .Struct||
+		type == builtin_f64.Struct;
 }
 
 #if OVERLOAD_NEW
@@ -598,6 +614,10 @@ bool is_constant(AstExpression *expression) {
 			auto binop = (AstBinaryOperator *)expression;
 			return is_constant(binop->left) && is_constant(binop->right);
 		}
+		case Ast_UnaryOperator: {
+			auto unop = (AstUnaryOperator *)expression;
+			return is_constant(unop->expression);
+		}
 		case Ast_Identifier: {
 			auto identifier = (AstIdentifier *)expression;
 
@@ -645,7 +665,8 @@ AstLambda *get_lambda(AstExpression *expression) {
 			return ((AstLambdaType *)expression)->lambda;
 		case Ast_Identifier: {
 			auto ident = (AstIdentifier *)expression;
-			assert(ident->definition()->expression);
+			if (!ident->definition())
+				return 0;
 			return get_lambda(ident->definition()->expression);
 		}
 		case Ast_BinaryOperator: {
@@ -730,11 +751,7 @@ bool is_addressable(AstExpression *expression) {
 			return is_addressable(binop->right);
 		}
 		case Ast_Subscript: {
-			auto subscript = (AstSubscript *)expression;
-			assert(subscript->expression->kind == Ast_Identifier);
-			auto identifier = (AstIdentifier *)subscript->expression;
-
-			return is_addressable(identifier);
+			return is_addressable(((AstSubscript *)expression)->expression);
 		}
 		case Ast_UnaryOperator: {
 			auto unop = (AstUnaryOperator *)expression;

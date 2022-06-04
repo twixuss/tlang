@@ -57,7 +57,7 @@ print_hex :: fn (_val : int) {
 		if digit < 10
 			buffer[dst_index] = digit + '0';
 		else 
-			buffer[dst_index] = digit - 10 + 'a';
+			buffer[dst_index] = digit + ('a' - 10);
 
         i >>= 4;
     }
@@ -68,6 +68,17 @@ print_hex :: fn (_val : int) {
     }
 }
 
+println :: fn (value) {
+	print(value);
+	print_char('\n');
+}
+
 merge :: fn (a : u8, b : u8): u16 {
 	return (a as u16 << 8) | b;
+}
+
+strlen :: fn (str: *u8): uint {
+	c := str;
+	while *c != 0 c += 1;
+	return c as uint - str as uint;
 }

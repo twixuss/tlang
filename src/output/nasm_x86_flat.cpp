@@ -305,8 +305,8 @@ DECLARE_OUTPUT_BUILDER {
 		}
 #endif
 
-		if (bytecode.zero_data_size) {
-			append_format(builder, "zeros: resb {}\n", bytecode.zero_data_size);
+		if (context.zero_section_size) {
+			append_format(builder, "zeros: resb {}\n", context.zero_section_size);
 		}
 
 		append_instructions(context, builder, bytecode.instructions);

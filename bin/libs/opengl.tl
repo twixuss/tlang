@@ -5,7 +5,7 @@ import "wingdi.tl"
 #extern_library "opengl32"
 
 GLenum     :: u32;
-GLboolean  :: bool;
+GLboolean  :: u8;
 GLbitfield :: u32;
 GLbyte     :: s8;
 GLshort    :: s16;
@@ -20,11 +20,25 @@ GLclampf   :: f32;
 GLdouble   :: f64;
 GLclampd   :: f64;
 GLvoid     :: void;
+GLchar     :: u8;
+DEBUGPROC  :: #type fn #stdcall (source: GLenum, type: GLenum, id: GLuint, severity: GLenum, length: GLsizei, message: *GLchar, userParam: *void);
 
 
 GL_FALSE :: 0;
 GL_TRUE :: 1;
 
+GL_DONT_CARE                             :: 0x1100;
+GL_BYTE                                  :: 0x1400;
+GL_UNSIGNED_BYTE                         :: 0x1401;
+GL_SHORT                                 :: 0x1402;
+GL_UNSIGNED_SHORT                        :: 0x1403;
+GL_INT                                   :: 0x1404;
+GL_UNSIGNED_INT                          :: 0x1405;
+GL_FLOAT                                 :: 0x1406;
+GL_2_BYTES                               :: 0x1407;
+GL_3_BYTES                               :: 0x1408;
+GL_4_BYTES                               :: 0x1409;
+GL_DOUBLE                                :: 0x140A;
 GL_CONSTANT_COLOR                        :: 0x8001;
 GL_ONE_MINUS_CONSTANT_COLOR              :: 0x8002;
 GL_CONSTANT_ALPHA                        :: 0x8003;
@@ -475,6 +489,7 @@ wglMakeCurrent :: fn (
 ): BOOL;
 
 wglGetProcAddress :: fn (name: *u8): *void;
+wglDeleteContext  :: fn (_: HGLRC): BOOL;
 
 glClearColor :: fn (r: f32, g: f32, b: f32, a: f32);
 glClear :: fn (flags: u32);
@@ -486,10 +501,38 @@ glOrtho :: fn (_: f32, _: f32, _: f32, _: f32, _: f32, _: f32);
     
 glViewport :: fn (x: GLint, y: GLint, width: GLsizei, height: GLsizei);
     
-glBegin :: fn (mode: u32);
-glEnd   :: fn ();
-glFlush :: fn ();
+glBegin      :: fn (mode: u32);
+glEnd        :: fn ();
+glFlush      :: fn ();
+glDrawArrays :: fn (mode: GLenum, first: GLint, count: GLsizei);
+glEnable     :: fn (cap: GLenum);
+glDisable    :: fn (cap: GLenum);
 
-glGenBuffers_t :: #type fn (n: GLsizei, buffers: *GLuint);
-glBindBuffer_t :: #type fn (target: GLenum, buffer: GLuint);
-glBufferData_t :: #type fn (target: GLenum, size: GLsizeiptr, data: *GLvoid, usage: GLenum);
+glGenBuffers_t              :: #type fn (n: GLsizei, buffers: *GLuint);
+glBindBuffer_t              :: #type fn (target: GLenum, buffer: GLuint);
+glBufferData_t              :: #type fn (target: GLenum, size: GLsizeiptr, data: *GLvoid, usage: GLenum);
+glCreateShader_t            :: #type fn (shaderType: GLenum): GLuint;
+glShaderSource_t            :: #type fn (id: GLuint, count: GLsizei, str: **GLchar, length: *GLint);
+glCompileShader_t           :: #type fn (id: GLuint);
+glGetShaderiv_t             :: #type fn (id: GLuint, pname: GLenum, params: *GLint);
+glGetShaderInfoLog_t        :: #type fn (id: GLuint, maxLength: GLsizei, length: *GLsizei, infoLog: *GLchar);
+glCreateProgram_t           :: #type fn (): GLuint;
+glAttachShader_t            :: #type fn (program: GLuint, id: GLuint);
+glDeleteShader_t            :: #type fn (shader: GLuint);
+glLinkProgram_t             :: #type fn (program: GLuint);
+glDetachShader_t            :: #type fn (program: GLuint, shader: GLuint);
+glGetProgramiv_t            :: #type fn (program: GLuint, pname: GLenum, params: *GLint);
+glGetProgramInfoLog_t       :: #type fn (program: GLuint, maxLength: GLsizei, length: *GLsizei, infoLog: *GLchar);
+glDeleteProgram_t           :: #type fn (program: GLuint);
+glGenVertexArrays_t         :: #type fn (n: GLsizei, arrays: *GLuint);
+glDeleteVertexArrays_t      :: #type fn (n: GLsizei, arrays: *GLuint);
+glBindVertexArray_t         :: #type fn (array: GLuint);
+glVertexAttribPointer_t     :: #type fn (index: GLuint, size: GLint, type: GLenum, normalized: GLboolean, stride: GLsizei, pointer: *void);
+glEnableVertexAttribArray_t :: #type fn (index: GLuint);
+glUseProgram_t              :: #type fn (program: GLuint);
+glDebugMessageCallback_t    :: #type fn (callback: DEBUGPROC, userParam: *void);
+glDebugMessageControl_t     :: #type fn (source: GLenum, type: GLenum, severity: GLenum, count: GLsizei, ids: *GLuint, enabled: GLboolean);
+wglSwapIntervalEXT_t           :: #type fn (interval: s32): BOOL;
+wglCreateContextAttribsARB_t   :: #type fn (hDC: HDC, hShareContext: HGLRC, attribList: *s32): HGLRC;
+wglChoosePixelFormatARB_t      :: #type fn (hdc: HDC, piAttribIList: *s32, pfAttribFList: *f32, nMaxFormats: UINT, piFormats: *s32, nNumFormats: *UINT): BOOL;
+wglGetPixelFormatAttribivARB_t :: #type fn (hdc: HDC, iPixelFormat: s32, iLayerPlane: s32, nAttributes: UINT, piAttributes: *s32, piValues: *s32): BOOL;

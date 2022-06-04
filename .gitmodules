@@ -4,3 +4,6 @@
 [submodule "dep/coro"]
 	path = dep/coro
 	url = https://github.com/twixuss/coro
+[submodule "dep/fadec"]
+	path = dep/fadec
+	url = https://github.com/aengelke/fadec

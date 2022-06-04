@@ -168,6 +168,51 @@ struct SourceFileInfo {
 	List<String> lines;
 };
 
+struct Section {
+	BlockList<u8> buffer;
+	List<u64> relocations;
+
+	u32 w8(u64 v) {
+		defer {
+			buffer.add((v >>  0) & 0xff);
+			buffer.add((v >>  8) & 0xff);
+			buffer.add((v >> 16) & 0xff);
+			buffer.add((v >> 24) & 0xff);
+			buffer.add((v >> 32) & 0xff);
+			buffer.add((v >> 40) & 0xff);
+			buffer.add((v >> 48) & 0xff);
+			buffer.add((v >> 56) & 0xff);
+		};
+		return buffer.count;
+	}
+	u32 w4(u32 v) {
+		defer {
+			buffer.add((v >>  0) & 0xff);
+			buffer.add((v >>  8) & 0xff);
+			buffer.add((v >> 16) & 0xff);
+			buffer.add((v >> 24) & 0xff);
+		};
+		return buffer.count;
+	}
+	u32 w2(u16 v) {
+		defer {
+			buffer.add((v >>  0) & 0xff);
+			buffer.add((v >>  8) & 0xff);
+		};
+		return buffer.count;
+	}
+	u32 w1(u8 v) {
+		defer {
+			buffer.add(v);
+		};
+		return buffer.count;
+	}
+	void align(u32 n) {
+		while (buffer.count % n != 0)
+			buffer.add(0);
+	}
+};
+
 struct CompilerContext {
 	String source_path;
 	String source_path_without_extension;
@@ -192,9 +237,16 @@ struct CompilerContext {
 	bool do_profile = false;
 	bool keep_temp = false;
 	bool debug_poly = false;
+	bool print_lowered = false;
 
 	List<AstLambda *> lambdas_with_body;
 	List<AstLambda *> lambdas_without_body;
+
+	Section constant_section;
+	Section data_section;
+	s64 zero_section_size = 0;
+
+	HashMap<String, s64> string_set;
 };
 extern CompilerContext context;
 

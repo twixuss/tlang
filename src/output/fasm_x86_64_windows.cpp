@@ -2,7 +2,7 @@
 #pragma warning(disable: 4702) // unreachable
 #include <bytecode.h>
 #include <ast.h>
-#include "../x86_64.h"
+#include "../x86_64_asm.h"
 #include <tl/ram.h>
 
 using namespace x86_64;
@@ -107,8 +107,8 @@ section '.idata' import data readable writeable
 			append(builder, '\n');
 		}
 #endif
-		if (bytecode.zero_data_size) {
-			append_format(builder, "section '.bss' data readable writeable\nzeros rb {}\n", bytecode.zero_data_size);
+		if (context.zero_section_size) {
+			append_format(builder, "section '.bss' data readable writeable\nzeros rb {}\n", context.zero_section_size);
 		}
 
 		{

@@ -1,10 +1,10 @@
 ﻿<?xml version="1.0" encoding="utf-8"?>
 <Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <ItemGroup>
-    <ClCompile Include="src\output\nasm_x86_flat.cpp" />
+    <ClCompile Include="src\output\x86_64_windows.cpp" />
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="src\x86.h" />
     <ClInclude Include="src\output\msvc.h" />
+    <ClInclude Include="src\coff.h" />
   </ItemGroup>
 </Project>

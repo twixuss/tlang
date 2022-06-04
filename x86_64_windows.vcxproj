@@ -27,16 +27,16 @@
     </ProjectConfiguration>
   </ItemGroup>
   <ItemGroup>
-    <ClCompile Include="src\output\fasm_x86_64_windows.cpp" />
+    <ClCompile Include="src\output\x86_64_windows.cpp" />
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="src\x86_64.h" />
-    <ClInclude Include="src\x86_64_asm.h" />
+    <ClInclude Include="src\coff.h" />
+    <ClInclude Include="src\output\msvc.h" />
   </ItemGroup>
   <PropertyGroup Label="Globals">
     <VCProjectVersion>16.0</VCProjectVersion>
     <Keyword>Win32Proj</Keyword>
-    <ProjectGuid>{98A1BC8C-C1F5-4832-B3BD-60F7B63BA55F}</ProjectGuid>
+    <ProjectGuid>{93A7B294-A46D-471D-9ECA-87872F92E205}</ProjectGuid>
     <RootNamespace>nasm_x86_64_windows</RootNamespace>
     <WindowsTargetPlatformVersion>10.0</WindowsTargetPlatformVersion>
   </PropertyGroup>
@@ -115,37 +115,43 @@
     <LinkIncremental>true</LinkIncremental>
     <OutDir>$(SolutionDir)bin\targets\</OutDir>
     <IntDir>$(SolutionDir)temp\$(ProjectName)-$(Platform)-$(Configuration)\</IntDir>
-    <IncludePath>$(SolutionDir)dep/tl/include;$(SolutionDir)src;$(IncludePath)</IncludePath>
+    <IncludePath>$(SolutionDir)dep/tl/include;$(SolutionDir)src;$(SolutionDir)dep/fadec;$(SolutionDir)dep/fadec/build;$(IncludePath)</IncludePath>
+    <LibraryPath>$(SolutionDir)dep/fadec/build/libfadec.a.p;$(LibraryPath)</LibraryPath>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
     <LinkIncremental>false</LinkIncremental>
     <OutDir>$(SolutionDir)bin\targets\</OutDir>
     <IntDir>$(SolutionDir)temp\$(ProjectName)-$(Platform)-$(Configuration)\</IntDir>
-    <IncludePath>$(SolutionDir)dep/tl/include;$(SolutionDir)src;$(IncludePath)</IncludePath>
+    <IncludePath>$(SolutionDir)dep/tl/include;$(SolutionDir)src;$(SolutionDir)dep/fadec;$(SolutionDir)dep/fadec/build;$(IncludePath)</IncludePath>
+    <LibraryPath>$(SolutionDir)dep/fadec/build/libfadec.a.p;$(LibraryPath)</LibraryPath>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='UltraSpeed|Win32'">
     <LinkIncremental>false</LinkIncremental>
     <OutDir>$(SolutionDir)bin\targets\</OutDir>
     <IntDir>$(SolutionDir)temp\$(ProjectName)-$(Platform)-$(Configuration)\</IntDir>
-    <IncludePath>$(SolutionDir)dep/tl/include;$(SolutionDir)src;$(IncludePath)</IncludePath>
+    <IncludePath>$(SolutionDir)dep/tl/include;$(SolutionDir)src;$(SolutionDir)dep/fadec;$(SolutionDir)dep/fadec/build;$(IncludePath)</IncludePath>
+    <LibraryPath>$(SolutionDir)dep/fadec/build/libfadec.a.p;$(LibraryPath)</LibraryPath>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
     <LinkIncremental>true</LinkIncremental>
     <OutDir>$(SolutionDir)bin\targets\</OutDir>
     <IntDir>$(SolutionDir)temp\$(ProjectName)-$(Platform)-$(Configuration)\</IntDir>
-    <IncludePath>$(SolutionDir)dep/tl/include;$(SolutionDir)src;$(IncludePath)</IncludePath>
+    <IncludePath>$(SolutionDir)dep/tl/include;$(SolutionDir)src;$(SolutionDir)dep/fadec;$(SolutionDir)dep/fadec/build;$(IncludePath)</IncludePath>
+    <LibraryPath>$(SolutionDir)dep/fadec/build/libfadec.a.p;$(LibraryPath)</LibraryPath>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
     <LinkIncremental>false</LinkIncremental>
     <OutDir>$(SolutionDir)bin\targets\</OutDir>
     <IntDir>$(SolutionDir)temp\$(ProjectName)-$(Platform)-$(Configuration)\</IntDir>
-    <IncludePath>$(SolutionDir)dep/tl/include;$(SolutionDir)src;$(IncludePath)</IncludePath>
+    <IncludePath>$(SolutionDir)dep/tl/include;$(SolutionDir)src;$(SolutionDir)dep/fadec;$(SolutionDir)dep/fadec/build;$(IncludePath)</IncludePath>
+    <LibraryPath>$(SolutionDir)dep/fadec/build/libfadec.a.p;$(LibraryPath)</LibraryPath>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='UltraSpeed|x64'">
     <LinkIncremental>false</LinkIncremental>
     <OutDir>$(SolutionDir)bin\targets\</OutDir>
     <IntDir>$(SolutionDir)temp\$(ProjectName)-$(Platform)-$(Configuration)\</IntDir>
-    <IncludePath>$(SolutionDir)dep/tl/include;$(SolutionDir)src;$(IncludePath)</IncludePath>
+    <IncludePath>$(SolutionDir)dep/tl/include;$(SolutionDir)src;$(SolutionDir)dep/fadec;$(SolutionDir)dep/fadec/build;$(IncludePath)</IncludePath>
+    <LibraryPath>$(SolutionDir)dep/fadec/build/libfadec.a.p;$(LibraryPath)</LibraryPath>
   </PropertyGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
     <ClCompile>
@@ -159,6 +165,7 @@
       <SubSystem>Console</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <Profile>true</Profile>
+      <AdditionalOptions>encode.c.obj %(AdditionalOptions)</AdditionalOptions>
     </Link>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
@@ -177,6 +184,7 @@
       <EnableCOMDATFolding>true</EnableCOMDATFolding>
       <OptimizeReferences>true</OptimizeReferences>
       <GenerateDebugInformation>true</GenerateDebugInformation>
+      <AdditionalOptions>encode.c.obj %(AdditionalOptions)</AdditionalOptions>
     </Link>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='UltraSpeed|Win32'">
@@ -195,6 +203,7 @@
       <EnableCOMDATFolding>true</EnableCOMDATFolding>
       <OptimizeReferences>true</OptimizeReferences>
       <GenerateDebugInformation>true</GenerateDebugInformation>
+      <AdditionalOptions>encode.c.obj %(AdditionalOptions)</AdditionalOptions>
     </Link>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
@@ -209,6 +218,7 @@
       <SubSystem>Console</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <Profile>true</Profile>
+      <AdditionalOptions>encode.c.obj %(AdditionalOptions)</AdditionalOptions>
     </Link>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
@@ -227,6 +237,7 @@
       <EnableCOMDATFolding>true</EnableCOMDATFolding>
       <OptimizeReferences>true</OptimizeReferences>
       <GenerateDebugInformation>true</GenerateDebugInformation>
+      <AdditionalOptions>encode.c.obj %(AdditionalOptions)</AdditionalOptions>
     </Link>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='UltraSpeed|x64'">
@@ -245,6 +256,7 @@
       <EnableCOMDATFolding>true</EnableCOMDATFolding>
       <OptimizeReferences>true</OptimizeReferences>
       <GenerateDebugInformation>true</GenerateDebugInformation>
+      <AdditionalOptions>encode.c.obj %(AdditionalOptions)</AdditionalOptions>
     </Link>
   </ItemDefinitionGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />

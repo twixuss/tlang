@@ -70,6 +70,7 @@ e(OperatorDefinition) \
 e(Parse) \
 e(Pack) \
 e(Enum) \
+e(EmptyStatement) \
 
 enum AstKind : u8 {
 	Ast_Unknown = 0,
@@ -87,6 +88,10 @@ inline String as_string(AstKind kind) {
 	invalid_code_path();
 }
 
+inline umm append(StringBuilder &builder, AstKind kind) {
+	return append(builder, as_string(kind));
+}
+
 #define e(name) struct Ast ## name;
 	ENUMERATE_AST_KIND
 #undef e
@@ -96,10 +101,6 @@ inline static constexpr AstKind kind_of = Ast_Unknown;
 #define e(name) template <> inline static constexpr AstKind kind_of<Ast##name> = Ast_##name;
 	ENUMERATE_AST_KIND
 #undef e
-
-inline umm append(StringBuilder &builder, AstKind kind) {
-	return append(builder, as_string(kind));
-}
 
 struct AstNode;
 struct AstStatement;
@@ -189,6 +190,11 @@ using ExpressionPool = DefaultAllocatable<T>;
 template <class T = AstExpression>
 using Expression = T *;
 
+template <class A, class B>
+std::tuple<A *, B *> create_expressions() {
+	return MyAllocator{}.allocate_merge<A, B>();
+}
+
 template <class T>
 using StatementPool = DefaultAllocatable<T>;
 template <class T>
@@ -266,6 +272,10 @@ struct AstStatement : AstNode {
 	Scope *parent_scope = 0;
 };
 
+struct AstEmptyStatement : AstStatement, StatementPool<AstEmptyStatement> {
+	AstEmptyStatement() { kind = Ast_EmptyStatement; }
+};
+
 struct AstBlock : AstStatement, StatementPool<AstBlock> {
 	AstBlock() {
 		kind = Ast_Block;
@@ -286,35 +296,92 @@ struct AstExpression : AstNode {
 	bool is_parenthesized : 1 = false;
 };
 
+#define ENUMERATE_LITERAL_KINDS \
+	e(none) \
+	e(null) \
+	e(integer) \
+	e(boolean) \
+	e(string) \
+	e(character) \
+	e(noinit) \
+	e(Float) \
+	e(type) \
+	e(lambda_name) \
+	e(Struct) \
+	e(pack) \
+	e(pointer) \
+
 enum class LiteralKind : u8 {
-	none,
-	null,
-	integer,
-	boolean,
-	string,
-	character,
-	noinit,
-	Float,
-	type,
-	lambda_name,
-	Struct,
+#define e(name) name,
+	ENUMERATE_LITERAL_KINDS
+#undef e
 };
 
+inline String as_string(LiteralKind kind) {
+	switch (kind) {
+#define e(name) case LiteralKind::name: return #name##str;
+	ENUMERATE_LITERAL_KINDS
+#undef e
+	}
+	invalid_code_path();
+}
+
+inline umm append(StringBuilder &builder, LiteralKind kind) {
+	return append(builder, as_string(kind));
+}
+
 using BigInteger = tl::impl::BigInt<List<u64, MyAllocator, u32>>;
+
+enum SectionKind : u8 {
+	constant,
+};
 
 struct AstLiteral : AstExpression, ExpressionPool<AstLiteral> {
 	union {
 		BigInteger integer;
 		bool Bool;
 		struct {
-			HeapString string;
-			s32 string_data_offset;
-#pragma warning(suppress: 4201)
-		};
+			s64 offset;
+			s64 count;
+
+			String get() const {
+				return (String)Span(context.constant_section.buffer.subspan(offset, count).value());
+			}
+			void set(String string) {
+				count = string.count;
+				if (auto found = context.string_set.find(string)) {
+					offset = found->value;
+				} else {
+					context.constant_section.buffer.ensure_capacity(string.count + 1);
+
+					auto data = context.constant_section.buffer.last->end();
+
+					offset = context.constant_section.buffer.count;
+					for (auto ch : string)
+						context.constant_section.w1(ch);
+
+					context.constant_section.w1(0);
+
+					context.string_set.get_or_insert({(utf8 *)data, (u32)count}) = offset;
+				}
+			}
+
+		} string;
 		u32 character;
 		f64 Float;
 		Expression<> type_value;
-		SmallList<AstExpression *> struct_values;
+		struct {
+			SmallList<AstLiteral *> struct_values;
+			s64 struct_offset;
+		};
+		struct {
+			SmallList<AstLiteral *> pack_values;
+			s64 pack_offset;
+		};
+		struct {
+			SectionKind section;
+			s64 offset;
+		} pointer;
 	};
 
 	LiteralKind literal_kind = {};
@@ -331,6 +398,15 @@ inline static constexpr auto sizeof_AstLiteral = sizeof AstLiteral;
 #define INVALID_MEMBER_OFFSET (-1)
 #define INVALID_DATA_OFFSET (-1)
 
+enum class DefinitionLocation : u8 {
+	unknown,
+	global,
+	lambda_body,
+	lambda_parameter,
+	lambda_return_parameter,
+	struct_member,
+};
+
 struct AstDefinition : AstStatement, StatementPool<AstDefinition> {
 	AstDefinition() { kind = Ast_Definition; }
 
@@ -344,13 +420,13 @@ struct AstDefinition : AstStatement, StatementPool<AstDefinition> {
 	// REFERENCE32(Scope, parent_scope);
 
 	KeyString name = {};
-	s32 offset_in_struct = INVALID_MEMBER_OFFSET;
-	s32 bytecode_offset = INVALID_DATA_OFFSET;
+	// s32 bytecode_offset = INVALID_DATA_OFFSET;
+
+	DefinitionLocation definition_location = {};
+	s32 offset = -1;
 
 	bool is_constant         : 1 = false;
-	bool is_parameter        : 1 = false;
 	bool built_in            : 1 = false;
-	bool is_return_parameter : 1 = false;
 	bool is_poly             : 1 = false;
 	bool is_pack             : 1 = false;
 	bool depends_on_poly     : 1 = false;
@@ -436,6 +512,7 @@ struct AstLambda : AstExpression, ExpressionPool<AstLambda> {
 
 	struct HardenedPoly {
 		AstLambda *lambda;
+		AstDefinition *definition;
 		AstCall *call;
 	};
 
@@ -463,9 +540,11 @@ struct AstLambda : AstExpression, ExpressionPool<AstLambda> {
 	SmallList<AstLiteral *> function_directives;
 	String type_name;
 
+	s32 stack_cursor = 0;
+
 	// For bytecode generation
 
-	s64 offset_accumulator = 0;
+	// s64 offset_accumulator = 0;
 	s64 parameters_size = -1; // Sum of (parameters' size ceiled to context.stack_word_size)
 	struct ReturnInfo {
 		Instruction *jmp;
@@ -481,8 +560,8 @@ struct AstTuple : AstExpression, ExpressionPool<AstTuple> {
 };
 
 struct NamedArgument {
-	AstExpression *expression;
 	KeyString name;
+	AstExpression *expression;
 };
 
 struct AstCall : AstExpression, ExpressionPool<AstCall> {
@@ -678,6 +757,7 @@ enum class UnaryOperation : u8 {
 	dot,         // .
 	count,
 	pointer_or_dereference_or_unwrap,
+	internal_move_to_temporary, // move the value into temporary space, result is a pointer to that space.
 };
 
 inline String as_string(UnaryOperation unop) {
@@ -697,7 +777,8 @@ inline String as_string(UnaryOperation unop) {
 		case poly:        return "$"str;
 		case typeinfo:    return "#typeinfo"str;
 		case dot:         return "."str;
-		case pointer_or_dereference_or_unwrap: return "pointer_or_dereference_or_unwrap"str;
+		case pointer_or_dereference_or_unwrap: return "<*>"str;
+		case internal_move_to_temporary: return "<tmp>"str;
 	}
 	invalid_code_path();
 }
@@ -837,36 +918,59 @@ struct AstEnum : AstExpression, ExpressionPool<AstEnum> {
 	Expression<> underlying_type = {};
 };
 
-extern AstStruct *type_type;
-extern AstStruct *type_void;
-extern AstStruct *type_bool;
-extern AstStruct *type_u8;
-extern AstStruct *type_u16;
-extern AstStruct *type_u32;
-extern AstStruct *type_u64;
-extern AstStruct *type_s8;
-extern AstStruct *type_s16;
-extern AstStruct *type_s32;
-extern AstStruct *type_s64;
-extern AstStruct *type_f32;
-extern AstStruct *type_f64;
-extern AstStruct *type_string;
-extern AstStruct *type_typeinfo;
+struct BuiltinStruct {
+	// actual thing
+	AstStruct        *Struct;  // string :: struct
 
-extern AstStruct *type_noinit;
-extern AstStruct *type_unsized_integer;
-extern AstStruct *type_unsized_float;
-extern AstStruct *type_unknown;
-extern AstStruct *type_unknown_enum;
-extern AstStruct *type_poly;
-extern AstStruct *type_overload_set;
+	// reusable things
+	AstIdentifier    *ident;   // string
+	AstUnaryOperator *pointer; // *string
+	AstSpan          *span;	   // []string
+};
 
-extern AstUnaryOperator *type_pointer_to_void;
-extern AstUnaryOperator *type_pointer_to_typeinfo;
-extern AstStruct *type_default_signed_integer;
-extern AstStruct *type_default_unsigned_integer;
-extern AstStruct *type_default_integer;
-extern AstStruct *type_default_float;
+struct BuiltinEnum {
+	// actual thing
+	AstEnum          *Enum;    // type_kind :: enum
+
+	// reusable things
+	AstIdentifier    *ident;   // type_kind
+	AstUnaryOperator *pointer; // *type_kind
+	AstSpan          *span;	   // []type_kind
+};
+
+extern BuiltinStruct builtin_void;
+extern BuiltinStruct builtin_bool;
+extern BuiltinStruct builtin_u8;
+extern BuiltinStruct builtin_u16;
+extern BuiltinStruct builtin_u32;
+extern BuiltinStruct builtin_u64;
+extern BuiltinStruct builtin_s8;
+extern BuiltinStruct builtin_s16;
+extern BuiltinStruct builtin_s32;
+extern BuiltinStruct builtin_s64;
+extern BuiltinStruct builtin_f32;
+extern BuiltinStruct builtin_f64;
+
+extern BuiltinStruct builtin_type;
+extern BuiltinStruct builtin_string;
+extern BuiltinStruct builtin_struct_member;
+extern BuiltinStruct builtin_typeinfo;
+extern BuiltinStruct builtin_any;
+
+extern BuiltinEnum builtin_type_kind;
+
+extern BuiltinStruct builtin_unsized_integer;
+extern BuiltinStruct builtin_unsized_float;
+extern BuiltinStruct builtin_noinit;
+extern BuiltinStruct builtin_unknown;
+extern BuiltinStruct builtin_unknown_enum;
+extern BuiltinStruct builtin_poly;
+extern BuiltinStruct builtin_overload_set;
+
+extern BuiltinStruct *builtin_default_signed_integer;
+extern BuiltinStruct *builtin_default_unsigned_integer;
+extern BuiltinStruct *builtin_default_integer;
+extern BuiltinStruct *builtin_default_float;
 
 extern AstIdentifier *type_int;
 extern AstIdentifier *type_sint;
@@ -960,6 +1064,13 @@ s64 get_size(AstExpression *type);
 s64 get_align(AstExpression *type);
 
 bool types_match(AstExpression *type_a, AstExpression *type_b);
+inline bool types_match(AstStruct *type_a, AstStruct *type_b) { return type_a == type_b; }
+
+inline bool types_match(AstExpression *type_a, BuiltinStruct &type_b) { return types_match(type_a, type_b.Struct); }
+inline bool types_match(BuiltinStruct &type_a, AstExpression *type_b) { return types_match(type_a.Struct, type_b); }
+
+inline bool types_match(AstStruct *type_a, BuiltinStruct &type_b) { return types_match(type_a, type_b.Struct); }
+inline bool types_match(BuiltinStruct &type_a, AstStruct *type_b) { return types_match(type_a.Struct, type_b); }
 
 bool is_type(AstExpression *expression);
 
@@ -976,8 +1087,8 @@ direct(identifier myint2) returns struct s64
 AstExpression *direct(AstExpression *type);
 
 template <class T>
-T *direct_as(AstExpression *type) {
-	auto directed = direct(type);
+T *direct_as(AstExpression *expression) {
+	auto directed = direct(expression);
 	if (directed->kind == kind_of<T>) {
 		return (T *)directed;
 	}

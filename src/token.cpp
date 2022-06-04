@@ -1,46 +1,18 @@
 #include "token.h"
 
+// NOTE: this is used only in error reporting, so leak is not that important
 String token_kind_to_string(TokenKind kind) {
-	static constexpr Array<utf8, 256> single_char_tokens = []{
-		Array<utf8, 256> result = {};
-		for (u32 i = 0; i < 256; ++i) {
-			result.data[i] = i;
-		}
-		return result;
-	}();
-
 	if (kind < 0x100) {
-		return Span((utf8 *)&single_char_tokens.data[kind], 1);
+		HeapString string;
+		string.add(kind);
+		return string;
 	}
 
-	static thread_local auto double_char_tokens = []() {
-		Map<TokenKind, Span<utf8>> result;
-
-#define X(x) result.get_or_insert(#x[1] | (#x[0] << 8)) = u8#x##s;
-
-		X(==);
-		X(!=);
-		X(>=);
-		X(<=);
-		X(+=);
-		X(-=);
-		X(*=);
-		X(/=);
-		X(%=);
-		X(|=);
-		X(&=);
-		X(^=);
-		X(->);
-		X(>>);
-		X(<<);
-		X(=>);
-		X(->);
-
-		return result;
-	}();
-
 	if (kind < 0x10000) {
-		return double_char_tokens.find(kind)->value;
+		HeapString string;
+		string.add((kind >> 8) & 0xff);
+		string.add((kind >> 0) & 0xff);
+		return string;
 	}
 
 	switch (kind) {

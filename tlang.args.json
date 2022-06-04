@@ -3,11 +3,23 @@
   "Id": "887185ac-60e5-40d9-bc99-f2de46cf0d29",
   "Items": [
     {
+      "Id": "db3fc9de-34e9-4617-8ea3-36ca0c72f4b6",
+      "Command": "--print-lowered"
+    },
+    {
       "Id": "b3d2ff19-d281-4ff1-9d54-ae7af5dc117a",
       "Command": "--debug-poly"
     },
     {
+      "Id": "35562a44-0b85-4774-9c19-5c6d03030566",
+      "Command": "--stats"
+    },
+    {
       "Id": "c23521ab-0550-4dfa-b1ba-948610ced3db",
+      "Command": "--target x86_64_windows"
+    },
+    {
+      "Id": "f892d5ef-46c1-4980-a437-da08bf5fcfa9",
       "Command": "--target nasm_x86_64_windows"
     },
     {
@@ -40,7 +52,7 @@
     },
     {
       "Id": "a73b5e5b-eb1d-49e9-b057-eae2254aca28",
-      "Command": "../tests/location.tl"
+      "Command": "../tests/functions.tl"
     },
     {
       "Id": "cef8c758-7ca7-4d68-a146-e313ec47e1f3",
@@ -48,7 +60,7 @@
     },
     {
       "Id": "cab5422f-cdb6-42e2-b063-344bbdc1b151",
-      "Command": "../tests/user_cast.tl"
+      "Command": "../tests/window.tl"
     },
     {
       "Id": "7c05f5eb-beeb-4681-8aaa-9bf570d8c9d4",
