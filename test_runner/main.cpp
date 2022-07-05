@@ -18,8 +18,8 @@ List<utf8> normalize_path(Span<utf8> path) {
 	auto X = find_last(Span(path.begin(), dotdot-1), u8'\\');
 
 	List<utf8> result;
-	result.add({path.begin(), X});
-	result.add({dotdot + 2, path.end()});
+	result.add(Span<utf8>{(utf8 *)path.begin(), X});
+	result.add(Span<utf8>{dotdot + 2, (utf8 *)path.end()});
 	return result;
 }
 
