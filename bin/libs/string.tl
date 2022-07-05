@@ -54,6 +54,7 @@ append_bytes :: fn (b: *StringBuilder, data: *u8, size: uint): uint {
             b.last = b.last.next;
         }
     }
+	
     memcpy(end(b.last), d, chars_to_write);
     b.last.count += chars_to_write;
     b.count += size;
@@ -61,6 +62,139 @@ append_bytes :: fn (b: *StringBuilder, data: *u8, size: uint): uint {
 }
 
 append :: fn (b: *StringBuilder, str: string) => append_bytes(b, str.data, str.count);
+append_char :: fn (b: *StringBuilder, ch: u8) => append_bytes(b, &ch, 1);
+
+append :: fn (b: *StringBuilder, _val : int) {
+    val := _val;
+    if val == 0 {
+        append_char(b, '0');
+        return;
+    }
+	if val < 0 {
+		append_char(b, '-');
+		val = -val;
+	}
+
+    i := val;
+    buffer : u8[64];
+    dst_index := 64;
+
+    while i != 0 {
+        digit := i % 10;
+
+        dst_index -= 1;
+        buffer[dst_index] = @(digit + '0');
+
+        i /= 10;
+    }
+
+    while dst_index != 64 {
+        append_char(b, buffer[dst_index]);
+        dst_index += 1;
+    }
+}
+append :: fn (b: *StringBuilder, _val : uint) {
+    val := _val;
+    if val == 0 {
+        append_char(b, '0');
+        return;
+    }
+
+    i := val;
+    buffer : u8[64];
+    dst_index := 64;
+
+    while i != 0 {
+        digit := i % 10;
+
+        dst_index -= 1;
+        buffer[dst_index] = @(digit + '0');
+
+        i /= 10;
+    }
+
+    while dst_index != 64 {
+        append_char(b, buffer[dst_index]);
+        dst_index += 1;
+    }
+}
+append :: fn (b: *StringBuilder, v: s8 ) => append(b, v as s64);
+append :: fn (b: *StringBuilder, v: s16) => append(b, v as s64);
+append :: fn (b: *StringBuilder, v: s32) => append(b, v as s64);
+append :: fn (b: *StringBuilder, v: u8 ) => append(b, v as u64);
+append :: fn (b: *StringBuilder, v: u16) => append(b, v as u64);
+append :: fn (b: *StringBuilder, v: u32) => append(b, v as u64);
+
+append :: fn (b: *StringBuilder, value: any): void {
+	info := value.type;
+	match info.kind {
+		.s8  => append(b, *(value.pointer as *s8));
+		.s16 => append(b, *(value.pointer as *s16));
+		.s32 => append(b, *(value.pointer as *s32));
+		.s64 => append(b, *(value.pointer as *s64));
+		.u8  => append(b, *(value.pointer as *u8));
+		.u16 => append(b, *(value.pointer as *u16));
+		.u32 => append(b, *(value.pointer as *u32));
+		.u64 => append(b, *(value.pointer as *u64));
+		.\struct => {
+			if info.name == "string" {
+				append(b, *(value.pointer as *string));
+				return;
+			}
+			append(b, "{");
+			i := 0;
+			while i < info.members.count {
+				member := &info.members[i];
+				if i != 0
+					append(b, ", ");
+				append(b, member.name);
+				append(b, "=");
+				if member.type.name == "string" {
+					append(b, "\"");
+					append(b, *((value.pointer + member.offset) as *string));
+					append(b, "\"");
+				} else {
+					append(b, any(value.pointer + member.offset, member.type));
+				}
+				i += 1;
+			}
+			append(b, "}");
+		}
+		.pointer => append(b, value.pointer as uint);
+		.array => {
+			i :u64 = 0;
+			append(b, "[");
+			
+			if info.array_count > 16 {
+				while i < 8 {
+					if i != 0
+						append(b, ", ");
+						
+					append(b, any(value.pointer + i * info.pointee.size, info.pointee));
+					i += 1;
+				}
+				append(b, ", ...");
+				
+				i = info.array_count - 8;
+				while i < info.array_count {
+					append(b, ", ");
+					append(b, any(value.pointer + i * info.pointee.size, info.pointee));
+					i += 1;
+				}
+			} else {
+				while i < info.array_count {
+					if i != 0
+						append(b, ", ");
+						
+					append(b, any(value.pointer + i * info.pointee.size, info.pointee));
+					i += 1;
+				}
+			}
+			append(b, "]");
+		}
+		else => append(b, "unknown");
+	}
+}
 
 
 fill :: fn (builder: *StringBuilder, dst_string: string): result: string {
@@ -79,4 +213,15 @@ to_string :: fn (builder: *StringBuilder): result: string {
     result.data = @ VirtualAlloc(null, builder.count, MEM_RESERVE|MEM_COMMIT, PAGE_READWRITE);
 	result.count = builder.count;
 	fill(builder, result);
+}
+
+free :: fn (builder: *StringBuilder) {
+	block := builder.first.next;
+	while block != null {
+		next := block.next;
+		// builder.allocator.free_t(block);
+		VirtualFree(block, 0, MEM_RELEASE);
+		block = next;
+	}
+	// builder.allocator = {};
 }

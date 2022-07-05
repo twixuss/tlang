@@ -4,6 +4,7 @@ temp/
 tests/*.exe
 tests/*.obj
 tests/*.asm
+tests/*.ilk
 bin/*
 !bin/libs/
 !bin/fasm/

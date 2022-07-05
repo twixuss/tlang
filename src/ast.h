@@ -71,6 +71,9 @@ e(Parse) \
 e(Pack) \
 e(Enum) \
 e(EmptyStatement) \
+e(For) \
+e(LoopControl) \
+e(Match) \
 
 enum AstKind : u8 {
 	Ast_Unknown = 0,
@@ -238,6 +241,7 @@ struct Scope : DefaultAllocatable<Scope> {
 	SmallList<AstStatement *> statements;
 	Map<KeyString, DefinitionList> definitions; // multiple definitions for a single name in case of function overloading
 	SmallList<AstDefer *> bytecode_defers;
+	u32 defers_start_index = 0;
 
 	void append(Scope &that) {
 		children.add(that.children);
@@ -398,13 +402,10 @@ inline static constexpr auto sizeof_AstLiteral = sizeof AstLiteral;
 #define INVALID_MEMBER_OFFSET (-1)
 #define INVALID_DATA_OFFSET (-1)
 
-enum class DefinitionLocation : u8 {
-	unknown,
-	global,
-	lambda_body,
-	lambda_parameter,
-	lambda_return_parameter,
-	struct_member,
+enum class LambdaDefinitionLocation : u8 {
+	body,
+	parameter,
+	return_parameter,
 };
 
 struct AstDefinition : AstStatement, StatementPool<AstDefinition> {
@@ -422,7 +423,7 @@ struct AstDefinition : AstStatement, StatementPool<AstDefinition> {
 	KeyString name = {};
 	// s32 bytecode_offset = INVALID_DATA_OFFSET;
 
-	DefinitionLocation definition_location = {};
+	LambdaDefinitionLocation definition_location = {};
 	s32 offset = -1;
 
 	bool is_constant         : 1 = false;
@@ -527,13 +528,13 @@ struct AstLambda : AstExpression, ExpressionPool<AstLambda> {
 	bool is_poly                    : 1 = false;
 	bool is_member                  : 1 = false;
 	bool has_pack                   : 1 = false;
+	bool print_bytecode             : 1 = false;
 
 	ExternLanguage extern_language = {};
 	String extern_library;
 
 	Instruction *first_instruction = 0;
 	s64 location_in_bytecode = -1;
-	s64 return_location = -1;
 
 	CallingConvention convention = CallingConvention::none;
 
@@ -626,6 +627,17 @@ struct AstWhile : AstStatement, StatementPool<AstWhile> {
 	Scope scope;
 };
 
+struct AstFor : AstStatement, StatementPool<AstFor> {
+	AstFor() {
+		kind = Ast_For;
+		scope.node = this;
+	}
+
+	Expression<> condition = {};
+
+	Scope scope;
+};
+
 //#define e(name, token)
 #define ENUMERATE_BINARY_OPERATIONS \
 e(add,     +) \
@@ -659,6 +671,7 @@ e(borass,  |=) \
 e(bslass,  <<=) \
 e(bsrass,  >>=) \
 e(as,      as) \
+e(range,   ..) \
 
 enum class BinaryOperation {
 #define e(name, token) name,
@@ -706,10 +719,13 @@ inline s32 get_precedence(BinaryOperation op) {
 		case ne:
 		case ge:
 		case le:
-			return 3;
+			return 4;
 
 		case lor:
 		case land:
+			return 3;
+
+		case range:
 			return 2;
 
 		case ass:
@@ -894,14 +910,12 @@ struct AstOperatorDefinition : AstStatement, StatementPool<AstOperatorDefinition
 
 	Expression<AstLambda> lambda = {};
 
-	BinaryOperation operation = {};
+	TokenKind operation = {};
 	bool is_implicit : 1 = false;
 };
 
 struct AstPack : AstExpression, ExpressionPool<AstPack> {
-	AstPack() {
-		kind = Ast_Pack;
-	}
+	AstPack() { kind = Ast_Pack; }
 	SmallList<AstExpression *> expressions = {};
 };
 
@@ -916,6 +930,35 @@ struct AstEnum : AstExpression, ExpressionPool<AstEnum> {
 	Scope scope;
 
 	Expression<> underlying_type = {};
+};
+
+enum class LoopControl {
+	Break,
+	Continue,
+};
+
+struct AstLoopControl : AstStatement, StatementPool<AstLoopControl> {
+	AstLoopControl() {
+		kind = Ast_LoopControl;
+	}
+	LoopControl control;
+	AstWhile *loop;
+};
+
+struct MatchCase {
+	AstExpression *expression = 0; // will be null for default case
+	Scope scope;
+};
+
+struct AstMatch : AstStatement, StatementPool<AstMatch> {
+	AstMatch() {
+		kind = Ast_Match;
+	}
+
+	Expression<> expression = {};
+	BlockList<MatchCase> cases; // elements need to be persistent in memory cause they contain Scope.
+	MatchCase *default_case = 0;
+	String default_case_location = {};
 };
 
 struct BuiltinStruct {
@@ -956,6 +999,7 @@ extern BuiltinStruct builtin_string;
 extern BuiltinStruct builtin_struct_member;
 extern BuiltinStruct builtin_typeinfo;
 extern BuiltinStruct builtin_any;
+extern BuiltinStruct builtin_range;
 
 extern BuiltinEnum builtin_type_kind;
 

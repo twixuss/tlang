@@ -115,7 +115,7 @@ T *find_binary(Span<T> span, T value) {
 
 DECLARE_OUTPUT_BUILDER {
 	init_allocator();
-	current_printer = console_printer;
+	init_printer();
 
 	timed_function(context.profiler);
 
@@ -124,13 +124,13 @@ DECLARE_OUTPUT_BUILDER {
 
 	auto msvc_directory = locate_msvc();
 	if (!msvc_directory.data) {
-		print(Print_error, "Couldn't locate msvc");
+		with(ConsoleColor::red, print("Couldn't locate msvc"));
 		return;
 	}
 
 	auto wkits_directory = locate_wkits();
 	if (!wkits_directory.data) {
-		print(Print_error, "Couldn't locate windows kits");
+		with(ConsoleColor::red, print("Couldn't locate windows kits"));
 		return;
 	}
 
@@ -216,7 +216,7 @@ DECLARE_OUTPUT_BUILDER {
 
 		auto process = start_process(bat_path);
 		if (!process.handle) {
-			print(Print_error, "Cannot execute file '{}'\n", bat_path);
+			with(ConsoleColor::red, print("Cannot execute file '{}'\n", bat_path));
 			return;
 		}
 
@@ -241,7 +241,7 @@ DECLARE_OUTPUT_BUILDER {
 		wait(process);
 		auto exit_code = get_exit_code(process);
 		if (exit_code != 0) {
-			print(Print_error, "Build command failed\n");
+			with(ConsoleColor::red, print("Build command failed\n"));
 			return;
 		}
 #endif

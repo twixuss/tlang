@@ -6,6 +6,29 @@
 // TODO: Figure this out.
 #define OPTIMIZE_BYTECODE 0
 
+const Array<StaticList<u8, 2>, (u16)InstructionKind::count> address_members_offsets = [](){
+	Array<StaticList<u8, 2>, (u16)InstructionKind::count> result = {};
+
+#define m(type, name) \
+	if (is_same<type, Address>) \
+		result[index].add(offsetof(InstName, name));
+
+#define e(name, ...) \
+[&](){ \
+	using InstName = decltype(Instruction::name); \
+	constexpr u8 index = (u8)InstructionKind::name; \
+	__VA_ARGS__ \
+}();
+
+	ENUMERATE_INSTRUCTIONS
+#undef e
+#undef m
+
+#undef OFFSET
+
+	return result;
+}();
+
 using enum Register;
 using enum XRegister;
 
@@ -111,6 +134,13 @@ struct Converter {
 
 	List<InstructionThatReferencesLambda> instructions_that_reference_lambdas;
 
+	struct LoopJmp {
+		umm index;
+		Instruction *jmp;
+		LoopControl control;
+	};
+	List<List<LoopJmp>> loop_control_stack;
+
 	String comment;
 
 	Optional<Register> allocate_register() {
@@ -125,9 +155,8 @@ struct Converter {
 
 	Address allocate_temporary_space(s64 size) {
 		size = ceil(size, 16ll);
-		auto offset = rb - ls->temporary_cursor - size;
 		ls->temporary_cursor += size;
-		return offset;
+		return temporary - ls->temporary_cursor;
 	}
 
 	RegisterOrAddress get_destination(Optional<RegisterOrAddress> destination, u64 size) {
@@ -170,6 +199,8 @@ struct Converter {
 	void append(AstWhile               *);
 	void append(AstBlock               *);
 	void append(AstAssert              *);
+	void append(AstLoopControl         *);
+	void append(AstMatch               *);
 
 	void append(Scope &scope);
 
@@ -177,12 +208,22 @@ struct Converter {
 	void load_address_of(AstExpression *expression, RegisterOrAddress destination);
 	void load_address_of(AstDefinition *definition, RegisterOrAddress destination);
 
-	RegisterOrAddress load_address_of(AstExpression *expression) { auto destination = get_destination({}, get_size(expression->type)); load_address_of(expression, destination); return destination; }
-	RegisterOrAddress load_address_of(AstDefinition *definition) { auto destination = get_destination({}, get_size(definition->type)); load_address_of(definition, destination); return destination; }
+	RegisterOrAddress load_address_of(AstExpression *expression) { auto destination = get_destination({}, context.stack_word_size); load_address_of(expression, destination); return destination; }
+	RegisterOrAddress load_address_of(AstDefinition *definition) { auto destination = get_destination({}, context.stack_word_size); load_address_of(definition, destination); return destination; }
 
 	void append_memory_copy(Address dst, Address src, s64 bytes_to_copy, bool reverse, Span<utf8> from_name, Span<utf8> to_name);
+	void append_memory_set(InstructionList &list, Address d, s64 s, s64 size, bool reverse);
 	void append_memory_set(Address d, s64 s, s64 size, bool reverse);
 	void append_struct_initializer(AstStruct *Struct, SmallList<AstExpression *> values, RegisterOrAddress destination);
+
+	void optimize(InstructionList &instructions);
+
+	void propagate_known_addresses(InstructionList &instructions);
+
+	// NOTE: this optimization assumes that registers which are set before a jump are no longer used after a jump.
+	void remove_redundant_instructions(InstructionList &instructions);
+
+	void propagate_known_values(InstructionList &instructions);
 
 #if BYTECODE_DEBUG
 
@@ -198,7 +239,7 @@ struct Converter {
 		}
 	}
 
-#define MI(_kind, ...) {._kind={__VA_ARGS__}, .kind = InstructionKind::_kind, .line=(u64)__LINE__,}
+#define MI(_kind, ...) (Instruction{._kind={__VA_ARGS__}, .kind = InstructionKind::_kind, .line=(u64)__LINE__,})
 
 #else
 
@@ -264,6 +305,7 @@ void remove_last_instruction(Converter &conv) {
 		I(mov8_rm, name, CONCAT(_, __LINE__).address); \
 	}
 
+void print_bytecode(InstructionList &instructions);
 
 Instruction *Converter::add_instruction(Instruction next) {
 #if BYTECODE_DEBUG
@@ -858,8 +900,8 @@ void Converter::append(AstExpression *expression, RegisterOrAddress destination)
 }
 
 void Converter::append(AstStatement *statement) {
-	if (ls)
-		I(debug_line, get_line_number(statement->location.data));
+	// if (ls)
+	// 	I(debug_line, get_line_number(statement->location.data));
 	switch (statement->kind) {
 		case Ast_Definition:          return append((AstDefinition          *)statement);
 		case Ast_Return:              return append((AstReturn              *)statement);
@@ -867,6 +909,8 @@ void Converter::append(AstStatement *statement) {
 		case Ast_ExpressionStatement: return append((AstExpressionStatement *)statement);
 		case Ast_While:               return append((AstWhile               *)statement);
 		case Ast_Block:               return append((AstBlock               *)statement);
+		case Ast_LoopControl:         return append((AstLoopControl         *)statement);
+		case Ast_Match:               return append((AstMatch               *)statement);
 		case Ast_OperatorDefinition:
 			append(((AstOperatorDefinition*)statement)->lambda, false, r0);
 			return;
@@ -887,15 +931,12 @@ void Converter::append(AstStatement *statement) {
 	}
 }
 
-inline umm append(StringBuilder &b, DefinitionLocation d) {
+inline umm append(StringBuilder &b, LambdaDefinitionLocation d) {
 	switch (d) {
-		using enum DefinitionLocation;
-		case unknown:                 return append(b, "unknown");
-		case global:				  return append(b, "global");
-		case lambda_body:			  return append(b, "lambda_body");
-		case lambda_parameter:		  return append(b, "lambda_parameter");
-		case lambda_return_parameter: return append(b, "lambda_return_parameter");
-		case struct_member:			  return append(b, "struct_member");
+		using enum LambdaDefinitionLocation;
+		case body:			  return append(b, "body");
+		case parameter:		  return append(b, "parameter");
+		case return_parameter: return append(b, "return_parameter");
 	}
 	return 0;
 }
@@ -912,130 +953,181 @@ void check_destination(RegisterOrAddress destination) {
 	}
 }
 
+enum class DefinitionOrigin {
+	unknown,
+	constants,
+	rwdata,
+	zeros,
+	return_parameter,
+	parameter,
+	local,
+};
+
+DefinitionOrigin get_definition_origin(AstDefinition *definition) {
+	if (definition->parent_lambda_or_struct && !definition->is_constant) {
+		switch (definition->parent_lambda_or_struct->kind) {
+			case Ast_Lambda: {
+				switch (definition->definition_location) {
+					case LambdaDefinitionLocation::return_parameter:
+					case LambdaDefinitionLocation::parameter:
+					case LambdaDefinitionLocation::body: {
+
+						auto parent_lambda = (AstLambda *)definition->parent_lambda_or_struct;
+
+						switch (definition->definition_location) {
+							case LambdaDefinitionLocation::return_parameter:
+								return DefinitionOrigin::return_parameter;
+
+							case LambdaDefinitionLocation::parameter:
+								return DefinitionOrigin::parameter;
+
+							case LambdaDefinitionLocation::body:
+								return DefinitionOrigin::local;
+							default: invalid_code_path();
+						}
+						break;
+					}
+					default: invalid_code_path();
+				}
+			}
+			default: invalid_code_path();
+		}
+	} else {
+		if (definition->is_constant) {
+			return DefinitionOrigin::constants;
+		} else {
+			if (definition->expression) {
+				return DefinitionOrigin::rwdata;
+			} else {
+				return DefinitionOrigin::zeros;
+			}
+		}
+	}
+}
+
 Address get_known_address_of(AstDefinition *definition) {
 	s64 definition_size = ceil(get_size(definition->type), context.stack_word_size);
 
 	assert(definition->offset != -1);
 
-	switch (definition->definition_location) {
-		case DefinitionLocation::lambda_return_parameter:
-		case DefinitionLocation::lambda_parameter:
-		case DefinitionLocation::lambda_body: {
+	if (definition->parent_lambda_or_struct && !definition->is_constant) {
+		switch (definition->parent_lambda_or_struct->kind) {
+			case Ast_Lambda: {
+				switch (definition->definition_location) {
+					case LambdaDefinitionLocation::return_parameter:
+					case LambdaDefinitionLocation::parameter:
+					case LambdaDefinitionLocation::body: {
 
-			auto parent_lambda = (AstLambda *)definition->parent_lambda_or_struct;
-			assert(parent_lambda->kind == Ast_Lambda);
-			assert(parent_lambda->parameters_size != -1);
+						auto parent_lambda = (AstLambda *)definition->parent_lambda_or_struct;
+						assert(parent_lambda->kind == Ast_Lambda);
+						assert(parent_lambda->parameters_size != -1);
 
-			s64 const stack_base_register_size = context.stack_word_size;
-			s64 const return_address_size = context.stack_word_size;
-			s64 const parameters_end_offset = stack_base_register_size + return_address_size + parent_lambda->parameters_size;
-			s64 const return_parameters_start_offset = parameters_end_offset;
+						s64 const stack_base_register_size = context.stack_word_size;
+						s64 const return_address_size = context.stack_word_size;
+						s64 const parameters_end_offset = stack_base_register_size + return_address_size + parent_lambda->parameters_size;
+						s64 const return_parameters_start_offset = parameters_end_offset;
 
-			Instruction *offset_instr = 0;
+						Instruction *offset_instr = 0;
 
-			switch (definition->definition_location) {
-				case DefinitionLocation::lambda_return_parameter:
-					return rb + return_parameters_start_offset;
+						switch (definition->definition_location) {
+							case LambdaDefinitionLocation::return_parameter:
+								return rb + return_parameters_start_offset;
 
-				case DefinitionLocation::lambda_parameter:
-					return rb + parameters_end_offset - 8 - definition->offset;
+							case LambdaDefinitionLocation::parameter:
+								return rb + parameters_end_offset - 8 - definition->offset;
 
-				case DefinitionLocation::lambda_body: {
-					invalid_code_path("local definitions' addresses are unknown yet.");
+							case LambdaDefinitionLocation::body: {
+								return locals + definition->offset;
+							}
+							default: invalid_code_path();
+						}
+						break;
+					}
+					default: invalid_code_path();
 				}
-				default: invalid_code_path();
 			}
-			break;
+			default: invalid_code_path();
 		}
-		case DefinitionLocation::global: {
-			not_implemented();
-			break;
+	} else {
+		//
+		// Global
+		//
+		auto offset = definition->offset;
+		if (definition->is_constant) {
+			return constants + offset;
+		} else {
+			if (definition->expression) {
+				return rwdata + offset;
+			} else {
+				return zeros + offset;
+			}
 		}
-		default: invalid_code_path();
 	}
 }
 
 void Converter::load_address_of(AstDefinition *definition, RegisterOrAddress destination) {
-	check_destination(destination);
-
 	push_comment(format("load address of {} (definition_location={})"str, definition->name, definition->definition_location));
 
 	s64 definition_size = ceil(get_size(definition->type), context.stack_word_size);
 
 	assert(definition->offset != -1);
 
-	switch (definition->definition_location) {
-		case DefinitionLocation::lambda_return_parameter:
-		case DefinitionLocation::lambda_parameter:
-		case DefinitionLocation::lambda_body: {
-			switch (definition->definition_location) {
-				case DefinitionLocation::lambda_return_parameter: {
-					auto addr = get_known_address_of(definition);
-					if (destination.is_register) {
-						II(lea, destination.reg, addr);
-					} else {
-						II(lea, r0, addr);
-						I(mov8_mr, destination.address, r0);
+	if (definition->parent_lambda_or_struct && !definition->is_constant) {
+		switch (definition->parent_lambda_or_struct->kind) {
+			case Ast_Lambda: {
+				switch (definition->definition_location) {
+					case LambdaDefinitionLocation::body: {
+						auto addr = get_known_address_of(definition);
+						if (destination.is_register) {
+							I(lea, destination.reg, addr);
+						} else {
+							I(lea, r0, addr);
+							I(mov8_mr, destination.address, r0);
+						}
+						break;
 					}
-					break;
+					case LambdaDefinitionLocation::return_parameter:
+					case LambdaDefinitionLocation::parameter: {
+						auto addr = get_known_address_of(definition);
+						if (get_size(definition->type) <= context.stack_word_size) {
+							if (destination.is_register) {
+								I(lea, destination.reg, addr);
+							} else {
+								I(lea, r0, addr);
+								I(mov8_mr, destination.address, r0);
+							}
+						} else {
+							if (destination.is_register) {
+								I(lea, destination.reg, addr);
+								I(mov8_rm, destination.reg, destination.reg);
+							} else {
+								I(mov8_rm, r0, addr);
+								I(mov8_mr, destination.address, r0);
+							}
+						}
+						break;
+					}
+					default: invalid_code_path();
 				}
-				case DefinitionLocation::lambda_parameter: {
-					auto addr = get_known_address_of(definition);
-					auto dst = destination.is_register ? destination.reg : r0;
-
-					if (get_size(definition->type) > context.stack_word_size) {
-						II(mov8_rm, dst, addr);
-					} else {
-						II(lea, dst, addr);
-					}
-
-					if (!destination.is_register) {
-						I(mov8_mr, destination.address, dst);
-					}
-
-					break;
-				}
-				case DefinitionLocation::lambda_body: {
-					// Due to saving yet unknown amount of caller's register and reserving temporary space after pushing rb,
-					// we don't know the offsets of locals. So we need to record every load of local and patch the offset later.
-					Instruction *offset_instr = 0;
-					if (destination.is_register) {
-						offset_instr = II(lea, destination.reg, rlb + definition->offset);
-					} else {
-						offset_instr = II(lea, r0, rlb + definition->offset);
-						I(mov8_mr, destination.address, r0);
-					}
-					break;
-				}
-				default: invalid_code_path();
+				break;
 			}
-			break;
+			default: invalid_code_path();
 		}
-		case DefinitionLocation::global: {
-			auto offset = definition->offset;
-
-			auto reg = destination.is_register ? destination.reg : r0;
-
-			if (definition->is_constant) {
-				I(mov_ra, reg, offset);
-			} else {
-				if (definition->expression) {
-					I(mov_rd, reg, offset);
-				} else {
-					I(mov_ru, reg, offset);
-				}
-			}
-
-			if (!destination.is_register)
-				I(mov8_mr, destination.address, reg);
-
-			break;
+	} else {
+		auto addr = get_known_address_of(definition);
+		if (destination.is_register) {
+			I(lea, destination.reg, addr);
+		} else {
+			I(lea, r0, addr);
+			I(mov8_mr, destination.address, r0);
 		}
-		default: invalid_code_path();
 	}
 }
 void Converter::load_address_of(AstExpression *expression, RegisterOrAddress destination) {
 	check_destination(destination);
+
+	//if (expression->location == "where.data[i + j]")
+	//	debug_break();
 
 	push_comment(format(u8"load_address_of {}", expression->location));
 
@@ -1047,12 +1139,10 @@ void Converter::load_address_of(AstExpression *expression, RegisterOrAddress des
 
 			if (lambda->has_body) {
 				Instruction *instr = 0;
-				if (destination.is_register) { instr = II(mov_rt, destination.reg, -1); }
-				else                         { instr = II(mov_rt, r0, -1); I(mov8_mr, destination.address, r0); }
+				if (destination.is_register) { instr = II(lea, destination.reg, instructions); }
+				else                         { instr = II(lea, r0, instructions); I(mov8_mr, destination.address, r0); }
 
-				if (lambda->has_body) {
-					instructions_that_reference_lambdas.add({.instruction=instr, .lambda=lambda});
-				}
+				instructions_that_reference_lambdas.add({.instruction=instr, .lambda=lambda});
 			} else {
 				assert((s64)(s32)count_of(lambda->definition->name) == (s64)count_of(lambda->definition->name));
 				if (destination.is_register) {
@@ -1087,7 +1177,8 @@ void Converter::load_address_of(AstExpression *expression, RegisterOrAddress des
 
 			auto definition = right->definition();
 			assert(definition);
-			assert(definition->definition_location == DefinitionLocation::struct_member);
+			assert(definition->parent_lambda_or_struct);
+			assert(definition->parent_lambda_or_struct->kind == Ast_Struct);
 
 			auto offset = definition->offset;
 			assert(offset != INVALID_MEMBER_OFFSET);
@@ -1107,6 +1198,8 @@ void Converter::load_address_of(AstExpression *expression, RegisterOrAddress des
 		case Ast_Subscript: {
 			auto subscript = (AstSubscript *)expression;
 
+			// TODO: Clean up this copypasta.
+
 			if (auto span = direct_as<AstSpan>(subscript->expression->type)) {
 				load_address_of(subscript->expression, destination);
 				if (destination.is_register) {
@@ -1125,6 +1218,54 @@ void Converter::load_address_of(AstExpression *expression, RegisterOrAddress des
 					I(add_rr, destination.reg, index);
 				else
 					I(add_mr, destination.address, index);
+			} else if (auto pointer_type = as_pointer(subscript->expression->type)) {
+				append(subscript->expression, destination);
+
+				APPEND_INTO_REGISTER(index, subscript->index_expression, r0);
+
+				I(mul_rc, index, get_size(subscript->type));
+
+				if (destination.is_register)
+					I(add_rr, destination.reg, index);
+				else
+					I(add_mr, destination.address, index);
+			} else if (types_match(subscript->expression->type, builtin_string)) {
+				assert(get_size(subscript->index_expression->type) <= context.stack_word_size);
+
+				auto _reg_or_addr1 = load_address_of(subscript->expression);
+				auto _reg_or_addr2 = append(subscript->index_expression);
+				defer {
+					if (_reg_or_addr1.is_register) free_register(_reg_or_addr1.reg);
+					if (_reg_or_addr2.is_register) free_register(_reg_or_addr2.reg);
+				};
+
+				Register string = r0;
+				Register index = r1;
+
+				if (_reg_or_addr1.is_register) string = _reg_or_addr1.reg;
+				else                           I(mov8_rm, string, _reg_or_addr1.address);
+
+				if (_reg_or_addr2.is_register) index = _reg_or_addr2.reg;
+				else                           I(mov8_rm, index, _reg_or_addr2.address);
+
+				auto count = r2;
+
+				I(mov8_rm, count, string + 8);
+				I(mov8_rm, string, string);
+
+				I(cmpf8, index, count);
+				I(jlf_c, 2);
+				push_comment(format(u8"bounds check failed for {}"s, subscript->location));
+				I(debug_break);
+				I(jmp_label);
+
+				I(mul_rc, index, get_size(subscript->type));
+				I(add_rr, index, string);
+
+				if (destination.is_register)
+					I(mov_rr, destination.reg, index);
+				else
+					I(mov8_mr, destination.address, index);
 			} else {
 				assert(direct_as<AstSubscript>(subscript->expression->type));
 				load_address_of(subscript->expression, destination);
@@ -1317,7 +1458,7 @@ void Converter::append_memory_copy(Address dst, Address src, s64 bytes_to_copy, 
 	}
 }
 
-void Converter::append_memory_set(Address d, s64 s, s64 size, bool reverse) {
+void Converter::append_memory_set(InstructionList &list, Address d, s64 s, s64 size, bool reverse) {
 
 	s &= 0xff;
 	s |= s << 32;
@@ -1325,17 +1466,20 @@ void Converter::append_memory_set(Address d, s64 s, s64 size, bool reverse) {
 	s |= s << 8;
 
 	switch (size) {
-		case 1: I(mov1_mc, d, s); break;
-		case 2: I(mov2_mc, d, s); break;
-		case 4: I(mov4_mc, d, s); break;
-		case 8: I(mov8_mc, d, s); break;
+		case 1: list.add(MI(mov1_mc, d, s)); break;
+		case 2: list.add(MI(mov2_mc, d, s)); break;
+		case 4: list.add(MI(mov4_mc, d, s)); break;
+		case 8: list.add(MI(mov8_mc, d, s)); break;
 		default:
 			if (reverse)
-				I(setb_mcc, d, (s8)s, (s32)size);
+				list.add(MI(setb_mcc, d, (s8)s, (s32)size));
 			else
-				I(setf_mcc, d, (s8)s, (s32)size);
+				list.add(MI(setf_mcc, d, (s8)s, (s32)size));
 			break;
 	}
+}
+void Converter::append_memory_set(Address d, s64 s, s64 size, bool reverse) {
+	append_memory_set(ls->body_builder, d, s, size, reverse);
 }
 
 void Converter::append_struct_initializer(AstStruct *Struct, SmallList<AstExpression *> values, RegisterOrAddress destination) {
@@ -1373,13 +1517,12 @@ void Converter::append(Scope &scope) {
 
 		push_comment((Span<utf8>)format("==== {}: {} ====", where(statement->location.data), statement->location));
 
+		ls->temporary_size = max(ls->temporary_size, ls->temporary_cursor);
 		ls->temporary_cursor = 0;
-		defer {
-			ls->temporary_size = max(ls->temporary_size, ls->temporary_cursor);
-		};
 
 		append(statement);
 	}
+	scope.defers_start_index = count_of(ls->body_builder);
 	for (auto Defer : reverse(scope.bytecode_defers)) {
 		append(Defer->scope);
 	}
@@ -1388,27 +1531,34 @@ void Converter::append(Scope &scope) {
 void Converter::append(AstDefinition *definition) {
 	assert(definition->type);
 
-	switch (definition->definition_location) {
-		case DefinitionLocation::global: {
-			// definition->expression was evaluated at typecheck time an is already in the appropriate section,
-			// nothing to do here.
-			break;
-		}
-		case DefinitionLocation::lambda_body: {
-			assert(definition->offset != -1);
-			assert((definition->offset & 0xf) == 0);
-			// push_comment(format("(__int64*)(rbp+{}),{}"str, definition->offset, ceil(get_size(definition->type),16ll)/16ll));
+	if (definition->parent_lambda_or_struct && !definition->is_constant) {
+		switch (definition->parent_lambda_or_struct->kind) {
+			case Ast_Lambda: {
+				switch (definition->definition_location) {
+					case LambdaDefinitionLocation::body: {
+						assert(definition->offset != -1);
+						assert((definition->offset & 0xf) == 0);
+						// push_comment(format("(__int64*)(rbp+{}),{}"str, definition->offset, ceil(get_size(definition->type),16ll)/16ll));
 
-			auto addr = rlb + definition->offset;
+						auto addr = locals + definition->offset;
 
-			if (definition->expression) {
-				append(definition->expression, addr);
-			} else {
-				append_memory_set(addr, 0, get_size(definition->type), false);
+						if (definition->expression) {
+							append(definition->expression, addr);
+						} else {
+							append_memory_set(addr, 0, get_size(definition->type), false);
+						}
+						break;
+					}
+					default: invalid_code_path();
+				}
+				break;
 			}
-			break;
 		}
-		default: invalid_code_path();
+	} else {
+		// Global
+
+		// definition->expression was evaluated at typecheck time an is already in the appropriate section,
+		// nothing to do here.
 	}
 #if 0
 	//if (definition->_uid == 99)
@@ -1522,7 +1672,10 @@ void Converter::append(AstReturn *ret) {
 	auto lambda = ret->lambda;
 
 	if (ret->expression) {
-		append(ret->expression, get_known_address_of(ret->lambda->return_parameter));
+		LOAD_ADDRESS_INTO_REGISTER(destination, ret->lambda->return_parameter, r0);
+		assert(destination != r0);
+
+		append(ret->expression, destination + 0);
 	}
 
 	Scope *scope = ls->current_scope;
@@ -1589,6 +1742,8 @@ void Converter::append(AstWhile *While) {
 
 	auto count_after_condition = count_of(ls->body_builder);
 
+	loop_control_stack.add();
+
 	append(While->scope);
 
 	auto count_after_body = count_of(ls->body_builder);
@@ -1598,6 +1753,20 @@ void Converter::append(AstWhile *While) {
 	I(jmp_label);
 
 	jz->offset = (s64)count_after_body - (s64)count_after_condition + 2;
+
+	for (auto &jmp : loop_control_stack.pop()) {
+		switch (jmp.control) {
+			case LoopControl::Break:
+				jmp.jmp->jmp.offset = (s64)count_after_body - (s64)jmp.index + 2;
+				break;
+			case LoopControl::Continue:
+				jmp.jmp->jmp.offset = (s64)count_before_condition - (s64)jmp.index;
+				break;
+			default:
+				break;
+		}
+	}
+
 }
 void Converter::append(AstBlock *block) {
 	append(block->scope);
@@ -1620,6 +1789,73 @@ void Converter::append(AstAssert *Assert) {
 	push_comment(format(u8"Assertion failed: {}", Assert->condition->location));
 	I(debug_break);
 	I(jmp_label);
+}
+void Converter::append(AstLoopControl *LoopControl) {
+
+	// TODO: FIXME: with that way of executing defers there may be A LOT of repeating instructions in
+	// loops with a lot of breaks/continues an defers. Maybe there is a better way to do this?
+	auto scope = LoopControl->parent_scope;
+	while (1) {
+		for (auto Defer : reverse(scope->bytecode_defers)) {
+			append(Defer->scope);
+		}
+		if (scope->node->kind == Ast_While) {
+			break;
+		}
+		scope = scope->parent;
+	}
+	loop_control_stack.back().add({count_of(ls->body_builder), II(jmp), LoopControl->control});
+}
+void Converter::append(AstMatch *Match) {
+	auto matchable = allocate_temporary_space(get_size(Match->expression->type));
+	append(Match->expression, matchable);
+
+	struct Jump {
+		Instruction *instruction;
+		umm index;
+	};
+
+	List<Jump> jumps_to_cases;
+	List<Jump> jumps_out;
+	Jump jump_to_default;
+
+	bool has_default_case = false;
+
+	I(mov8_rm, r0, matchable);
+	for (auto &Case : Match->cases) {
+		if (Case.expression) {
+			I(mov_rc, r1, (s64)get_constant_integer(Case.expression).value());
+			I(cmpu8, r2, r0, r1, Comparison::e);
+			jumps_to_cases.add({II(jnz_cr, 0, r2), ls->body_builder.count});
+		} else {
+			has_default_case = true;
+		}
+	}
+
+	if (has_default_case) {
+		jump_to_default = {II(jmp), ls->body_builder.count};
+	} else {
+		jumps_out.add({II(jmp), ls->body_builder.count});
+	}
+
+	umm case_index = 0;
+	for (auto &Case : Match->cases) {
+		I(jmp_label);
+		if (Case.expression) {
+			jumps_to_cases[case_index].instruction->jnz_cr.offset = ls->body_builder.count - jumps_to_cases[case_index].index;
+		} else {
+			jump_to_default.instruction->jmp.offset = ls->body_builder.count - jump_to_default.index;
+		}
+
+		append(Case.scope);
+		jumps_out.add({II(jmp), ls->body_builder.count});
+		case_index++;
+	}
+	I(jmp_label);
+
+	for (auto &jump_out : jumps_out) {
+		jump_out.instruction->jmp.offset = ls->body_builder.count - jump_out.index;
+	}
 }
 
 void Converter::append(AstBinaryOperator *bin, RegisterOrAddress destination) {
@@ -1706,41 +1942,81 @@ void Converter::append(AstBinaryOperator *bin, RegisterOrAddress destination) {
 		case bxor:
 		case bsr:
 		case bsl: {
-			append(left, destination);
-			APPEND_INTO_REGISTER(rr, right, r1);
+			if (destination.is_register) {
+				append(left, destination);
+				APPEND_INTO_REGISTER(rr, right, r1);
 
-			auto lt = direct(bin->left->type);
+				auto lt = direct(bin->left->type);
 
-			auto dst = destination.is_register ? destination.reg : r0;
-			if (!destination.is_register)
-				I(mov8_rm, dst, destination.address);
-
-			if (lt == builtin_f32.Struct) {
-				not_implemented();
-			} else if (lt == builtin_f64.Struct) {
-				not_implemented();
-			} else {
-				switch (bin->operation) {
-					case add:  I(add_rr, dst, rr); break;
-					case sub:  I(sub_rr, dst, rr); break;
-					case mul:  I(mul_rr, dst, rr); break;
-					case div:  I(div_rr, dst, rr); break;
-					case mod:  I(mod_rr, dst, rr); break;
-					case bor:  I( or_rr, dst, rr); break;
-					case band: I(and_rr, dst, rr); break;
-					case bxor: I(xor_rr, dst, rr); break;
-					case bsr:  I(shr_rr, dst, rr); break;
-					case bsl:  I(shl_rr, dst, rr); break;
-					default: invalid_code_path();
+				if (lt == builtin_f32.Struct) {
+					not_implemented();
+				} else if (lt == builtin_f64.Struct) {
+					not_implemented();
+				} else {
+					switch (bin->operation) {
+						case add:  I(add_rr, destination.reg, rr); break;
+						case sub:  I(sub_rr, destination.reg, rr); break;
+						case mul:  I(mul_rr, destination.reg, rr); break;
+						case div:  I(div_rr, destination.reg, rr); break;
+						case mod:  I(mod_rr, destination.reg, rr); break;
+						case bor:  I( or_rr, destination.reg, rr); break;
+						case band: I(and_rr, destination.reg, rr); break;
+						case bxor: I(xor_rr, destination.reg, rr); break;
+						case bsr:  I(shr_rr, destination.reg, rr); break;
+						case bsl:  I(shl_rr, destination.reg, rr); break;
+						default: invalid_code_path();
+					}
 				}
-			}
 
-			if (!destination.is_register) {
+			} else {
+				assert(get_size(left ->type) <= context.stack_word_size);
+				assert(get_size(right->type) <= context.stack_word_size);
+				auto left_  = append(left);
+				auto right_ = append(right);
+				defer {
+					if (left_ .is_register) free_register(left_.reg);
+					if (right_.is_register) free_register(right_.reg);
+				};
+				Register l = r0;
+				Register r = r1;
+				if (left_.is_register) {
+					l = left_.reg;
+				} else {
+					I(mov8_rm, l, left_.address);
+				}
+				if (right_.is_register) {
+					r = right_.reg;
+				} else {
+					I(mov8_rm, r, right_.address);
+				}
+
+				auto lt = direct(bin->left->type);
+
+				if (lt == builtin_f32.Struct) {
+					not_implemented();
+				} else if (lt == builtin_f64.Struct) {
+					not_implemented();
+				} else {
+					switch (bin->operation) {
+						case add:  I(add_rr, l, r); break;
+						case sub:  I(sub_rr, l, r); break;
+						case mul:  I(mul_rr, l, r); break;
+						case div:  I(div_rr, l, r); break;
+						case mod:  I(mod_rr, l, r); break;
+						case bor:  I( or_rr, l, r); break;
+						case band: I(and_rr, l, r); break;
+						case bxor: I(xor_rr, l, r); break;
+						case bsr:  I(shr_rr, l, r); break;
+						case bsl:  I(shl_rr, l, r); break;
+						default: invalid_code_path();
+					}
+				}
+
 				switch (get_size(lt)) {
-					case 1: I(mov1_mr, destination.address, dst); break;
-					case 2: I(mov2_mr, destination.address, dst); break;
-					case 4: I(mov4_mr, destination.address, dst); break;
-					case 8: I(mov8_mr, destination.address, dst); break;
+					case 1: I(mov1_mr, destination.address, l); break;
+					case 2: I(mov2_mr, destination.address, l); break;
+					case 4: I(mov4_mr, destination.address, l); break;
+					case 8: I(mov8_mr, destination.address, l); break;
 					default: invalid_code_path();
 				}
 			}
@@ -1753,6 +2029,36 @@ void Converter::append(AstBinaryOperator *bin, RegisterOrAddress destination) {
 		case ge:
 		case eq:
 		case ne: {
+			if (types_match(left->type, builtin_string)) {
+				auto la = append(left).ensure_address();
+				auto ra = append(right).ensure_address();
+
+				// load counts
+				I(mov8_rm, r1, la + 8);
+				I(mov8_rm, r2, ra + 8);
+				I(cmpu8, r0, r1, r2, Comparison::e);
+				I(jnz_cr, 3, r0);
+				if (destination.is_register) {
+					I(mov_rc, destination.reg, 0);
+				} else {
+					I(mov1_mc, destination.address, 0);
+				}
+				I(jmp, 6);
+
+				I(jmp_label);
+				// load pointers
+				I(mov8_rm, r0, la);
+				I(mov8_rm, r1, ra);
+				I(cmpstr, r2, r0, r1);
+				if (destination.is_register) {
+					I(mov_rr, destination.reg, r2);
+				} else {
+					I(mov1_mr, destination.address, r2);
+				}
+				I(jmp_label);
+				return;
+			}
+
 			assert(get_size(left->type) <= context.stack_word_size);
 			assert(get_size(right->type) <= context.stack_word_size);
 			auto la = append(left);
@@ -1867,8 +2173,8 @@ void Converter::append(AstBinaryOperator *bin, RegisterOrAddress destination) {
 				case borass:  I( or_mr, dst, src); break;
 				case bandass: I(and_mr, dst, src); break;
 				case bxorass: I(xor_mr, dst, src); break;
-				case bslass:  I(shr_mr, dst, src); break;
-				case bsrass:  I(shl_mr, dst, src); break;
+				case bslass:  I(shl_mr, dst, src); break;
+				case bsrass:  I(shr_mr, dst, src); break;
 				default: invalid_code_path();
 			}
 
@@ -2063,6 +2369,35 @@ void Converter::append(AstBinaryOperator *bin, RegisterOrAddress destination) {
 			}
 
 			invalid_code_path();
+			break;
+		}
+		case lor: {
+			if (destination.is_register) {
+				append(bin->left, destination);
+
+				auto jump = I(jnz_cr, 0, destination.reg);
+				auto skip_start = ls->body_builder.count;
+
+				append(bin->right, destination);
+
+				I(jmp_label);
+				auto skip_end = ls->body_builder.count;
+
+				jump->offset = skip_end - skip_start;
+			} else {
+				append(bin->left, destination);
+				I(mov1_rm, r0, destination.address);
+
+				auto jump = I(jnz_cr, 0, destination.reg);
+				auto skip_start = ls->body_builder.count;
+
+				append(bin->right, destination);
+
+				I(jmp_label);
+				auto skip_end = ls->body_builder.count;
+
+				jump->offset = skip_end - skip_start;
+			}
 			break;
 		}
 		default:
@@ -2636,26 +2971,6 @@ void Converter::append(AstBinaryOperator *bin, RegisterOrAddress destination) {
 
 				break;
 			}
-			case lor: {
-				assert(!destination);
-
-				auto initial_stack_size = ls->stack_state.cursor;
-
-				append_to_stack(left);
-				I(pop_r, r0);
-				I(jz_cr, 2, r0);
-				I(push_c, 1);
-				I(jmp_label);
-
-				ls->stack_state.cursor = initial_stack_size;
-				auto jmp_index = ls->body_builder.count;
-				auto jmp = I(jmp, 0);
-				append_to_stack(right);
-				I(jmp_label);
-				jmp->offset = ls->body_builder.count - jmp_index - 1;
-
-				break;
-			}
 			default: {
 				invalid_code_path();
 				break;
@@ -2737,15 +3052,24 @@ void Converter::append(AstIdentifier *identifier, RegisterOrAddress destination)
 #endif
 }
 void Converter::append(AstCall *call, RegisterOrAddress destination) {
+	/*
+	tlang calling convetion
+
+	before issuing a call instruction the stack state is as follows:
+
+	stack:
+	return value / address
+	argument_0 value / address
+	argument_1 value / address
+	...
+	argument_n value / address <- rsp
+	*/
+
+	auto word_size = context.stack_word_size;
+
 	check_destination(destination);
 
-	//if (call->callable->location == "thing.do")
-	//	debug_break();
-
 	push_comment(format(u8"call {}", call->callable->location));
-
-	//assert(lambda_type);
-	//assert(lambda_type->parameters_size != -1);
 
 	if (call->lambda_type) {
 		auto lambda = call->lambda_type->lambda;
@@ -2753,18 +3077,21 @@ void Converter::append(AstCall *call, RegisterOrAddress destination) {
 
 		// each argument's size is not more than context.stack_word_size.
 		// bigger arguments are passed as pointers.
-		s64 parameters_bytes = (tl::count(lambda->parameters, [](auto param){return !param->is_constant;}) + is_member) * context.stack_word_size;
+		s64 parameters_bytes = (tl::count(lambda->parameters, [](auto param){return !param->is_constant;}) + is_member) * word_size;
+		s32 return_parameter_bytes = word_size;
 
 		auto return_value_size = get_size(lambda->return_parameter->type);
 
-		auto stack_space_used_for_call = parameters_bytes + return_value_size;
+		auto stack_space_used_for_call = parameters_bytes + return_parameter_bytes;
 		if (lambda->convention == CallingConvention::stdcall)
 			stack_space_used_for_call += 32;
 		ls->max_stack_space_used_for_call = max(ls->max_stack_space_used_for_call, ceil(stack_space_used_for_call, 16ll));
 
+		auto return_value_address = rs + parameters_bytes;
+
 		auto append_arguments = [&] {
 			// TODO: implement for 32-bit
-			assert(context.stack_word_size == 8);
+			assert(word_size == 8);
 
 			// Append all arguments to stack
 			// if (is_member) {
@@ -2790,8 +3117,8 @@ void Converter::append(AstCall *call, RegisterOrAddress destination) {
 
 				auto arg_addr = args_tmp + (call->sorted_arguments.count-1-i)*8;
 
-				auto size = ceil(get_size(arg->type), context.stack_word_size);
-				if (size > context.stack_word_size) {
+				auto size = ceil(get_size(arg->type), word_size);
+				if (size > word_size) {
 					// Put argument into temporary space and pass a pointer to it
 					auto tmp = allocate_temporary_space(size);
 					append(arg, tmp);
@@ -2804,9 +3131,13 @@ void Converter::append(AstCall *call, RegisterOrAddress destination) {
 				}
 			}
 
+			if (return_value_size > word_size) {
+				I(lea, r0, destination.address);
+				I(mov8_mr, return_value_address, r0);
+			}
 			for (umm i = 0; i < call->sorted_arguments.count; ++i) {
-				auto src = args_tmp + (call->sorted_arguments.count-1-i)*8;
-				auto dst = rs + (call->sorted_arguments.count-1-i)*8;
+				auto src = args_tmp + (call->sorted_arguments.count-1-i)*word_size;
+				auto dst = rs + (call->sorted_arguments.count-1-i)*word_size;
 				I(mov8_rm, r0, src);
 				I(mov8_mr, dst, r0);
 			}
@@ -2821,9 +3152,9 @@ void Converter::append(AstCall *call, RegisterOrAddress destination) {
 				auto rdst = r0;
 				auto rsrc = r1;
 				auto rsize = r2;
-				I(pop_r, rsize);
-				I(pop_r, rsrc);
-				I(pop_r, rdst);
+				I(mov8_rm, rsize, rs);
+				I(mov8_rm, rsrc, rs + 8);
+				I(mov8_rm, rdst, rs + 16);
 				I(copyf_mmr, rdst, rsrc, rsize);
 			} else {
 				invalid_code_path("Unknown intrinsic");
@@ -2831,7 +3162,7 @@ void Converter::append(AstCall *call, RegisterOrAddress destination) {
 			return;
 		}
 
-		assert(context.stack_word_size == 8);
+		assert(word_size == 8);
 
 		if (is_member)
 			assert(call->sorted_arguments.count == lambda->parameters.count+1);
@@ -2843,8 +3174,6 @@ void Converter::append(AstCall *call, RegisterOrAddress destination) {
 
 		switch (lambda->convention) {
 			case CallingConvention::tlang: {
-				s64 return_parameters_size_on_stack = ceil(get_size(call->type), 8ll);
-
 				append_arguments();
 
 				if (lambda_is_constant || is_member) {
@@ -2866,8 +3195,7 @@ void Converter::append(AstCall *call, RegisterOrAddress destination) {
 
 				}
 
-				if (return_value_size) {
-					auto return_value_address = rs + parameters_bytes;
+				if (return_value_size && return_value_size <= word_size) {
 					if (destination.is_register) {
 						switch (return_value_size) {
 							case 1: I(mov1_rm, destination.reg, return_value_address); break;
@@ -2877,7 +3205,13 @@ void Converter::append(AstCall *call, RegisterOrAddress destination) {
 							default: not_implemented();
 						}
 					} else {
-						append_memory_copy(destination.address, return_value_address, return_value_size, false, {}, {});
+						switch (return_value_size) {
+							case 1: I(mov1_rm, r0, return_value_address); I(mov1_mr, destination.address, r0); break;
+							case 2: I(mov2_rm, r0, return_value_address); I(mov2_mr, destination.address, r0); break;
+							case 4: I(mov4_rm, r0, return_value_address); I(mov4_mr, destination.address, r0); break;
+							case 8: I(mov8_rm, r0, return_value_address); I(mov8_mr, destination.address, r0); break;
+							default: not_implemented();
+						}
 					}
 				}
 				break;
@@ -2931,7 +3265,7 @@ void Converter::append(AstCall *call, RegisterOrAddress destination) {
 				auto function_address_register = to_bc_register(Register64::rax);
 				if (lambda_is_constant) {
 					load_address_of(call->callable, function_address_register);
-					I(call_r, function_address_register);
+					I(stdcall_r, function_address_register);
 				} else {
 					not_implemented();
 					// append_to_stack(call->callable);
@@ -3070,7 +3404,7 @@ void Converter::append(AstLiteral *literal, RegisterOrAddress destination) {
 			assert(!destination.is_register);
 			assert(context.stack_word_size == 8);
 			assert(literal->string.offset != -1);
-			I(mov_ra, r0, literal->string.offset);
+			I(lea, r0, constants + literal->string.offset);
 			I(mov8_mr, destination.address, r0);
 			I(mov8_mc, destination.address+8, (s64)literal->string.count);
 			break;
@@ -3144,8 +3478,11 @@ void Converter::append(AstLiteral *literal, RegisterOrAddress destination) {
 			break;
 		}
 		case null: {
-			if (destination.is_register) I(mov_rc, destination.reg, 0);
-			else                         I(mov8_mc, destination.address, 0);
+			if (destination.is_register) {
+				I(xor_rr, destination.reg, destination.reg);
+			} else {
+				append_memory_set(destination.address, 0, get_size(literal->type), false);
+			}
 			break;
 		}
 		default: invalid_code_path();
@@ -3220,11 +3557,11 @@ void Converter::append(AstUnaryOperator *unop, RegisterOrAddress destination) {
 				}
 			}
 
-			return;
+			break;
 		}
 		case address_of: {
 			load_address_of(unop->expression, destination);
-			return;
+			break;
 		}
 		case dereference: {
 			auto pointer = append(unop->expression);
@@ -3251,8 +3588,6 @@ void Converter::append(AstUnaryOperator *unop, RegisterOrAddress destination) {
 
 				if (!destination.is_register)
 					I(mov8_mr, destination.address, dst);
-
-				return;
 			} else {
 				assert(!destination.is_register);
 				append_memory_copy(destination.address, src, size, false, {}, {});
@@ -3266,7 +3601,7 @@ void Converter::append(AstUnaryOperator *unop, RegisterOrAddress destination) {
 			} else {
 				I(not_m, destination.address);
 			}
-			return;
+			break;
 		}
 		case unwrap: {
 			auto option = append(unop->expression);
@@ -3283,12 +3618,12 @@ void Converter::append(AstUnaryOperator *unop, RegisterOrAddress destination) {
 			I(jmp_label);
 
 			append_memory_copy(destination.address, option.address, value_size, false, {}, {});
-			return;
+			break;
 		}
 		case autocast: {
 			not_implemented();
 			append(unop->expression, destination);
-			return;
+			break;
 		}
 		case internal_move_to_temporary: {
 			auto size = get_size(unop->expression->type);
@@ -3303,12 +3638,11 @@ void Converter::append(AstUnaryOperator *unop, RegisterOrAddress destination) {
 				I(lea, r0, tmp);
 				I(mov8_mr, destination.address, r0);
 			}
-			return;
+			break;;
 		}
 		default:
 			invalid_code_path();
 	}
-	invalid_code_path();
 }
 void Converter::append(AstSubscript *subscript, RegisterOrAddress destination) {
 	check_destination(destination);
@@ -3431,7 +3765,8 @@ void Converter::append(AstLambda *lambda, bool load_address, RegisterOrAddress d
 
 		lambda->return_parameter->offset = 0;
 		assert(lambda->return_parameter->parent_lambda_or_struct);
-		assert(lambda->return_parameter->definition_location == DefinitionLocation::lambda_return_parameter);
+		assert(lambda->return_parameter->parent_lambda_or_struct->kind == Ast_Lambda);
+		assert(lambda->return_parameter->definition_location == LambdaDefinitionLocation::return_parameter);
 
 		if (lambda->has_body) {
 			if (types_match(lambda->return_parameter->type, builtin_type.Struct)) {
@@ -3471,8 +3806,20 @@ void Converter::append(AstLambda *lambda, bool load_address, RegisterOrAddress d
 				push_comment(format("{} (__int64*)(rbp+{}),{}"str, param->name, context.stack_word_size + lambda->parameters_size - param->offset, ceil(get_size(param->type), 8ll)/8ll));
 			}
 
+#define BI(_kind, ...) \
+	(&builder.add(MI(_kind, __VA_ARGS__))._kind)
 
-			I(debug_start_lambda, lambda);
+#define BII(_kind, ...) \
+	(&builder.add(MI(_kind, __VA_ARGS__)))
+
+			lambda->location_in_bytecode = count_of(builder);
+
+			lambda->first_instruction = &builder.add(MI(jmp_label));
+
+			auto &stack_preparer = builder.add(MI(prepare_stack, 0));
+			stack_preparer.comment = "stack preparer"str;
+
+		// 	BI(debug_start_lambda, lambda);
 
 			if (lambda->convention == CallingConvention::stdcall) {
 				assert(context.stack_word_size == 8);
@@ -3507,10 +3854,14 @@ void Converter::append(AstLambda *lambda, bool load_address, RegisterOrAddress d
 				auto push_argument = [&](int arg_index) {
 					if (lambda->parameters.count > arg_index)
 						if (::is_float(lambda->parameters[arg_index]->type))
-							I(push_f, stdcall_float_registers[arg_index]);
+							BI(push_f, stdcall_float_registers[arg_index]);
 						else
-							I(push_r, to_bc_register(stdcall_int_registers[arg_index]));
+							BI(push_r, to_bc_register(stdcall_int_registers[arg_index]));
 				};
+
+				push_comment("reserve space for return value"str);
+				assert(return_value_size <= context.stack_word_size);
+				BI(sub_rc, rs, return_value_size);
 
 				push_argument(0);
 				push_argument(1);
@@ -3524,68 +3875,82 @@ void Converter::append(AstLambda *lambda, bool load_address, RegisterOrAddress d
 
 					s64 offset = first_four_arguments_size + return_value_size + return_address_size + shadow_space_size;
 					for (s64 i = 4; i < lambda->parameters.count; ++i) {
-						I(push_m, rs + offset);
+						BI(push_m, rs + offset);
 						offset += 16;
 					}
 				}
 				push_comment(u8"dummy return address"s);
-				I(push_c, 0xdeadc0d);
+				BI(push_c, 0xdeadc0d);
 			}
 
-			I(push_r, rb);
-			I(mov_rr, rb, rs);
-			ls->push_used_registers = I(push_used_registers);
-			auto rsp_setter = I(lea, rs, rs + lambda->stack_cursor);
+			BI(push_r, rb);
+			BI(mov_rr, rb, rs);
+			ls->push_used_registers = BI(push_used_registers);
+			auto rsp_setter = BI(lea, rs, rs + lambda->stack_cursor);
 
-			push_comment(u8"zero out the return value"s);
-			append_memory_set(get_known_address_of(lambda->return_parameter), 0, return_value_size, false);
+			{
+				LOAD_ADDRESS_INTO_REGISTER(return_value_address, lambda->return_parameter, r0);
+				assert(return_value_address != r0);
+				push_comment(u8"zero out the return value"s);
+				append_memory_set(return_value_address, 0, return_value_size, false);
+			}
 
 			ls->temporary_reserver = II(noop);
 
+			//if (lambda->print_bytecode)
+			//		debug_break();
 			append(lambda->body_scope);
+
+			if (context.optimize) {
+				// TODO: skip iterations if nothing was changed.
+				for (umm i = 0; i < context.optimization_pass_count; ++i) {
+					optimize(ls->body_builder);
+				}
+			}
 
 			rsp_setter->s.c -= ls->max_stack_space_used_for_call;
 
 			// FIXME: HACK: hardcoded value for stdcall
 			auto saved_registers_size = lambda->convention == CallingConvention::stdcall ? 64 : ceil(count_bits(ls->used_registers_mask)*8, 16u);
 
+			ls->temporary_size = max(ls->temporary_size, ls->temporary_cursor);
 			*ls->temporary_reserver = MI(sub_rc, rs, ls->temporary_size);
 			set_comment(ls->temporary_reserver, "maybe reserve space for temporary values."str);
 			auto locals_offset = ls->temporary_size + saved_registers_size;
 
-			auto patch_local_address = [&] (Address &address) {
-				if (address.base == rlb) {
-					address.base = rb;
-					address.c -= locals_offset;
-				}
-			};
+			auto return_location = count_of(ls->body_builder);
 
-			// SPEED: maybe store all of these in a list when they are pushed into builder?
-			for (auto &i : ls->body_builder) {
-				switch (i.kind) {
-					using enum InstructionKind;
-					case lea: patch_local_address(i.lea.s); break;
-					case mov1_mc: patch_local_address(i.mov1_mc.d); break;
-					case mov2_mc: patch_local_address(i.mov2_mc.d); break;
-					case mov4_mc: patch_local_address(i.mov4_mc.d); break;
-					case mov8_mc: patch_local_address(i.mov8_mc.d); break;
-					case mov1_mr: patch_local_address(i.mov1_mr.d); break;
-					case mov2_mr: patch_local_address(i.mov2_mr.d); break;
-					case mov4_mr: patch_local_address(i.mov4_mr.d); break;
-					case mov8_mr: patch_local_address(i.mov8_mr.d); break;
-					case mov1_rm: patch_local_address(i.mov1_rm.s); break;
-					case mov2_rm: patch_local_address(i.mov2_rm.s); break;
-					case mov4_rm: patch_local_address(i.mov4_rm.s); break;
-					case mov8_rm: patch_local_address(i.mov8_rm.s); break;
-					case copyf_mmc: patch_local_address(i.copyf_mmc.d); patch_local_address(i.copyf_mmc.s); break;
-					case copyf_mmr: patch_local_address(i.copyf_mmr.d); patch_local_address(i.copyf_mmr.s); break;
-					case copyb_mmc: patch_local_address(i.copyb_mmc.d); patch_local_address(i.copyb_mmc.s); break;
-					case copyb_mmr: patch_local_address(i.copyb_mmr.d); patch_local_address(i.copyb_mmr.s); break;
-					case setf_mcc: patch_local_address(i.setf_mcc.d); break;
+			for (auto i : lambda->return_jumps) {
+				auto offset = return_location - i.index;
+				if (offset == 1) {
+					i.jmp->kind = InstructionKind::noop;
+				} else {
+					i.jmp->jmp.offset = offset;
 				}
 			}
 
-			lambda->return_location = count_of(ls->body_builder);
+			if (lambda->print_bytecode) {
+				print_bytecode(ls->body_builder);
+			}
+
+			// Patch local address
+			auto patch = [&] (Address &address) {
+				if (address.base == locals) {
+					address.base = rb;
+					address.c -= locals_offset;
+				} else if (address.base == temporary) {
+					address.base = rb;
+				}
+			};
+
+			// SPEED: maybe store instructions that need to be patched in a list when they are pushed into builder?
+#if 1
+			for (auto &i : ls->body_builder) {
+				for (auto addr_offset : address_members_offsets[(u8)i.kind]) {
+					patch(*(Address *)((u8 *)&i + addr_offset));
+				}
+			}
+#endif
 
 			I(jmp_label);
 
@@ -3615,25 +3980,16 @@ void Converter::append(AstLambda *lambda, bool load_address, RegisterOrAddress d
 
 			I(ret);
 
+//			if (lambda->definition && lambda->definition->name == "main")
+//				debug_break();
 
-			lambda->location_in_bytecode = count_of(builder);
-
-			lambda->first_instruction = &builder.add(MI(jmp_label));
-
-
-			auto used_bytes = lambda->stack_cursor + ls->temporary_size;
+			auto used_bytes = -lambda->stack_cursor + ls->temporary_size + ls->max_stack_space_used_for_call;
 			if (used_bytes >= 4096) {
-				builder.add(MI(prepare_stack, used_bytes));
+				stack_preparer.prepare_stack.byte_count = used_bytes;
+			} else {
+				stack_preparer.kind = InstructionKind::noop;
 			}
 
-			for (auto i : lambda->return_jumps) {
-				auto offset = lambda->return_location - i.index;
-				if (offset == 1) {
-					i.jmp->kind = InstructionKind::noop; // TODO: this instruction can be removed. but i don't know if it should be.
-				} else {
-					i.jmp->jmp.offset = offset;
-				}
-			}
 #if 1
 			add_steal(&builder, &ls->body_builder);
 #else
@@ -3694,6 +4050,959 @@ void Converter::append(AstPack *pack, RegisterOrAddress destination) {
 	}
 }
 
+void Converter::optimize(InstructionList &instructions) {
+	propagate_known_addresses(instructions);
+	remove_redundant_instructions(instructions);
+	propagate_known_values(instructions);
+}
+void Converter::propagate_known_addresses(InstructionList &instructions) {
+	// Example transformation:
+	//
+	// lea r0, [locals + 16]  >>  lea r0, [locals + 16]
+	// add r0, 4				  add r0, 4
+	// mov r1, [r0]				  mov r1, [locals + 20]
+	//
+	// Note that we can't delete the lea and add yet,
+	Optional<Address> register_state[(u8)Register::count];
+
+	auto modify_address_if_known = [&] (Address &a) {
+		if (a.r1_scale_index == 0 && a.r2_scale == 0) {
+			if (auto addr = register_state[(u8)a.base]) {
+				a = addr.value_unchecked() + a.c;
+			}
+		}
+	};
+
+	for (auto &i : instructions) {
+		switch (i.kind) {
+			using enum InstructionKind;
+			case jmp:
+			case jz_cr:
+			case jnz_cr:
+			case jmp_label:
+				for (auto &s : register_state)
+					s = null_opt;
+				break;
+
+			case lea: {
+				if (i.lea.s.base == locals ||
+					i.lea.s.base == constants ||
+					i.lea.s.base == rwdata ||
+					i.lea.s.base == zeros ||
+					i.lea.s.base == Register::instructions)
+				{
+					register_state[(u8)i.lea.d] = i.lea.s;
+					// i.kind = noop;
+				} else {
+					register_state[(u8)i.lea.d] = null_opt;
+				}
+				break;
+			}
+			case mov_rc: {
+				register_state[(u8)i.mov_rc.d] = null_opt;
+				break;
+			}
+			case mov_rr: {
+				register_state[(u8)i.mov_rr.d] = register_state[(u8)i.mov_rr.s];
+				break;
+			}
+			case mov1_rm: {
+				modify_address_if_known(i.mov1_rm.s);
+				register_state[(u8)i.mov1_rm.d] = null_opt;
+				break;
+			}
+			case mov2_rm: {
+				modify_address_if_known(i.mov2_rm.s);
+				register_state[(u8)i.mov2_rm.d] = null_opt;
+				break;
+			}
+			case mov4_rm: {
+				modify_address_if_known(i.mov4_rm.s);
+				register_state[(u8)i.mov4_rm.d] = null_opt;
+				break;
+			}
+			case mov8_rm: {
+				modify_address_if_known(i.mov8_rm.s);
+				register_state[(u8)i.mov8_rm.d] = null_opt;
+				break;
+			}
+			case add_rc: {
+				if (auto &addr = register_state[(u8)i.add_rc.d]) {
+					addr.value_unchecked().c += i.add_rc.s;
+				}
+				break;
+			}
+			case sub_rc: {
+				if (auto &addr = register_state[(u8)i.sub_rc.d]) {
+					addr.value_unchecked().c += i.sub_rc.s;
+				}
+				break;
+			}
+
+
+			case add_mc: {
+				modify_address_if_known(i.add_mc.d);
+				break;
+			}
+		}
+	}
+}
+void Converter::remove_redundant_instructions(InstructionList &instructions) {
+	struct RegisterState {
+		Instruction *setter;
+		List<Instruction *> modders;
+		bool was_used;
+	};
+
+	RegisterState register_state[(u8)Register::count] = {};
+
+	for (auto &i : instructions) {
+		auto set = [&](Register dst) {
+			auto &state = register_state[(u8)dst];
+			if (state.setter && !state.was_used) {
+				state.setter->kind = InstructionKind::noop;
+			}
+			state.setter = &i;
+			state.modders.clear();
+			state.was_used = false;
+		};
+		auto use = [&](auto src) {
+			using Src = decltype(src);
+			if constexpr (is_same<Src, Register>) {
+				register_state[(u8)src].was_used = true;
+			} else {
+				static_assert(is_same<Src, Address>);
+				register_state[(u8)src.base].was_used = true;
+				if (src.r1_scale_index) register_state[(u8)src.r1].was_used = true;
+				if (src.r2_scale)       register_state[(u8)src.r2].was_used = true;
+			}
+		};
+		auto mod = [&](Register src) {
+			register_state[(u8)src].modders.add(&i);
+		};
+
+		// 1. read a register/address - use
+		// 2. modify a register       - mod
+		// 3. overwrite a register    - set
+
+		switch (i.kind) {
+			using enum InstructionKind;
+			case lea:     use(i.lea.s);     set(i.lea.d);     break;
+			case mov_rc:                    set(i.mov_rc.d);  break;
+			case mov_rr:  use(i.mov_rr.s);  set(i.mov_rr.d);  break;
+			case mov_re:                    set(i.mov_re.d);  break;
+			case mov1_rm: use(i.mov1_rm.s); set(i.mov1_rm.d); break;
+			case mov2_rm: use(i.mov2_rm.s); set(i.mov2_rm.d); break;
+			case mov4_rm: use(i.mov4_rm.s); set(i.mov4_rm.d); break;
+			case mov8_rm: use(i.mov8_rm.s); set(i.mov8_rm.d); break;
+			case mov1_mr: use(i.mov1_mr.d); use(i.mov1_mr.s); break;
+			case mov2_mr: use(i.mov2_mr.d); use(i.mov2_mr.s); break;
+			case mov4_mr: use(i.mov4_mr.d); use(i.mov4_mr.s); break;
+			case mov8_mr: use(i.mov8_mr.d); use(i.mov8_mr.s); break;
+			case mov1_mc: use(i.mov1_mc.d);                   break;
+			case mov2_mc: use(i.mov2_mc.d);                   break;
+			case mov4_mc: use(i.mov4_mc.d);                   break;
+			case mov8_mc: use(i.mov8_mc.d);                   break;
+			case movsx21_rm: use(i.movsx21_rm.s); set(i.movsx21_rm.d); break;
+			case movsx41_rm: use(i.movsx41_rm.s); set(i.movsx41_rm.d); break;
+			case movsx81_rm: use(i.movsx81_rm.s); set(i.movsx81_rm.d); break;
+			case movsx42_rm: use(i.movsx42_rm.s); set(i.movsx42_rm.d); break;
+			case movsx82_rm: use(i.movsx82_rm.s); set(i.movsx82_rm.d); break;
+			case movsx84_rm: use(i.movsx84_rm.s); set(i.movsx84_rm.d); break;
+			case movzx21_rm: use(i.movzx21_rm.s); set(i.movzx21_rm.d); break;
+			case movzx41_rm: use(i.movzx41_rm.s); set(i.movzx41_rm.d); break;
+			case movzx81_rm: use(i.movzx81_rm.s); set(i.movzx81_rm.d); break;
+			case movzx42_rm: use(i.movzx42_rm.s); set(i.movzx42_rm.d); break;
+			case movzx82_rm: use(i.movzx82_rm.s); set(i.movzx82_rm.d); break;
+			case movzx84_rm: use(i.movzx84_rm.s); set(i.movzx84_rm.d); break;
+			case movsx21_rr: use(i.movsx21_rr.s); set(i.movsx21_rr.d); break;
+			case movsx41_rr: use(i.movsx41_rr.s); set(i.movsx41_rr.d); break;
+			case movsx81_rr: use(i.movsx81_rr.s); set(i.movsx81_rr.d); break;
+			case movsx42_rr: use(i.movsx42_rr.s); set(i.movsx42_rr.d); break;
+			case movsx82_rr: use(i.movsx82_rr.s); set(i.movsx82_rr.d); break;
+			case movsx84_rr: use(i.movsx84_rr.s); set(i.movsx84_rr.d); break;
+			case movzx21_rr: use(i.movzx21_rr.s); set(i.movzx21_rr.d); break;
+			case movzx41_rr: use(i.movzx41_rr.s); set(i.movzx41_rr.d); break;
+			case movzx81_rr: use(i.movzx81_rr.s); set(i.movzx81_rr.d); break;
+			case movzx42_rr: use(i.movzx42_rr.s); set(i.movzx42_rr.d); break;
+			case movzx82_rr: use(i.movzx82_rr.s); set(i.movzx82_rr.d); break;
+			case movzx84_rr: use(i.movzx84_rr.s); set(i.movzx84_rr.d); break;
+			case add_rc:                  mod(i.add_rc.d); break;
+			case add_rr: use(i.add_rr.s); mod(i.add_rr.d); break;
+			case add_rm: use(i.add_rm.s); mod(i.add_rm.d); break;
+			case add_mc:                  use(i.add_mc.d); break;
+			case add_mr: use(i.add_mr.s); use(i.add_mr.d); break;
+			case sub_rc:                  use(i.sub_rc.d); break;
+			case sub_rr: use(i.sub_rr.s); use(i.sub_rr.d); break;
+			case sub_rm: use(i.sub_rm.s); use(i.sub_rm.d); break;
+			case sub_mc:                  use(i.sub_mc.d); break;
+			case sub_mr: use(i.sub_mr.s); use(i.sub_mr.d); break;
+			case mul_rc:                  use(i.mul_rc.d); break;
+			case mul_rr: use(i.mul_rr.s); use(i.mul_rr.d); break;
+			case mul_rm: use(i.mul_rm.s); use(i.mul_rm.d); break;
+			case mul_mc:                  use(i.mul_mc.d); break;
+			case mul_mr: use(i.mul_mr.s); use(i.mul_mr.d); break;
+			case div_rc:                  use(i.div_rc.d); break;
+			case div_rr: use(i.div_rr.s); use(i.div_rr.d); break;
+			case div_rm: use(i.div_rm.s); use(i.div_rm.d); break;
+			case div_mc:                  use(i.div_mc.d); break;
+			case div_mr: use(i.div_mr.s); use(i.div_mr.d); break;
+			case mod_rc:                  use(i.mod_rc.d); break;
+			case mod_rr: use(i.mod_rr.s); use(i.mod_rr.d); break;
+			case mod_rm: use(i.mod_rm.s); use(i.mod_rm.d); break;
+			case mod_mc:                  use(i.mod_mc.d); break;
+			case mod_mr: use(i.mod_mr.s); use(i.mod_mr.d); break;
+			case xor_rc:                  use(i.xor_rc.d); break;
+			case xor_rr: use(i.xor_rr.s); use(i.xor_rr.d); break;
+			case xor_rm: use(i.xor_rm.s); use(i.xor_rm.d); break;
+			case xor_mc:                  use(i.xor_mc.d); break;
+			case xor_mr: use(i.xor_mr.s); use(i.xor_mr.d); break;
+			case and_rc:                  use(i.and_rc.d); break;
+			case and_rr: use(i.and_rr.s); use(i.and_rr.d); break;
+			case and_rm: use(i.and_rm.s); use(i.and_rm.d); break;
+			case and_mc:                  use(i.and_mc.d); break;
+			case and_mr: use(i.and_mr.s); use(i.and_mr.d); break;
+			case or_rc:                   use(i.or_rc.d);  break;
+			case or_rr:  use(i.or_rr.s);  use(i.or_rr.d);  break;
+			case or_rm:  use(i.or_rm.s);  use(i.or_rm.d);  break;
+			case or_mc:                   use(i.or_mc.d);  break;
+			case or_mr:  use(i.or_mr.s);  use(i.or_mr.d);  break;
+			case shl_rc:                  use(i.shl_rc.d); break;
+			case shl_rr: use(i.shl_rr.s); use(i.shl_rr.d); break;
+			case shl_rm: use(i.shl_rm.s); use(i.shl_rm.d); break;
+			case shl_mc:                  use(i.shl_mc.d); break;
+			case shl_mr: use(i.shl_mr.s); use(i.shl_mr.d); break;
+			case shr_rc:                  use(i.shr_rc.d); break;
+			case shr_rr: use(i.shr_rr.s); use(i.shr_rr.d); break;
+			case shr_rm: use(i.shr_rm.s); use(i.shr_rm.d); break;
+			case shr_mc:                  use(i.shr_mc.d); break;
+			case shr_mr: use(i.shr_mr.s); use(i.shr_mr.d); break;
+			case copyf_mmc: use(i.copyf_mmc.s);                        use(i.copyf_mmc.d); break;
+			case copyb_mmc:	use(i.copyb_mmc.s);                        use(i.copyb_mmc.d); break;
+			case copyf_mmr:	use(i.copyf_mmr.s); use(i.copyf_mmr.size); use(i.copyf_mmr.d); break;
+			case copyb_mmr:	use(i.copyb_mmr.s); use(i.copyb_mmr.size); use(i.copyb_mmr.d); break;
+			case setf_mcc: use(i.setf_mcc.d); break;
+			case setb_mcc: use(i.setf_mcc.d); break;
+			case call_c:                  break;
+			case call_r: use(i.call_r.s); break;
+			case call_m: use(i.call_m.s); break;
+			case stdcall_r:
+				use(i.stdcall_r.s);
+				use(x86_64::to_bc_register(x86_64::Register64::rcx));
+				use(x86_64::to_bc_register(x86_64::Register64::rdx));
+				use(x86_64::to_bc_register(x86_64::Register64::r8));
+				use(x86_64::to_bc_register(x86_64::Register64::r9));
+				break;
+			case xchg_r:  use(i.xchg_r .a); use(i.xchg_r .b); break;
+			case xchg1_m: use(i.xchg1_m.a); use(i.xchg1_m.b); break;
+			case xchg2_m: use(i.xchg2_m.a); use(i.xchg2_m.b); break;
+			case xchg4_m: use(i.xchg4_m.a); use(i.xchg4_m.b); break;
+			case xchg8_m: use(i.xchg8_m.a); use(i.xchg8_m.b); break;
+			case cmpu1: use(i.cmpu1.a); use(i.cmpu1.b); set(i.cmpu1.d); break;
+			case cmpu2:	use(i.cmpu2.a); use(i.cmpu2.b); set(i.cmpu2.d); break;
+			case cmpu4:	use(i.cmpu4.a); use(i.cmpu4.b); set(i.cmpu4.d); break;
+			case cmpu8:	use(i.cmpu8.a); use(i.cmpu8.b); set(i.cmpu8.d); break;
+			case cmps1:	use(i.cmps1.a); use(i.cmps1.b); set(i.cmps1.d); break;
+			case cmps2:	use(i.cmps2.a); use(i.cmps2.b); set(i.cmps2.d); break;
+			case cmps4:	use(i.cmps4.a); use(i.cmps4.b); set(i.cmps4.d); break;
+			case cmps8:	use(i.cmps8.a); use(i.cmps8.b); set(i.cmps8.d); break;
+			case not_r:     use(i.not_r   .d); break;
+			case not_m:     use(i.not_m   .d); break;
+			case negi_r:    use(i.negi_r  .d); break;
+			case negi8_m:   use(i.negi8_m .d); break;
+			case negi16_m:  use(i.negi16_m.d); break;
+			case negi32_m:  use(i.negi32_m.d); break;
+			case negi64_m:  use(i.negi64_m.d); break;
+
+			case jmp_label: {
+				for (auto &state : register_state) {
+					state.setter = 0;
+				}
+				break;
+			}
+			case jmp:
+			case jz_cr:
+			case jnz_cr: {
+				switch (i.kind) {
+					case jmp: break;
+					case jz_cr: use(i.jz_cr.reg); break;
+					case jnz_cr: use(i.jnz_cr.reg); break;
+					default: invalid_code_path();
+				}
+				for (auto &state : register_state) {
+					if (state.setter && !state.was_used) {
+						state.setter->kind = InstructionKind::noop;
+						for (auto &modder : state.modders) {
+							modder->kind = InstructionKind::noop;
+						}
+					}
+					state.setter = 0;
+				}
+				break;
+			}
+
+			case push_c:
+			case push_r:
+			case push_f:
+			case push_m:
+			case pop_r:
+			case pop_f:
+			case pop_m:
+			case ret:
+			case begin_lambda:
+			case end_lambda:
+			case cvt_f32_s32:
+			case cvt_s32_f32:
+			case cvt_f64_s64:
+			case cvt_s64_f64:
+			case mov_fr:
+			case mov_rf:
+			case mov1_xm:
+			case mov2_xm:
+			case mov4_xm:
+			case mov8_xm:
+			case add_f32_f32:
+			case add_f64_f64:
+			case mul_f32_f32:
+			case mul_f64_f64:
+			case sub_f32_f32:
+			case sub_f64_f64:
+			case div_f32_f32:
+			case div_f64_f64:
+			case xor_ff:
+			case tobool_r:
+			case toboolnot_r:
+			case push_used_registers:
+			case pop_used_registers:
+			case prepare_stack:
+				not_implemented();
+				break;
+			case noop:
+			case debug_break:
+			case debug_line:
+			case debug_start_lambda:
+				break;
+		}
+	}
+
+	for (auto &state : register_state) {
+		if (state.setter && !state.was_used) {
+			state.setter->kind = InstructionKind::noop;
+			for (auto &modder : state.modders) {
+				modder->kind = InstructionKind::noop;
+			}
+		}
+	}
+}
+void Converter::propagate_known_values(InstructionList &instructions) {
+
+	enum ValueKind {
+		unknown,
+		constant,
+		address,
+	};
+
+	struct Value {
+		ValueKind kind;
+		union {
+			s64 constant;
+			Address address;
+		};
+	};
+
+	Value registers[(u8)Register::count] = {};
+
+	static constexpr umm capacity = 0x10000;
+	struct StackState {
+		u8 buffer[capacity] = {};
+		u64 known[capacity / 64] = {};
+
+		umm i(s64 offset) {
+			assert(offset < 0);
+			return capacity + offset;
+		}
+
+		// set known
+		void sk(s64 offset) {
+			known[i(offset) / 64] |= (u64)1 << (u64)(i(offset) % 64);
+		}
+
+		// read known
+		bool rk(s64 offset) {
+			return known[i(offset) / 64] & ((u64)1 << (u64)(i(offset) % 64));
+		}
+
+		// write n bytes
+		void w1(u8 v, s64 offset) {
+			buffer[i(offset)] = v;
+			sk(offset);
+		}
+		void w2(u16 v, s64 offset) {
+			*(u16 *)(buffer + i(offset)) = v;
+			sk(offset + 0);
+			sk(offset + 1);
+		}
+		void w4(u32 v, s64 offset) {
+			*(u32 *)(buffer + i(offset)) = v;
+			sk(offset + 0);
+			sk(offset + 1);
+			sk(offset + 2);
+			sk(offset + 3);
+		}
+		void w8(u64 v, s64 offset) {
+			*(u64 *)(buffer + i(offset)) = v;
+			sk(offset + 0);
+			sk(offset + 1);
+			sk(offset + 2);
+			sk(offset + 3);
+			sk(offset + 4);
+			sk(offset + 5);
+			sk(offset + 6);
+			sk(offset + 7);
+		}
+		void w(Span<u8> v, s64 offset) {
+			memcpy(buffer + i(offset), v.data, v.count);
+			for (umm i = 0; i < v.count; ++i)
+				sk(offset + i);
+		}
+
+		// set n bytes unknown
+		void u1(s64 offset) {
+			known[i(offset) / 64] &= ~((u64)1 << (u64)(i(offset) % 64));
+		}
+		void u2(s64 offset) {
+			u1(offset + 0);
+			u1(offset + 1);
+		}
+		void u4(s64 offset) {
+			u1(offset + 0);
+			u1(offset + 1);
+			u1(offset + 2);
+			u1(offset + 3);
+		}
+		void u8(s64 offset) {
+			u1(offset + 0);
+			u1(offset + 1);
+			u1(offset + 2);
+			u1(offset + 3);
+			u1(offset + 4);
+			u1(offset + 5);
+			u1(offset + 6);
+			u1(offset + 7);
+		}
+		void u(umm size, s64 offset) {
+			for (umm i = 0; i < size; ++i)
+				u1(offset + i);
+		}
+
+		// read n bytes
+		Optional<tl::u8> r1(s64 offset) {
+			if (rk(offset))
+				return buffer[i(offset)];
+			return {};
+		}
+		Optional<u16> r2(s64 offset) {
+			if (rk(offset + 0) &&
+				rk(offset + 1))
+				return *(u16 *)(buffer + i(offset));
+			return {};
+		}
+		Optional<u32> r4(s64 offset) {
+			if (rk(offset + 0) &&
+				rk(offset + 1) &&
+				rk(offset + 2) &&
+				rk(offset + 3))
+				return *(u32 *)(buffer + i(offset));
+			return {};
+		}
+		Optional<u64> r8(s64 offset) {
+			if (rk(offset + 0) &&
+				rk(offset + 1) &&
+				rk(offset + 2) &&
+				rk(offset + 3) &&
+				rk(offset + 4) &&
+				rk(offset + 5) &&
+				rk(offset + 6) &&
+				rk(offset + 7))
+				return *(u64 *)(buffer + i(offset));
+			return {};
+		}
+	};
+
+	StackState stack;
+
+	auto r = [&](Register r) -> Value & {
+		return registers[(u8)r];
+	};
+
+	for (auto &i : instructions) {
+		auto mov_mr = [&](umm size, Address d, Register s) {
+			if (d.base == locals) {
+				assert(d.r1_scale_index == 0);
+				assert(d.r2_scale == 0);
+			}
+			auto &src = r(s);
+			switch (src.kind) {
+				case unknown:
+				case address:
+					if (d.base == locals)
+						stack.u(size, d.c);
+					break;
+				case constant:
+					if (d.base == locals)
+						stack.w(value_as_bytes(src.constant).subspan(0, size), d.c);
+					switch (size) {
+						case 1: i = MI(mov1_mc, d, src.constant); break;
+						case 2: i = MI(mov2_mc, d, src.constant); break;
+						case 4: i = MI(mov4_mc, d, src.constant); break;
+						case 8: i = MI(mov8_mc, d, src.constant); break;
+						default: invalid_code_path();
+					}
+					break;
+			}
+		};
+
+		switch (i.kind) {
+			using enum InstructionKind;
+			case lea: {
+				REDECLARE_REF(i, i.lea);
+				if (i.s.base == locals ||
+					i.s.base == constants ||
+					i.s.base == rwdata ||
+					i.s.base == zeros ||
+					i.s.base == Register::instructions)
+				{
+					r(i.d).kind = address;
+					r(i.d).address = i.s;
+				} else {
+					r(i.d).kind = unknown;
+				}
+				break;
+			}
+			case mov_rc: {
+				REDECLARE_REF(i, i.mov_rc);
+				r(i.d).kind = constant;
+				r(i.d).constant = i.s;
+				break;
+			}
+			case mov_rr: {
+				auto &dst = r(i.mov_rr.d);
+				auto &src = r(i.mov_rr.s);
+				switch (src.kind) {
+					case unknown:
+						dst.kind = unknown;
+						break;
+					case constant:
+						i = MI(mov_rc, i.mov_rr.d, src.constant);
+						break;
+					case address:
+						i = MI(lea, i.mov_rr.d, src.address);
+						break;
+				}
+				break;
+			}
+			case mov_re: {
+				REDECLARE_REF(i, i.mov_re);
+				r(i.d).kind = unknown;
+				break;
+			}
+			case mov1_mr: {
+				if (i.mov1_mr.d.base == locals) {
+					assert(i.mov1_mr.d.r1_scale_index == 0);
+					assert(i.mov1_mr.d.r2_scale == 0);
+				}
+				auto &src = r(i.mov1_mr.s);
+				switch (src.kind) {
+					case unknown:
+					case address:
+						if (i.mov1_mr.d.base == locals)
+							stack.u1(i.mov1_mr.d.c);
+						break;
+					case constant:
+						if (i.mov1_mr.d.base == locals)
+							stack.w1(src.constant, i.mov1_mr.d.c);
+						i = MI(mov1_mc, i.mov1_mr.d, src.constant);
+						break;
+				}
+				break;
+			}
+			case mov2_mr: {
+				if (i.mov2_mr.d.base == locals) {
+					assert(i.mov2_mr.d.r1_scale_index == 0);
+					assert(i.mov2_mr.d.r2_scale == 0);
+				}
+				auto &src = r(i.mov2_mr.s);
+				switch (src.kind) {
+					case unknown:
+					case address:
+						if (i.mov2_mr.d.base == locals)
+							stack.u2(i.mov2_mr.d.c);
+						break;
+					case constant:
+						if (i.mov2_mr.d.base == locals)
+							stack.w2(src.constant, i.mov2_mr.d.c);
+						i = MI(mov2_mc, i.mov2_mr.d, src.constant);
+						break;
+				}
+				break;
+			}
+			case mov4_mr: {
+				if (i.mov4_mr.d.base == locals) {
+					assert(i.mov4_mr.d.r1_scale_index == 0);
+					assert(i.mov4_mr.d.r2_scale == 0);
+				}
+				auto &src = r(i.mov4_mr.s);
+				switch (src.kind) {
+					case unknown:
+					case address:
+						if (i.mov4_mr.d.base == locals)
+							stack.u4(i.mov4_mr.d.c);
+						break;
+					case constant:
+						if (i.mov4_mr.d.base == locals)
+							stack.w4(src.constant, i.mov4_mr.d.c);
+						i = MI(mov4_mc, i.mov4_mr.d, src.constant);
+						break;
+				}
+				break;
+			}
+			case mov8_mr: {
+				if (i.mov8_mr.d.base == locals) {
+					assert(i.mov8_mr.d.r1_scale_index == 0);
+					assert(i.mov8_mr.d.r2_scale == 0);
+				}
+				auto &src = r(i.mov8_mr.s);
+				switch (src.kind) {
+					case unknown:
+					case address:
+						if (i.mov8_mr.d.base == locals)
+							stack.u8(i.mov8_mr.d.c);
+						break;
+					case constant:
+						if (i.mov8_mr.d.base == locals)
+							stack.w8(src.constant, i.mov8_mr.d.c);
+						i = MI(mov8_mc, i.mov8_mr.d, src.constant);
+						break;
+				}
+				break;
+			}
+			case mov1_rm: {
+				r(i.mov1_rm.d).kind = unknown;
+				if (i.mov1_rm.s.base == locals) {
+					assert(i.mov1_rm.s.r1_scale_index == 0);
+					assert(i.mov1_rm.s.r2_scale == 0);
+					if (auto val = stack.r1(i.mov1_rm.s.c)) {
+						r(i.mov1_rm.d).kind = constant;
+						r(i.mov1_rm.d).constant = val.value_unchecked();
+						i = MI(mov_rc, i.mov1_rm.d, (s64)val.value_unchecked());
+					}
+				}
+				break;
+			}
+			case mov2_rm: {
+				r(i.mov2_rm.d).kind = unknown;
+				if (i.mov2_rm.s.base == locals) {
+					assert(i.mov2_rm.s.r1_scale_index == 0);
+					assert(i.mov2_rm.s.r2_scale == 0);
+					if (auto val = stack.r2(i.mov2_rm.s.c)) {
+						r(i.mov2_rm.d).kind = constant;
+						r(i.mov2_rm.d).constant = val.value_unchecked();
+						i = MI(mov_rc, i.mov2_rm.d, (s64)val.value_unchecked());
+					}
+				}
+				break;
+			}
+			case mov4_rm: {
+				r(i.mov4_rm.d).kind = unknown;
+				if (i.mov4_rm.s.base == locals) {
+					assert(i.mov4_rm.s.r1_scale_index == 0);
+					assert(i.mov4_rm.s.r2_scale == 0);
+					if (auto val = stack.r4(i.mov4_rm.s.c)) {
+						r(i.mov4_rm.d).kind = constant;
+						r(i.mov4_rm.d).constant = val.value_unchecked();
+						i = MI(mov_rc, i.mov4_rm.d, (s64)val.value_unchecked());
+					}
+				}
+				break;
+			}
+			case mov8_rm: {
+				r(i.mov8_rm.d).kind = unknown;
+				if (i.mov8_rm.s.base == locals) {
+					assert(i.mov8_rm.s.r1_scale_index == 0);
+					assert(i.mov8_rm.s.r2_scale == 0);
+					if (auto val = stack.r8(i.mov8_rm.s.c)) {
+						r(i.mov8_rm.d).kind = constant;
+						r(i.mov8_rm.d).constant = val.value_unchecked();
+						i = MI(mov_rc, i.mov8_rm.d, (s64)val.value_unchecked());
+					}
+				}
+				break;
+			}
+			case mov1_mc: {
+				REDECLARE_REF(i, i.mov1_mc);
+				if (i.d.base == locals) {
+					assert(i.d.r1_scale_index == 0);
+					assert(i.d.r2_scale == 0);
+					stack.w1(i.s, i.d.c);
+				}
+				break;
+			}
+			case mov2_mc: {
+				REDECLARE_REF(i, i.mov2_mc);
+				if (i.d.base == locals) {
+					assert(i.d.r1_scale_index == 0);
+					assert(i.d.r2_scale == 0);
+					stack.w2(i.s, i.d.c);
+				}
+				break;
+			}
+			case mov4_mc: {
+				REDECLARE_REF(i, i.mov4_mc);
+				if (i.d.base == locals) {
+					assert(i.d.r1_scale_index == 0);
+					assert(i.d.r2_scale == 0);
+					stack.w4(i.s, i.d.c);
+				}
+				break;
+			}
+			case mov8_mc: {
+				REDECLARE_REF(i, i.mov8_mc);
+				if (i.d.base == locals) {
+					assert(i.d.r1_scale_index == 0);
+					assert(i.d.r2_scale == 0);
+					stack.w8(i.s, i.d.c);
+				}
+				break;
+			}
+			case add_rc: {
+				auto &dst = r(i.add_rc.d);
+
+				switch (dst.kind) {
+					case unknown:
+						break;
+					case constant:
+						dst.constant += i.add_rc.s;
+						break;
+					case address:
+						dst.address.c += i.add_rc.s;
+						break;
+				}
+
+				break;
+			}
+			case add_rr: {
+				auto &dst = r(i.add_rr.d);
+				auto &src = r(i.add_rr.s);
+
+				if (src.kind == constant) {
+					i = MI(add_rc, i.add_rr.d, src.constant);
+				}
+
+				// NOTE: Instruction may be replaced now, don't use it.
+
+				switch (dst.kind) {
+					case unknown:
+						break;
+					case constant:
+						switch (src.kind) {
+							case unknown:
+								break;
+							case constant:
+								dst.constant += src.constant;
+								break;
+							case address:
+								dst.kind = address;
+								dst.address = src.address + dst.constant;
+								break;
+						}
+						break;
+					case address:
+						switch (src.kind) {
+							case unknown:
+								break;
+							case constant:
+								dst.address.c += src.constant;
+								break;
+							case address:
+								break;
+						}
+						break;
+				}
+
+				break;
+			}
+			case add_mc: {
+				break;
+			}
+			case add_mr: {
+				auto &src = r(i.add_mr.s);
+				if (src.kind == constant) {
+					i = MI(add_mc, i.add_mr.d, src.constant);
+				}
+
+				// NOTE: Instruction may be replaced now, don't use it.
+
+				break;
+			}
+			case jmp_label: {
+				for (auto &r : registers) {
+					r.kind = unknown;
+				}
+				for (auto &k : stack.known) {
+					k = 0;
+				}
+				break;
+			}
+			case jmp:
+			case jz_cr:
+			case jnz_cr: {
+				break;
+			}
+			case movsx21_rm:
+			case movsx41_rm:
+			case movsx81_rm:
+			case movsx42_rm:
+			case movsx82_rm:
+			case movsx84_rm:
+			case movzx21_rm:
+			case movzx41_rm:
+			case movzx81_rm:
+			case movzx42_rm:
+			case movzx82_rm:
+			case movzx84_rm:
+			case movsx21_rr:
+			case movsx41_rr:
+			case movsx81_rr:
+			case movsx42_rr:
+			case movsx82_rr:
+			case movsx84_rr:
+			case movzx21_rr:
+			case movzx41_rr:
+			case movzx81_rr:
+			case movzx42_rr:
+			case movzx82_rr:
+			case movzx84_rr:
+			case add_rm:
+			case sub_rc:
+			case sub_rr:
+			case sub_rm:
+			case sub_mc:
+			case sub_mr:
+			case mul_rc:
+			case mul_rr:
+			case mul_rm:
+			case mul_mc:
+			case mul_mr:
+			case div_rc:
+			case div_rr:
+			case div_rm:
+			case div_mc:
+			case div_mr:
+			case mod_rc:
+			case mod_rr:
+			case mod_rm:
+			case mod_mc:
+			case mod_mr:
+			case xor_rc:
+			case xor_rr:
+			case xor_rm:
+			case xor_mc:
+			case xor_mr:
+			case and_rc:
+			case and_rr:
+			case and_rm:
+			case and_mc:
+			case and_mr:
+			case or_rc:
+			case or_rr:
+			case or_rm:
+			case or_mc:
+			case or_mr:
+			case shl_rc:
+			case shl_rr:
+			case shl_rm:
+			case shl_mc:
+			case shl_mr:
+			case shr_rc:
+			case shr_rr:
+			case shr_rm:
+			case shr_mc:
+			case shr_mr:
+			case copyf_mmc:
+			case copyb_mmc:
+			case copyf_mmr:
+			case copyb_mmr:
+			case setf_mcc:
+			case setb_mcc:
+			case call_c:
+			case call_r:
+			case call_m:
+			case stdcall_r:
+			case xchg_r:
+			case xchg1_m:
+			case xchg2_m:
+			case xchg4_m:
+			case xchg8_m:
+			case cmpu1:
+			case cmpu2:
+			case cmpu4:
+			case cmpu8:
+			case cmps1:
+			case cmps2:
+			case cmps4:
+			case cmps8:
+			case not_r:
+			case not_m:
+			case negi_r:
+			case negi8_m:
+			case negi16_m:
+			case negi32_m:
+			case negi64_m:
+			case push_c:
+			case push_r:
+			case push_f:
+			case push_m:
+			case pop_r:
+			case pop_f:
+			case pop_m:
+			case ret:
+			case begin_lambda:
+			case end_lambda:
+			case cvt_f32_s32:
+			case cvt_s32_f32:
+			case cvt_f64_s64:
+			case cvt_s64_f64:
+			case mov_fr:
+			case mov_rf:
+			case mov1_xm:
+			case mov2_xm:
+			case mov4_xm:
+			case mov8_xm:
+			case add_f32_f32:
+			case add_f64_f64:
+			case mul_f32_f32:
+			case mul_f64_f64:
+			case sub_f32_f32:
+			case sub_f64_f64:
+			case div_f32_f32:
+			case div_f64_f64:
+			case xor_ff:
+			case tobool_r:
+			case toboolnot_r:
+			case push_used_registers:
+			case pop_used_registers:
+			case prepare_stack:
+				not_implemented();
+				break;
+			case noop:
+			case debug_break:
+			case debug_line:
+			case debug_start_lambda:
+				break;
+		}
+	}
+}
+
 inline umm append(StringBuilder &builder, Register r) {
 	switch (r) {
 		using enum Register;
@@ -3710,6 +5019,13 @@ inline umm append(StringBuilder &builder, Register r) {
 		case r10: return append(builder, "r10");
 		case rs: return append(builder, "rs");
 		case rb: return append(builder, "rb");
+		case parameters: return append(builder, "parameters");
+		case locals: return append(builder, "locals");
+		case temporary: return append(builder, "tmp");
+		case constants: return append(builder, "constants");
+		case rwdata: return append(builder, "rwdata");
+		case zeros: return append(builder, "zeros");
+		case instructions: return append(builder, "instructions");
 	}
 	invalid_code_path();
 	return {};
@@ -3756,56 +5072,21 @@ inline umm append(StringBuilder &builder, Address a) {
 	return result;
 }
 
-
-Bytecode build_bytecode() {
-	timed_function(context.profiler);
-
-	assert(context.general_purpose_register_count != 0);
-
-	Bytecode result;
-
-	auto _conv = new Converter();
-	defer { delete _conv; };
-
-	auto &conv = *_conv;
-
-	for (auto lambda : context.lambdas_with_body) {
-		conv.append(lambda, false, r0);
-	}
-
-	for (auto lambda : context.lambdas_without_body) {
-		if (lambda->extern_library.data) {
-			result.extern_libraries.get_or_insert(lambda->extern_library).add(lambda->definition->name);
-		}
-	}
-
-	for_each(global_scope.statements, [&](auto statement) {
-		conv.append(statement);
-	});
-
-	result.instructions = conv.builder;
-
-	for (auto i : conv.instructions_that_reference_lambdas) {
-		assert(i.lambda->location_in_bytecode != -1);
-		switch (i.instruction->kind) {
-			case InstructionKind::call_c: {
-				i.instruction->call_c.constant = i.lambda->location_in_bytecode;
-				break;
-			}
-			case InstructionKind::push_t: {
-				i.instruction->push_t.s = i.lambda->location_in_bytecode;
-				break;
-			}
-			case InstructionKind::mov_rt: {
-				i.instruction->mov_rt.s = i.lambda->location_in_bytecode;
-				break;
-			}
-		}
-	}
+void print_bytecode(InstructionList &instructions) {
+	auto replacer = Scoped(ConsoleColor::white);
 
 	u64 idx = 0;
-	for (auto i : result.instructions) {
+	for (auto i : instructions) {
 		defer { idx++; };
+
+		if (i.comment.data) {
+			with(ConsoleColor::dark_cyan,
+				split(i.comment, u8'\n', [&](auto part) {
+					auto str = tformat("// {}\n", part);
+					print(str);
+				})
+			);
+		}
 
 		print("{} ", Format(idx, align_left(4, ' ')));
 
@@ -3833,16 +5114,6 @@ Bytecode build_bytecode() {
 			case push_r: print("push {}", i.push_r.s); break;
 			case push_f: print("push {}", i.push_f.s); break;
 			case push_m: print("push {}", i.push_m.s); break;
-
-			case push_a: print("push constants + {}", i.push_a.s); break;
-			case push_d: print("push data + {}"     , i.push_d.s); break;
-			case push_u: print("push zeros + {}"    , i.push_u.s); break;
-			case push_t: print("push text + {}"     , i.push_t.s); break;
-
-			case mov_ra: print("mov {}, constants + {}", i.mov_ra.d, i.mov_ra.s); break;
-			case mov_rd: print("mov {}, data + {}"     , i.mov_rd.d, i.mov_rd.s); break;
-			case mov_ru: print("mov {}, zeros + {}"    , i.mov_ru.d, i.mov_ru.s); break;
-			case mov_rt: print("mov {}, text + {}"     , i.mov_rt.d, i.mov_rt.s); break;
 
 			case pop_r: print("pop {}", i.pop_r.d); break;
 			case pop_f: print("pop {}", i.pop_f.d); break;
@@ -3981,9 +5252,60 @@ Bytecode build_bytecode() {
 			case xchg2_m: print("xchg2 {}, {}", i.xchg2_m.a, i.xchg2_m.b); break;
 			case xchg4_m: print("xchg4 {}, {}", i.xchg4_m.a, i.xchg4_m.b); break;
 			case xchg8_m: print("xchg8 {}, {}", i.xchg8_m.a, i.xchg8_m.b); break;
+
+			case prepare_stack:      print("prepare_stack");      break;
+			case debug_line:         print("debug_line");         break;
+			case debug_start_lambda: print("debug_start_lambda"); break;
+
+
 			default: print("unknown {}", (u64)i.kind); break;
 		}
-		print("\n");
+		with(ConsoleColor::gray, print(" // bytecode.cpp:{}\n", i.line));
+	}
+}
+
+Bytecode build_bytecode() {
+	timed_function(context.profiler);
+
+	assert(context.general_purpose_register_count != 0);
+
+	Bytecode result;
+
+	auto _conv = new Converter();
+	defer { delete _conv; };
+
+	auto &conv = *_conv;
+
+	for (auto lambda : context.lambdas_with_body) {
+		conv.append(lambda, false, r0);
+	}
+
+	for (auto lambda : context.lambdas_without_body) {
+		if (lambda->extern_library.data) {
+			result.extern_libraries.get_or_insert(lambda->extern_library).add(lambda->definition->name);
+		}
+	}
+
+	for_each(global_scope.statements, [&](auto statement) {
+		conv.append(statement);
+	});
+
+	result.instructions = conv.builder;
+
+	//print_bytecode(conv.builder);
+
+	for (auto i : conv.instructions_that_reference_lambdas) {
+		assert(i.lambda->location_in_bytecode != -1);
+		switch (i.instruction->kind) {
+			case InstructionKind::call_c: {
+				i.instruction->call_c.constant = i.lambda->location_in_bytecode;
+				break;
+			}
+			case InstructionKind::lea: {
+				i.instruction->lea.s.c = i.lambda->location_in_bytecode;
+				break;
+			}
+		}
 	}
 
 	return result;

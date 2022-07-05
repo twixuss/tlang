@@ -32,7 +32,15 @@ inline void print() {
 #include <tl/console.h>
 #undef ASSERTION_FAILURE
 #if TL_DEBUG
-#define ASSERTION_FAILURE(cause_string, expression, ...) (::tl::print(Print_error, "Assertion failed: "), ::tl::print("{}\nMessage: ", expression), ::print(__VA_ARGS__), ::tl::print("\n{}:{}: {} at {}\n", __FILE__, __LINE__, cause_string, __FUNCSIG__), debug_break())
+#define ASSERTION_FAILURE(cause_string, expression, ...) (\
+	::tl::set_console_color(::tl::ConsoleColor::red),\
+	::tl::print("Assertion failed: "),\
+	::tl::set_console_color(::tl::ConsoleColor::dark_gray),\
+	::tl::print("{}\nMessage: ", expression),\
+	::print(__VA_ARGS__),\
+	::tl::print("\n{}:{}: {} at {}\n", __FILE__, __LINE__, cause_string, __FUNCSIG__),\
+	debug_break()\
+)
 #else
 #define ASSERTION_FAILURE(cause_string, expression, ...) tlang_assertion_failed(cause_string, __FILE__, __LINE__, expression, __FUNCSIG__)
 #endif
@@ -238,6 +246,9 @@ struct CompilerContext {
 	bool keep_temp = false;
 	bool debug_poly = false;
 	bool print_lowered = false;
+	bool optimize = false;
+
+	u8 optimization_pass_count = 4;
 
 	List<AstLambda *> lambdas_with_body;
 	List<AstLambda *> lambdas_without_body;
@@ -290,7 +301,7 @@ HeapString where(utf8 *location);
 void print_report(Report r);
 
 template <>
-inline umm get_hash(std::source_location l) {
+inline umm get_hash(std::source_location const &l) {
 	return get_hash(l.column()) ^ get_hash(l.line());
 }
 
@@ -348,7 +359,7 @@ extern const Strings strings_en;
 extern const Strings strings_ru;
 
 inline void tlang_assertion_failed(char const *cause, char const *file, int line, char const *expression, char const *function) {
-	::tl::print(Print_error, "Assertion failed: ");
+	with(ConsoleColor::red, ::tl::print("Assertion failed: "));
 	::tl::print("{}\n{}:{}: {} at {}\n", expression, file, line, cause, function);
 	if (debugger_attached())
 		debug_break();

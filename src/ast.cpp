@@ -24,6 +24,7 @@ BuiltinStruct builtin_string;
 BuiltinStruct builtin_struct_member;
 BuiltinStruct builtin_typeinfo;
 BuiltinStruct builtin_any;
+BuiltinStruct builtin_range;
 
 BuiltinEnum builtin_type_kind;
 
@@ -95,10 +96,16 @@ bool needs_semicolon(AstExpression *node) {
 	// if (node->kind == Ast_UnaryOperator)
 	// 	return needs_semicolon(((AstUnaryOperator *)node)->expression);
 
-	if (node->kind == Ast_Lambda && ((AstLambda *)node)->has_body == false)
-		return true;
-
-	return node->kind != Ast_Lambda && node->kind != Ast_Struct && node->kind != Ast_Enum;
+	switch (node->kind) {
+		case Ast_Lambda: {
+			auto lambda = (AstLambda *)node;
+			return !lambda->has_body;
+		}
+		case Ast_Struct:
+		case Ast_Enum:
+			return false;
+	}
+	return true;
 }
 
 bool can_be_global(AstStatement *statement) {

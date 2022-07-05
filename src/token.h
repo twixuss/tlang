@@ -13,6 +13,7 @@ E(null,     'null') \
 E(this,     'this') \
 E(simd,     'simd') \
 E(enum,     'enum') \
+E(for,      'for') \
 E(return,   0x1000000) \
 E(false,    0x1000001) \
 E(while,    0x1000002) \
@@ -24,6 +25,10 @@ E(union,    0x1000007) \
 E(operator, 0x1000008) \
 E(implicit, 0x1000009) \
 E(explicit, 0x100000a) \
+E(continue, 0x100000b) \
+E(break,    0x100000c) \
+E(match,    0x100000d) \
+E(empty,    0x100000e) \
 
 #define ENUMERATE_TOKEN_KINDS(E) \
 E(identifier,        0x2000000) \

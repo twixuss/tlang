@@ -65,6 +65,10 @@
     {
       "Id": "7c05f5eb-beeb-4681-8aaa-9bf570d8c9d4",
       "Command": "F:\\tedit\\main.tl"
+    },
+    {
+      "Id": "a99a586a-369e-4ae4-b7f8-d1abbade527a",
+      "Command": "--optimize"
     }
   ]
 }

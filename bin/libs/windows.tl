@@ -926,6 +926,12 @@ VirtualAlloc :: fn (
 	flProtect        : DWORD
 ): LPVOID;
 
+VirtualFree :: fn (
+	lpAddress: LPVOID,
+	dwSize: SIZE_T,
+	dwFreeType: DWORD
+): BOOL;
+
 GetModuleHandleA :: fn (
 	lpModuleName : LPCSTR
 ): HMODULE;

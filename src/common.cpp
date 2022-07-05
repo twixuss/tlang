@@ -63,21 +63,22 @@ u32 get_column_number(utf8 *from) {
 	return result;
 }
 
-void print_replacing_tabs_with_4_spaces(PrintKind kind, Span<utf8> string) {
+void print_replacing_tabs_with_4_spaces(Span<utf8> string) {
 	for (auto c : string) {
 		if (c == '\t') {
-			print(kind, "    ");
+			print("    ");
 		} else {
-			print(kind, c);
+			print(c);
 		}
 	}
 }
-PrintKind get_print_kind(ReportKind kind) {
+ConsoleColor get_console_color(ReportKind kind) {
 	switch (kind) {
 		using enum ReportKind;
-		case info: return Print_info;
-		case warning: return Print_warning;
-		case error: return Print_error;
+		using enum ConsoleColor;
+		case info: return dark_gray;
+		case warning: return yellow;
+		case error: return red;
 	}
 	invalid_code_path();
 }
@@ -151,9 +152,9 @@ void print_source_line(SourceFileInfo *info, ReportKind kind, Span<utf8> locatio
 	auto line_start = Span(error_line.begin(), location.begin());
 	auto line_end   = Span(location.end(), error_line.end());
 	auto offset = print_line(error_line_number);
-	print_replacing_tabs_with_4_spaces(Print_info,  line_start);
-	print_replacing_tabs_with_4_spaces(get_print_kind(kind), location);
-	print_replacing_tabs_with_4_spaces(Print_info,  line_end);
+	print_replacing_tabs_with_4_spaces(line_start);
+	with(get_console_color(kind), print_replacing_tabs_with_4_spaces(location));
+	print_replacing_tabs_with_4_spaces(line_end);
 	print('\n');
 
 	for (u32 i = 0; i < offset; ++i) {
@@ -206,12 +207,14 @@ void print_report(Report r) {
 	} else {
 		print(" ================ ");
 	}
-	switch (r.kind) {
-		case ReportKind::info:    print(Print_info,    strings.info);  break;
-		case ReportKind::warning: print(Print_warning, strings.warning); break;
-		case ReportKind::error:	  print(Print_error,   strings.error);	  break;
-		default: invalid_code_path();
-	}
+	withs(get_console_color(r.kind),
+		switch (r.kind) {
+			case ReportKind::info:    print(strings.info   ); break;
+			case ReportKind::warning: print(strings.warning); break;
+			case ReportKind::error:	  print(strings.error  ); break;
+			default: invalid_code_path();
+		}
+	);
 	print(": {}\n", r.message);
 	print_source_line(source_info, r.kind, r.location);
 }

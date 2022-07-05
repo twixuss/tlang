@@ -22,8 +22,13 @@ enum class Register : u8 {
 	r10, // r11
 	rs,  //
 	rb,  // stack base
-	rpb, // parameter base
-	rlb, // locals base
+	parameters,
+	locals,
+	temporary,
+	constants,
+	rwdata,
+	zeros,
+	instructions,
 	count,
 };
 
@@ -93,6 +98,11 @@ struct RegisterOrAddress {
 
 	RegisterOrAddress(Register reg) : is_register(true), reg(reg) {}
 	RegisterOrAddress(Address address) : is_register(false), address(address) {}
+
+	Address ensure_address() {
+		assert(!is_register);
+		return address;
+	}
 };
 
 /*
@@ -105,238 +115,202 @@ where param is any of:
 	r: general purpose register,
 	f: floating point register,
 	m: memory,
-	x: memory or register,
-	a: constant section offset,
-	d: data section offset,
-	u: uninitialized section offset,
-	t: text section offset,
 
 Destination of an instruction is first
 
 */
 
+// #define e(name, ...)
+// #define m(type, name)
+// ENUMERATE_INSTRUCTIONS
+// #undef m
+// #undef e
+
+#define ENUMERATE_INSTRUCTIONS \
+e(mov_rc             , m(Register, d) m(s64, s)) \
+e(mov_rr             , m(Register, d) m(Register, s)) \
+e(mov1_rm            , m(Register, d) m(Address, s)) \
+e(mov2_rm            , m(Register, d) m(Address, s)) \
+e(mov4_rm            , m(Register, d) m(Address, s)) \
+e(mov8_rm            , m(Register, d) m(Address, s)) \
+e(mov1_mc            , m(Address, d) m(s64, s)) \
+e(mov2_mc            , m(Address, d) m(s64, s)) \
+e(mov4_mc            , m(Address, d) m(s64, s)) \
+e(mov8_mc            , m(Address, d) m(s64, s)) \
+e(mov1_mr            , m(Address, d) m(Register, s)) \
+e(mov2_mr            , m(Address, d) m(Register, s)) \
+e(mov4_mr            , m(Address, d) m(Register, s)) \
+e(mov8_mr            , m(Address, d) m(Register, s)) \
+e(xchg_r             , m(Register, a) m(Register, b)) \
+e(xchg1_m            , m(Address, a) m(Register, b)) \
+e(xchg2_m            , m(Address, a) m(Register, b)) \
+e(xchg4_m            , m(Address, a) m(Register, b)) \
+e(xchg8_m            , m(Address, a) m(Register, b)) \
+e(movsx21_rm         , m(Register, d) m(Address, s)) \
+e(movsx41_rm         , m(Register, d) m(Address, s)) \
+e(movsx81_rm         , m(Register, d) m(Address, s)) \
+e(movsx42_rm         , m(Register, d) m(Address, s)) \
+e(movsx82_rm         , m(Register, d) m(Address, s)) \
+e(movsx84_rm         , m(Register, d) m(Address, s)) \
+e(movzx21_rm         , m(Register, d) m(Address, s)) \
+e(movzx41_rm         , m(Register, d) m(Address, s)) \
+e(movzx81_rm         , m(Register, d) m(Address, s)) \
+e(movzx42_rm         , m(Register, d) m(Address, s)) \
+e(movzx82_rm         , m(Register, d) m(Address, s)) \
+e(movzx84_rm         , m(Register, d) m(Address, s)) \
+e(movsx21_rr         , m(Register, d) m(Register, s)) \
+e(movsx41_rr         , m(Register, d) m(Register, s)) \
+e(movsx81_rr         , m(Register, d) m(Register, s)) \
+e(movsx42_rr         , m(Register, d) m(Register, s)) \
+e(movsx82_rr         , m(Register, d) m(Register, s)) \
+e(movsx84_rr         , m(Register, d) m(Register, s)) \
+e(movzx21_rr         , m(Register, d) m(Register, s)) \
+e(movzx41_rr         , m(Register, d) m(Register, s)) \
+e(movzx81_rr         , m(Register, d) m(Register, s)) \
+e(movzx42_rr         , m(Register, d) m(Register, s)) \
+e(movzx82_rr         , m(Register, d) m(Register, s)) \
+e(movzx84_rr         , m(Register, d) m(Register, s)) \
+e(lea                , m(Register, d) m(Address, s)) \
+e(push_c             , m(s64, s)) \
+e(push_r             , m(Register, s)) \
+e(push_f             , m(XRegister, s)) \
+e(push_m             , m(Address, s)) \
+e(mov_re             , m(Register, d) m(String, s)) \
+e(pop_r              , m(Register, d)) \
+e(pop_f              , m(XRegister, d)) \
+e(pop_m              , m(Address, d)) \
+e(ret                , ) \
+e(shr_rc             , m(Register, d) m(s64, s)) \
+e(shr_rr             , m(Register, d) m(Register, s)) \
+e(shr_rm             , m(Register, d) m(Address, s)) \
+e(shr_mc             , m(Address, d) m(s64, s)) \
+e(shr_mr             , m(Address, d) m(Register, s)) \
+e(shl_rc             , m(Register, d) m(s64, s)) \
+e(shl_rr             , m(Register, d) m(Register, s)) \
+e(shl_rm             , m(Register, d) m(Address, s)) \
+e(shl_mc             , m(Address, d) m(s64, s)) \
+e(shl_mr             , m(Address, d) m(Register, s)) \
+e(add_rc             , m(Register, d) m(s64, s)) \
+e(add_rr             , m(Register, d) m(Register, s)) \
+e(add_rm             , m(Register, d) m(Address, s)) \
+e(add_mc             , m(Address, d) m(s64, s)) \
+e(add_mr             , m(Address, d) m(Register, s)) \
+e(sub_rc             , m(Register, d) m(s64, s)) \
+e(sub_rr             , m(Register, d) m(Register, s)) \
+e(sub_rm             , m(Register, d) m(Address, s)) \
+e(sub_mc             , m(Address, d) m(s64, s)) \
+e(sub_mr             , m(Address, d) m(Register, s)) \
+e(mul_rc             , m(Register, d) m(s64, s)) \
+e(mul_rr             , m(Register, d) m(Register, s)) \
+e(mul_rm             , m(Register, d) m(Address, s)) \
+e(mul_mc             , m(Address, d) m(s64, s)) \
+e(mul_mr             , m(Address, d) m(Register, s)) \
+e(div_rc             , m(Register, d) m(s64, s)) \
+e(div_rr             , m(Register, d) m(Register, s)) \
+e(div_rm             , m(Register, d) m(Address, s)) \
+e(div_mc             , m(Address, d) m(s64, s)) \
+e(div_mr             , m(Address, d) m(Register, s)) \
+e(mod_rc             , m(Register, d) m(s64, s)) \
+e(mod_rr             , m(Register, d) m(Register, s)) \
+e(mod_rm             , m(Register, d) m(Address, s)) \
+e(mod_mc             , m(Address, d) m(s64, s)) \
+e(mod_mr             , m(Address, d) m(Register, s)) \
+e(not_r              , m(Register, d)) \
+e(not_m              , m(Address, d)) \
+e(or_rc              , m(Register, d) m(s64, s)) \
+e(or_rr              , m(Register, d) m(Register, s)) \
+e(or_rm              , m(Register, d) m(Address, s)) \
+e(or_mc              , m(Address, d) m(s64, s)) \
+e(or_mr              , m(Address, d) m(Register, s)) \
+e(and_rc             , m(Register, d) m(s64, s)) \
+e(and_rr             , m(Register, d) m(Register, s)) \
+e(and_rm             , m(Register, d) m(Address, s)) \
+e(and_mc             , m(Address, d) m(s64, s)) \
+e(and_mr             , m(Address, d) m(Register, s)) \
+e(xor_rc             , m(Register, d) m(s64, s)) \
+e(xor_rr             , m(Register, d) m(Register, s)) \
+e(xor_rm             , m(Register, d) m(Address, s)) \
+e(xor_mc             , m(Address, d) m(s64, s)) \
+e(xor_mr             , m(Address, d) m(Register, s)) \
+e(negi_r             , m(Register, d)) \
+e(negi8_m            , m(Address, d)) \
+e(negi16_m           , m(Address, d)) \
+e(negi32_m           , m(Address, d)) \
+e(negi64_m           , m(Address, d)) \
+/* Comparison with destination */ \
+e(cmpu1              , m(Register, d) m(Register, a) m(Register, b) m(Comparison, c)) \
+e(cmpu2              , m(Register, d) m(Register, a) m(Register, b) m(Comparison, c)) \
+e(cmpu4              , m(Register, d) m(Register, a) m(Register, b) m(Comparison, c)) \
+e(cmpu8              , m(Register, d) m(Register, a) m(Register, b) m(Comparison, c)) \
+e(cmps1              , m(Register, d) m(Register, a) m(Register, b) m(Comparison, c)) \
+e(cmps2              , m(Register, d) m(Register, a) m(Register, b) m(Comparison, c)) \
+e(cmps4              , m(Register, d) m(Register, a) m(Register, b) m(Comparison, c)) \
+e(cmps8              , m(Register, d) m(Register, a) m(Register, b) m(Comparison, c)) \
+e(cmpstr             , m(Register, d) m(Address, a) m(Address, b)) /* d is count */ \
+e(jz_cr              , m(s64, offset) m(Register, reg)) \
+e(jnz_cr             , m(s64, offset) m(Register, reg)) \
+/* Comparison without destination (uses flags) */ \
+e(cmpf1              , m(Register, a) m(Register, b)) \
+e(cmpf2              , m(Register, a) m(Register, b)) \
+e(cmpf4              , m(Register, a) m(Register, b)) \
+e(cmpf8              , m(Register, a) m(Register, b)) \
+e(jef_c              , m(s64, offset)) \
+e(jnef_c             , m(s64, offset)) \
+e(jlf_c              , m(s64, offset)) \
+e(jgf_c              , m(s64, offset)) \
+e(jlef_c             , m(s64, offset)) \
+e(jgef_c             , m(s64, offset)) \
+e(jmp                , m(s64, offset)) \
+e(call_c             , m(s64, constant)) \
+e(call_r             , m(Register, s)) \
+e(call_m             , m(Address, s)) \
+e(stdcall_r          , m(Register, s)) \
+e(copyf_mmc          , m(Address, d) m(Address, s) m(s64, size)) \
+e(copyb_mmc          , m(Address, d) m(Address, s) m(s64, size)) \
+e(copyf_mmr          , m(Address, d) m(Address, s) m(Register, size)) \
+e(copyb_mmr          , m(Address, d) m(Address, s) m(Register, size)) \
+e(setf_mcc           , m(Address, d) m(s8, s) m(s32, size)) \
+e(setb_mcc           , m(Address, d) m(s8, s) m(s32, size)) \
+e(begin_lambda       , m(AstLambda *, lambda) m(CallingConvention, convention)) \
+e(end_lambda         , m(AstLambda *, lambda) m(CallingConvention, convention)) \
+e(cvt_f32_s32        , ) \
+e(cvt_s32_f32        , ) \
+e(cvt_f64_s64        , ) \
+e(cvt_s64_f64        , ) \
+e(mov_fr             , m(XRegister, d) m(Register, s)) \
+e(mov_rf             , m(Register, d) m(XRegister, s)) \
+e(mov1_xm            , m(XRegister, d) m(Address, s)) \
+e(mov2_xm            , m(XRegister, d) m(Address, s)) \
+e(mov4_xm            , m(XRegister, d) m(Address, s)) \
+e(mov8_xm            , m(XRegister, d) m(Address, s)) \
+e(add_f32_f32        , m(XRegister, d) m(XRegister, s)) \
+e(add_f64_f64        , m(XRegister, d) m(XRegister, s)) \
+e(mul_f32_f32        , m(XRegister, d) m(XRegister, s)) \
+e(mul_f64_f64        , m(XRegister, d) m(XRegister, s)) \
+e(sub_f32_f32        , m(XRegister, d) m(XRegister, s)) \
+e(sub_f64_f64        , m(XRegister, d) m(XRegister, s)) \
+e(div_f32_f32        , m(XRegister, d) m(XRegister, s)) \
+e(div_f64_f64        , m(XRegister, d) m(XRegister, s)) \
+e(xor_ff             , m(XRegister, d) m(XRegister, s)) \
+e(tobool_r           , m(Register, d)) \
+e(toboolnot_r        , m(Register, d)) \
+e(jmp_label          , ) \
+e(noop               , ) \
+e(push_used_registers, m(u64, mask)) \
+e(pop_used_registers , m(u64, mask)) \
+e(prepare_stack      , m(s64, byte_count)) \
+e(debug_break        , ) \
+e(debug_line         , m(u32, line)) \
+e(debug_start_lambda , m(Expression<AstLambda>, lambda)) \
+
+
+
 enum class InstructionKind : u8 {
-	mov_rc,
-	mov_rr,
 
-	mov1_rm,
-	mov1_mc,
-	mov1_mr,
+#define e(name, ...) name,
+ENUMERATE_INSTRUCTIONS
+#undef e
 
-	mov2_rm,
-	mov2_mc,
-	mov2_mr,
-
-	mov4_rm,
-	mov4_mc,
-	mov4_mr,
-
-	mov8_rm,
-	mov8_mc,
-	mov8_mr,
-
-	xchg_r,
-	xchg1_m,
-	xchg2_m,
-	xchg4_m,
-	xchg8_m,
-
-	movsx21_rm,
-	movsx41_rm,
-	movsx81_rm,
-	movsx42_rm,
-	movsx82_rm,
-	movsx84_rm,
-
-	movzx21_rm,
-	movzx41_rm,
-	movzx81_rm,
-	movzx42_rm,
-	movzx82_rm,
-	movzx84_rm,
-
-	movsx21_rr,
-	movsx41_rr,
-	movsx81_rr,
-	movsx42_rr,
-	movsx82_rr,
-	movsx84_rr,
-
-	movzx21_rr,
-	movzx41_rr,
-	movzx81_rr,
-	movzx42_rr,
-	movzx82_rr,
-	movzx84_rr,
-
-	lea,
-
-	push_c,
-	push_r,
-	push_f,
-	push_m,
-
-	push_a, // constant data address
-	push_d, // data address
-	push_u, // uninitialized data address
-	push_t, // text address
-
-	mov_ra,
-	mov_rd,
-	mov_ru,
-	mov_rt,
-	mov_re, // extern symbol address
-
-	pop_r,
-	pop_f,
-	pop_m,
-
-	ret,
-
-	shr_rc,
-	shr_rr,
-	shr_rm,
-	shr_mc,
-	shr_mr,
-
-	shl_rc,
-	shl_rr,
-	shl_rm,
-	shl_mc,
-	shl_mr,
-
-	add_rc,
-	add_rr,
-	add_rm,
-	add_mc,
-	add_mr,
-
-	sub_rc,
-	sub_rr,
-	sub_rm,
-	sub_mc,
-	sub_mr,
-
-	mul_rc,
-	mul_rr,
-	mul_rm,
-	mul_mc,
-	mul_mr,
-
-	div_rc,
-	div_rr,
-	div_rm,
-	div_mc,
-	div_mr,
-
-	mod_rc,
-	mod_rr,
-	mod_rm,
-	mod_mc,
-	mod_mr,
-
-	not_r,
-	not_m,
-
-	or_rc,
-	or_rr,
-	or_rm,
-	or_mc,
-	or_mr,
-
-	and_rc,
-	and_rr,
-	and_rm,
-	and_mc,
-	and_mr,
-
-	xor_rc,
-	xor_rr,
-	xor_rm,
-	xor_mc,
-	xor_mr,
-
-	negi_r,
-	negi8_m,
-	negi16_m,
-	negi32_m,
-	negi64_m,
-
-	cmpu1,
-	cmpu2,
-	cmpu4,
-	cmpu8,
-
-	cmps1,
-	cmps2,
-	cmps4,
-	cmps8,
-
-	call_c,
-	call_r,
-	call_m,
-
-	jmp,
-	jz_cr, // jump to constant offset if boolean in register is zero
-	jnz_cr,
-
-	copyf_mmc,
-	copyb_mmc,
-	copyf_mmr,
-	copyb_mmr,
-
-	setf_mcc,
-	setb_mcc,
-
-	begin_lambda,
-	end_lambda,
-
-	cvt_f32_s32,
-	cvt_s32_f32,
-
-	cvt_f64_s64,
-	cvt_s64_f64,
-
-	mov_fr,
-	mov_rf,
-
-	mov1_xm,
-	mov2_xm,
-	mov4_xm,
-	mov8_xm,
-
-	add_f32_f32,
-	add_f64_f64,
-
-	mul_f32_f32,
-	mul_f64_f64,
-
-	sub_f32_f32,
-	sub_f64_f64,
-
-	div_f32_f32,
-	div_f64_f64,
-
-	xor_ff,
-
-	tobool_r,
-	toboolnot_r,
-
-	debug_break,
-
-	jmp_label,
-
-	noop,
-
-	align_stack_before_call,
-
-	push_used_registers,
-	pop_used_registers,
-
-	prepare_stack,
-
-	debug_line,
-	debug_start_lambda,
 
 	count,
 };
@@ -349,227 +323,12 @@ static_assert((int)InstructionKind::count >= 127);
 struct Instruction {
 	// put all the variants first to allow type punning from a variant back to `Instruction`
 	union {
-		struct { Register d; s64      s; } mov_rc;
-		struct { Register d; Register s; } mov_rr;
-
-		struct { Register d; Address s; } mov1_rm;
-		struct { Register d; Address s; } mov2_rm;
-		struct { Register d; Address s; } mov4_rm;
-		struct { Register d; Address s; } mov8_rm;
-
-		struct { Address d; s64 s; } mov1_mc;
-		struct { Address d; s64 s; } mov2_mc;
-		struct { Address d; s64 s; } mov4_mc;
-		struct { Address d; s64 s; } mov8_mc;
-
-		struct { Address d; Register s; } mov1_mr;
-		struct { Address d; Register s; } mov2_mr;
-		struct { Address d; Register s; } mov4_mr;
-		struct { Address d; Register s; } mov8_mr;
-
-		struct { Register a, b; } xchg_r;
-		struct { Address a; Register b; } xchg1_m;
-		struct { Address a; Register b; } xchg2_m;
-		struct { Address a; Register b; } xchg4_m;
-		struct { Address a; Register b; } xchg8_m;
-
-		struct { Register d; Address s; } movsx21_rm;
-		struct { Register d; Address s; } movsx41_rm;
-		struct { Register d; Address s; } movsx81_rm;
-		struct { Register d; Address s; } movsx42_rm;
-		struct { Register d; Address s; } movsx82_rm;
-		struct { Register d; Address s; } movsx84_rm;
-
-		struct { Register d; Address s; } movzx21_rm;
-		struct { Register d; Address s; } movzx41_rm;
-		struct { Register d; Address s; } movzx81_rm;
-		struct { Register d; Address s; } movzx42_rm;
-		struct { Register d; Address s; } movzx82_rm;
-		struct { Register d; Address s; } movzx84_rm;
-
-		struct { Register d; Register s; } movsx21_rr;
-		struct { Register d; Register s; } movsx41_rr;
-		struct { Register d; Register s; } movsx81_rr;
-		struct { Register d; Register s; } movsx42_rr;
-		struct { Register d; Register s; } movsx82_rr;
-		struct { Register d; Register s; } movsx84_rr;
-
-		struct { Register d; Register s; } movzx21_rr;
-		struct { Register d; Register s; } movzx41_rr;
-		struct { Register d; Register s; } movzx81_rr;
-		struct { Register d; Register s; } movzx42_rr;
-		struct { Register d; Register s; } movzx82_rr;
-		struct { Register d; Register s; } movzx84_rr;
-
-		struct { Register d; Address s; } lea;
-
-		struct { s64       s; } push_c;
-		struct { Register  s; } push_r;
-		struct { XRegister s; } push_f;
-		struct { Address   s; } push_m;
-
-		struct { s64 s; } push_a;
-		struct { s64 s; } push_d;
-		struct { s64 s; } push_u;
-		struct { s64 s; } push_t;
-
-		struct { Register d; s64 s; } mov_ra;
-		struct { Register d; s64 s; } mov_rd;
-		struct { Register d; s64 s; } mov_ru;
-		struct { Register d; s64 s; } mov_rt;
-		struct { Register d; String s; } mov_re;
-
-
-		struct { Register  d; } pop_r;
-		struct { XRegister d; } pop_f;
-		struct { Address   d; } pop_m;
-
-
-		struct {} ret;
-
-		struct { Register d; s64      s; } shr_rc;
-		struct { Register d; Register s; } shr_rr;
-		struct { Register d; Address  s; } shr_rm;
-		struct { Address  d; s64      s; } shr_mc;
-		struct { Address  d; Register s; } shr_mr;
-
-		struct { Register d; s64      s; } shl_rc;
-		struct { Register d; Register s; } shl_rr;
-		struct { Register d; Address  s; } shl_rm;
-		struct { Address  d; s64      s; } shl_mc;
-		struct { Address  d; Register s; } shl_mr;
-
-		struct { Register d; s64      s; } add_rc;
-		struct { Register d; Register s; } add_rr;
-		struct { Register d; Address  s; } add_rm;
-		struct { Address  d; s64      s; } add_mc;
-		struct { Address  d; Register s; } add_mr;
-
-		struct { Register d; s64      s; } sub_rc;
-		struct { Register d; Register s; } sub_rr;
-		struct { Register d; Address  s; } sub_rm;
-		struct { Address  d; s64      s; } sub_mc;
-		struct { Address  d; Register s; } sub_mr;
-
-		struct { Register d; s64      s; } mul_rc;
-		struct { Register d; Register s; } mul_rr;
-		struct { Register d; Address  s; } mul_rm;
-		struct { Address  d; s64      s; } mul_mc;
-		struct { Address  d; Register s; } mul_mr;
-
-		struct { Register d; s64      s; } div_rc;
-		struct { Register d; Register s; } div_rr;
-		struct { Register d; Address  s; } div_rm;
-		struct { Address  d; s64      s; } div_mc;
-		struct { Address  d; Register s; } div_mr;
-
-		struct { Register d; s64      s; } mod_rc;
-		struct { Register d; Register s; } mod_rr;
-		struct { Register d; Address  s; } mod_rm;
-		struct { Address  d; s64      s; } mod_mc;
-		struct { Address  d; Register s; } mod_mr;
-
-		struct { Register d; } not_r;
-		struct { Address d; } not_m;
-
-		struct { Register d; s64      s; } or_rc;
-		struct { Register d; Register s; } or_rr;
-		struct { Register d; Address  s; } or_rm;
-		struct { Address  d; s64      s; } or_mc;
-		struct { Address  d; Register s; } or_mr;
-
-		struct { Register d; s64      s; } and_rc;
-		struct { Register d; Register s; } and_rr;
-		struct { Register d; Address  s; } and_rm;
-		struct { Address  d; s64      s; } and_mc;
-		struct { Address  d; Register s; } and_mr;
-
-		struct { Register d; s64      s; } xor_rc;
-		struct { Register d; Register s; } xor_rr;
-		struct { Register d; Address  s; } xor_rm;
-		struct { Address  d; s64      s; } xor_mc;
-		struct { Address  d; Register s; } xor_mr;
-
-		struct { Register d; } negi_r;
-		struct { Address d; } negi8_m;
-		struct { Address d; } negi16_m;
-		struct { Address d; } negi32_m;
-		struct { Address d; } negi64_m;
-
-		struct { Register d, a, b; Comparison c; } cmpu1;
-		struct { Register d, a, b; Comparison c; } cmpu2;
-		struct { Register d, a, b; Comparison c; } cmpu4;
-		struct { Register d, a, b; Comparison c; } cmpu8;
-		struct { Register d, a, b; Comparison c; } cmps1;
-		struct { Register d, a, b; Comparison c; } cmps2;
-		struct { Register d, a, b; Comparison c; } cmps4;
-		struct { Register d, a, b; Comparison c; } cmps8;
-
-		// Call instructions. Equivalent to x86 call instruction - pushes rip and jumps to the destination and nothing else
-		struct { s64 constant; } call_c;
-		struct { Register   s; } call_r;
-		struct { Address    s; } call_m;
-
-		struct { s64 offset; } jmp;
-		struct { s64 offset; Register reg; } jz_cr;
-		struct { s64 offset; Register reg; } jnz_cr;
-
-		struct { Address d, s; s64 size; } copyf_mmc;
-		struct { Address d, s; s64 size; } copyb_mmc;
-		struct { Address d, s; Register size; } copyf_mmr;
-		struct { Address d, s; Register size; } copyb_mmr;
-
-		struct { Address d; s8 s; s32 size; } setf_mcc;
-		struct { Address d; s8 s; s32 size; } setb_mcc;
-
-		struct { AstLambda *lambda; CallingConvention convention; } begin_lambda;
-		struct { AstLambda *lambda; CallingConvention convention; } end_lambda;
-
-		struct {} cvt_f32_s32;
-		struct {} cvt_s32_f32;
-
-		struct {} cvt_f64_s64;
-		struct {} cvt_s64_f64;
-
-		struct { XRegister d; Register s; } mov_fr;
-		struct { Register d; XRegister s; } mov_rf;
-
-		struct { XRegister d; Address s; } mov1_xm;
-		struct { XRegister d; Address s; } mov2_xm;
-		struct { XRegister d; Address s; } mov4_xm;
-		struct { XRegister d; Address s; } mov8_xm;
-
-		struct { XRegister d; XRegister s; } add_f32_f32;
-		struct { XRegister d; XRegister s; } add_f64_f64;
-
-		struct { XRegister d; XRegister s; } mul_f32_f32;
-		struct { XRegister d; XRegister s; } mul_f64_f64;
-
-		struct { XRegister d; XRegister s; } sub_f32_f32;
-		struct { XRegister d; XRegister s; } sub_f64_f64;
-
-		struct { XRegister d; XRegister s; } div_f32_f32;
-		struct { XRegister d; XRegister s; } div_f64_f64;
-
-		struct { XRegister d; XRegister s; } xor_ff;
-
-		struct { Register d; } tobool_r;
-		struct { Register d; } toboolnot_r;
-
-		struct {} jmp_label;
-		struct {} noop;
-
-		// struct { AstLambda *lambda; } align_stack_before_call;
-
-		struct { u64 mask; } push_used_registers;
-		struct { u64 mask; } pop_used_registers;
-
-		struct { s64 byte_count; } prepare_stack;
-
-		struct {} debug_break;
-
-		struct { u32 line; } debug_line;
-		struct { Expression<AstLambda> lambda; } debug_start_lambda;
+#define ADDRESS(name) Address name
+#define e(name, ...) struct { __VA_ARGS__ } name;
+#define m(type, name) type name;
+ENUMERATE_INSTRUCTIONS
+#undef m
+#undef e
 	};
 	InstructionKind kind;
 #if BYTECODE_DEBUG
@@ -623,6 +382,8 @@ struct Bytecode {
 };
 
 Bytecode build_bytecode();
+
+void print_bytecode(InstructionList &instructions);
 
 inline umm append(StringBuilder &builder, Comparison c) {
 	switch (c) {

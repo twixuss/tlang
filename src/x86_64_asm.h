@@ -54,6 +54,8 @@ static Span<utf8> as_string(Register8  r){using enum Register8 ;switch(r){C( al)
 
 #undef C
 
+inline auto instruction_address(s64 val) { return FormatInt<s64>{.value=val, .radix=62}; }
+
 }
 
 namespace tl {
@@ -67,7 +69,14 @@ inline umm append(StringBuilder &builder, Address a) {
 	using namespace x86_64;
 	umm result = 0;
 	result += append(builder, '[');
-	result += append(builder, to_x86_register(a.base));
+	switch (a.base) {
+		using enum Register;
+		case constants: result += append(builder, "rel constants"); break;
+		case rwdata: result += append(builder, "rel rwdata"); break;
+		case zeros: result += append(builder, "rel zeros"); break;
+		case instructions: return append_format(builder, "rel .{}]", instruction_address(a.c));
+		default: result += append(builder, to_x86_register(a.base)); break;
+	}
 	if (a.r1_scale_index) {
 		if (a.r2_scale) {
 			invalid_code_path("not implemented");
@@ -113,8 +122,6 @@ inline umm append(StringBuilder &builder, XRegister r) {
 }
 
 namespace x86_64 {
-
-inline auto instruction_address(s64 val) { return FormatInt<s64>{.value=val, .radix=62}; }
 
 inline umm append_instruction(StringBuilder &builder, s64 idx, Instruction i) {
 	using enum Register64;
@@ -162,16 +169,6 @@ inline umm append_instruction(StringBuilder &builder, s64 idx, Instruction i) {
 		case push_r: return append_format(builder, "push {}", i.push_r.s);
 		case push_f: return append_format(builder, "movq rbx,{}\npush rbx", i.push_f.s);
 		case push_m: return append_format(builder, "push qword{}", i.push_m.s);
-
-		case push_a: return append_format(builder, "mov rax, constants + {}\npush rax", i.push_a.s);
-		case push_d: return append_format(builder, "mov rax, data + {}\npush rax"     , i.push_d.s);
-		case push_u: return append_format(builder, "mov rax, zeros + {}\npush rax"    , i.push_u.s);
-		case push_t: return append_format(builder, "mov rax, .{}\npush rax"           , instruction_address(i.push_t.s));
-
-		case mov_ra: return append_format(builder, "mov {}, constants + {}", i.mov_ra.d, i.mov_ra.s);
-		case mov_rd: return append_format(builder, "mov {}, rwdata + {}"   , i.mov_rd.d, i.mov_rd.s);
-		case mov_ru: return append_format(builder, "mov {}, zeros + {}"    , i.mov_ru.d, i.mov_ru.s);
-		case mov_rt: return append_format(builder, "mov {}, .{}"           , i.mov_rt.d, instruction_address(i.mov_rt.s));
 
 		case pop_r: return append_format(builder, "pop {}", i.pop_r.d);
 		case pop_f: return append_format(builder, "pop rbx\nmovq {}, rbx", i.pop_f.d);
@@ -301,10 +298,22 @@ inline umm append_instruction(StringBuilder &builder, s64 idx, Instruction i) {
 		case cmpu4: return append_format(builder, "xor {}, {}\ncmp {}, {}\nset{} {}", i.cmpu4.d, i.cmpu4.d, part4b(i.cmpu4.a), part4b(i.cmpu4.b), cmpu_string(i.cmpu4.c), part1b(i.cmpu4.d));
 		case cmpu8: return append_format(builder, "xor {}, {}\ncmp {}, {}\nset{} {}", i.cmpu8.d, i.cmpu8.d, part8b(i.cmpu8.a), part8b(i.cmpu8.b), cmpu_string(i.cmpu8.c), part1b(i.cmpu8.d));
 
-		case jmp: return append_format(builder, "jmp .{}", instruction_address(idx + i.jmp.offset));
-
 		case jz_cr:  { auto reg = part1b(i.jz_cr.reg); return append_format(builder, "test {}, {}\njz .{}", reg, reg, instruction_address(idx + i.jz_cr.offset)); }
 		case jnz_cr: { auto reg = part1b(i.jnz_cr.reg); return append_format(builder, "test {}, {}\njnz .{}", reg, reg, instruction_address(idx + i.jnz_cr.offset)); }
+
+		case cmpf1: return append_format(builder, "cmp {}, {}", part1b(i.cmpf1.a), part1b(i.cmpf1.b));
+		case cmpf2: return append_format(builder, "cmp {}, {}", part2b(i.cmpf2.a), part2b(i.cmpf2.b));
+		case cmpf4: return append_format(builder, "cmp {}, {}", part4b(i.cmpf4.a), part4b(i.cmpf4.b));
+		case cmpf8: return append_format(builder, "cmp {}, {}", part8b(i.cmpf8.a), part8b(i.cmpf8.b));
+
+		case jef_c:  { return append_format(builder, "je .{}",  instruction_address(idx + i.jef_c .offset)); }
+		case jnef_c: { return append_format(builder, "jne .{}", instruction_address(idx + i.jnef_c.offset)); }
+		case jlf_c:  { return append_format(builder, "jl .{}",  instruction_address(idx + i.jlf_c .offset)); }
+		case jgf_c:  { return append_format(builder, "jg .{}",  instruction_address(idx + i.jgf_c .offset)); }
+		case jlef_c: { return append_format(builder, "jle .{}", instruction_address(idx + i.jlef_c.offset)); }
+		case jgef_c: { return append_format(builder, "jge .{}", instruction_address(idx + i.jgef_c.offset)); }
+
+		case jmp: return append_format(builder, "jmp .{}", instruction_address(idx + i.jmp.offset));
 
 			// Here move into rcx must be last, because it can be source for rdi or rsi
 		case copyf_mmc:
@@ -357,6 +366,19 @@ inline umm append_instruction(StringBuilder &builder, s64 idx, Instruction i) {
 			);
 		case setf_mcc: return append_format(builder, "lea rdi, {}\nmov al, {}\nmov rcx, {}\nrep stosb", i.setf_mcc.d, i.setf_mcc.s, i.setf_mcc.size);
 		case setb_mcc: return append_format(builder, "lea rdi, {}\nmov al, {}\nmov rcx, {}\nadd rdi, {}\nstd\nrep stosb\ncld", i.setb_mcc.d, i.setb_mcc.s, i.setb_mcc.size, i.setb_mcc.size-1);
+
+		case cmpstr:
+			return append_format(builder,
+				"lea rsi, {}\n"
+				"lea rdi, {}\n"
+				"mov rcx, {}\n"
+				"repe cmpsb\n"
+				"sete {}",
+				i.cmpstr.a,
+				i.cmpstr.b,
+				i.cmpstr.d,
+				part1b(i.cmpstr.d)
+			);
 
 #if 0
 		case begin_lambda: {
@@ -540,6 +562,7 @@ inline umm append_instruction(StringBuilder &builder, s64 idx, Instruction i) {
 		}
 
 		case call_r: return append_format(builder, "call {}", i.call_r.s);
+		case stdcall_r: return append_format(builder, "call {}", i.stdcall_r.s);
 		case call_m:
 			return append_format(builder, "call qword {}", i.call_m.s);
 			break;
@@ -593,6 +616,20 @@ inline umm append_instruction(StringBuilder &builder, s64 idx, Instruction i) {
 
 		case debug_break: return append(builder, "int3"s);
 
+		case movsx21_rr: return append_format(builder, "movsx {}, {}", part2b(i.movsx21_rr.d), part1b(i.movsx21_rr.s));
+		case movsx41_rr: return append_format(builder, "movsx {}, {}", part4b(i.movsx41_rr.d), part1b(i.movsx41_rr.s));
+		case movsx81_rr: return append_format(builder, "movsx {}, {}", part8b(i.movsx81_rr.d), part1b(i.movsx81_rr.s));
+		case movsx42_rr: return append_format(builder, "movsx {}, {}", part4b(i.movsx42_rr.d), part2b(i.movsx42_rr.s));
+		case movsx82_rr: return append_format(builder, "movsx {}, {}", part8b(i.movsx82_rr.d), part2b(i.movsx82_rr.s));
+		case movsx84_rr: return append_format(builder, "movsx {}, {}", part8b(i.movsx84_rr.d), part4b(i.movsx84_rr.s));
+
+		case movzx21_rr: return append_format(builder, "movzx {}, {}", part2b(i.movsx21_rr.d), part1b(i.movsx21_rr.s));
+		case movzx41_rr: return append_format(builder, "movzx {}, {}", part4b(i.movsx41_rr.d), part1b(i.movsx41_rr.s));
+		case movzx81_rr: return append_format(builder, "movzx {}, {}", part8b(i.movsx81_rr.d), part1b(i.movsx81_rr.s));
+		case movzx42_rr: return append_format(builder, "movzx {}, {}", part4b(i.movsx42_rr.d), part2b(i.movsx42_rr.s));
+		case movzx82_rr: return append_format(builder, "movzx {}, {}", part8b(i.movsx82_rr.d), part2b(i.movsx82_rr.s));
+		case movzx84_rr: return append_format(builder, "mov {}, {}", part4b(i.movsx84_rr.d), part4b(i.movsx84_rr.s));
+
 		case movsx21_rm: return append_format(builder, "movsx {}, byte {}",  part2b(i.movsx21_rm.d), i.movsx21_rm.s);
 		case movsx41_rm: return append_format(builder, "movsx {}, byte {}",  part4b(i.movsx41_rm.d), i.movsx41_rm.s);
 		case movsx81_rm: return append_format(builder, "movsx {}, byte {}",  part8b(i.movsx81_rm.d), i.movsx81_rm.s);
@@ -605,7 +642,7 @@ inline umm append_instruction(StringBuilder &builder, s64 idx, Instruction i) {
 		case movzx81_rm: return append_format(builder, "movzx {}, byte {}",  part8b(i.movsx81_rm.d), i.movsx81_rm.s);
 		case movzx42_rm: return append_format(builder, "movzx {}, word {}",  part4b(i.movsx42_rm.d), i.movsx42_rm.s);
 		case movzx82_rm: return append_format(builder, "movzx {}, word {}",  part8b(i.movsx82_rm.d), i.movsx82_rm.s);
-		case movzx84_rm: return append_format(builder, "movzx {}, dword {}", part8b(i.movsx84_rm.d), i.movsx84_rm.s);
+		case movzx84_rm: return append_format(builder, "mov {}, dword {}", part4b(i.movsx84_rm.d), i.movsx84_rm.s);
 
 		case push_used_registers: {
 			umm ch = 0;

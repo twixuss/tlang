@@ -47,7 +47,7 @@ static void append_instructions(CompilerContext &context, StringBuilder &builder
 
 DECLARE_OUTPUT_BUILDER {
 	init_allocator();
-	current_printer = console_printer;
+	init_printer();
 
 	timed_function(context.profiler);
 
@@ -182,7 +182,7 @@ section '.idata' import data readable writeable
 
 	auto process = start_process(bat_path);
 	if (!process.handle) {
-		print(Print_error, "Cannot execute file '{}'\n", bat_path);
+		with(ConsoleColor::red, print("Cannot execute file '{}'\n", bat_path));
 		return;
 	}
 
@@ -208,7 +208,7 @@ section '.idata' import data readable writeable
 	wait(process);
 	auto exit_code = get_exit_code(process);
 	if (exit_code != 0) {
-		print(Print_error, "Build command failed\n");
+		with(ConsoleColor::red, print("Build command failed\n"));
 		return;
 	}
 
