@@ -202,7 +202,7 @@ void append_type(StringBuilder &builder, AstExpression *type, bool silent_error)
 		case Ast_Subscript: {
 			auto subscript = (AstSubscript *)type;
 			append(builder, '[');
-			append(builder, (s64)get_constant_integer(subscript->index_expression).value());
+			append(builder, get_constant_integer(subscript->index_expression).map<s64>().value_or(-1));
 			append(builder, ']');
 			append_type(builder, subscript->expression, silent_error);
 			break;
@@ -262,7 +262,9 @@ HeapString type_name(AstExpression *type, bool silent_error) {
 	return (HeapString)to_string<MyAllocator>(builder);
 }
 
-s64 get_size(AstExpression *type) {
+s64 get_size(AstExpression *_type) {
+	auto type = _type->directed ? _type->directed : direct(_type);
+
 	assert(type);
 	assert(types_match(type->type, builtin_type), "attemt to get_size of an expression, not a type!");
 	switch (type->kind) {
@@ -368,8 +370,9 @@ bool types_match(AstExpression *a, AstExpression *b) {
 	if (a == b)
 		return true;
 
-	a = direct(a);
-	b = direct(b);
+	// TODO: this is way too slow.
+	a = a->directed ? a->directed : direct(a);
+	b = b->directed ? b->directed : direct(b);
 
 	if (a->kind != b->kind) {
 		return false;

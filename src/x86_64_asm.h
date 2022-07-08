@@ -180,6 +180,7 @@ inline umm append_instruction(StringBuilder &builder, s64 idx, Instruction i) {
 		case shl_mr: return append_format(builder, "mov cl,{}\nshl qword{},cl", part1b(i.shl_mr.s), i.shl_mr.d);
 
 		case shr_rc: return append_format(builder, "shr {}, {}", i.shr_rc.d, i.shr_rc.s);
+		case shr_rr: return append_format(builder, "mov cl, {}\nshr {}, cl", part1b(i.shr_rr.s), i.shr_rr.d);
 		case shr_mr: return append_format(builder, "mov cl, {}\nshr qword {}, cl", part1b(i.shr_mr.s), i.shr_mr.d);
 
 		case add_rc: return append_format(builder, "add {},{}"      , i.add_rc.d, i.add_rc.s);
@@ -580,11 +581,8 @@ inline umm append_instruction(StringBuilder &builder, s64 idx, Instruction i) {
 
 		case lea: return append_format(builder, "lea {}, {}", i.lea.d, i.lea.s);
 
-		case cvt_f32_s32: return append(builder, "cvtss2si eax, [rsp]\nmov [rsp], eax");
-		case cvt_s32_f32: return append(builder, "cvtsi2ss xmm7, [rsp]\nmovd [rsp], xmm7");
-
-		case cvt_f64_s64: return append(builder, "cvtsd2si rax, [rsp]\nmov [rsp], rax");
-		case cvt_s64_f64: return append(builder, "cvtsi2sd xmm7, [rsp]\nmovq [rsp], xmm7");
+		case cvt_f32_s32: return append_format(builder, "movd xmm7, {}\ncvtss2si {}, xmm7", part4b(i.cvt_f32_s32.d), part4b(i.cvt_f32_s32.d));
+		case cvt_s32_f32: return append_format(builder, "cvtsi2ss xmm7, {}\nmovd {}, xmm7", part4b(i.cvt_s32_f32.d), part4b(i.cvt_s32_f32.d));
 
 		case mov_fr: return append_format(builder, "movq {}, {}", i.mov_fr.d, i.mov_fr.s);
 	    case mov_rf: return append_format(builder, "movq {}, {}", i.mov_rf.d, i.mov_rf.s);
@@ -594,15 +592,10 @@ inline umm append_instruction(StringBuilder &builder, s64 idx, Instruction i) {
 		case mov4_xm: return append_format(builder, "movd {}, dword {}", i.mov4_xm.d, i.mov4_xm.s);
 		case mov8_xm: return append_format(builder, "movq {}, qword {}", i.mov8_xm.d, i.mov8_xm.s);
 
-	    case add_f32_f32: return append_format(builder, "addss {}, {}", i.add_f32_f32.d, i.add_f32_f32.s);
-	    case sub_f32_f32: return append_format(builder, "subss {}, {}", i.sub_f32_f32.d, i.sub_f32_f32.s);
-	    case mul_f32_f32: return append_format(builder, "mulss {}, {}", i.mul_f32_f32.d, i.mul_f32_f32.s);
-	    case div_f32_f32: return append_format(builder, "divss {}, {}", i.div_f32_f32.d, i.div_f32_f32.s);
-
-	    case add_f64_f64: return append_format(builder, "addsd {}, {}", i.add_f64_f64.d, i.add_f64_f64.s);
-	    case sub_f64_f64: return append_format(builder, "subsd {}, {}", i.sub_f64_f64.d, i.sub_f64_f64.s);
-	    case mul_f64_f64: return append_format(builder, "mulsd {}, {}", i.mul_f64_f64.d, i.mul_f64_f64.s);
-	    case div_f64_f64: return append_format(builder, "divsd {}, {}", i.div_f64_f64.d, i.div_f64_f64.s);
+	    case add_ff: return append_format(builder, "movd xmm6, {}\nmovd xmm7, {}\naddss xmm6, xmm7\nmovd {}, xmm6", part4b(i.add_ff.d), part4b(i.add_ff.s), part4b(i.add_ff.d));
+	    case sub_ff: return append_format(builder, "movd xmm6, {}\nmovd xmm7, {}\nsubss xmm6, xmm7\nmovd {}, xmm6", part4b(i.sub_ff.d), part4b(i.sub_ff.s), part4b(i.sub_ff.d));
+	    case mul_ff: return append_format(builder, "movd xmm6, {}\nmovd xmm7, {}\nmulss xmm6, xmm7\nmovd {}, xmm6", part4b(i.mul_ff.d), part4b(i.mul_ff.s), part4b(i.mul_ff.d));
+	    case div_ff: return append_format(builder, "movd xmm6, {}\nmovd xmm7, {}\ndivss xmm6, xmm7\nmovd {}, xmm6", part4b(i.div_ff.d), part4b(i.div_ff.s), part4b(i.div_ff.d));
 
 	    case xor_ff: return append_format(builder, "xorps {}, {}", i.xor_ff.d, i.xor_ff.s);
 
@@ -716,11 +709,11 @@ inline umm append_instruction(StringBuilder &builder, s64 idx, Instruction i) {
 			}
 			return ch;
 		}
-		case xchg_r: return append_format(builder, "xchg {},{}", i.xchg_r.a, i.xchg_r.b);
-		case xchg1_m: return append_format(builder, "xchg {},{}", i.xchg1_m.a, part1b(i.xchg1_m.b));
-		case xchg2_m: return append_format(builder, "xchg {},{}", i.xchg2_m.a, part2b(i.xchg2_m.b));
-		case xchg4_m: return append_format(builder, "xchg {},{}", i.xchg4_m.a, part4b(i.xchg4_m.b));
-		case xchg8_m: return append_format(builder, "xchg {},{}", i.xchg8_m.a, part8b(i.xchg8_m.b));
+		case xchg_rr: return append_format(builder, "xchg {},{}", i.xchg_rr.a, i.xchg_rr.b);
+		case xchg1_mr: return append_format(builder, "xchg {},{}", i.xchg1_mr.a, part1b(i.xchg1_mr.b));
+		case xchg2_mr: return append_format(builder, "xchg {},{}", i.xchg2_mr.a, part2b(i.xchg2_mr.b));
+		case xchg4_mr: return append_format(builder, "xchg {},{}", i.xchg4_mr.a, part4b(i.xchg4_mr.b));
+		case xchg8_mr: return append_format(builder, "xchg {},{}", i.xchg8_mr.a, part8b(i.xchg8_mr.b));
 		case debug_start_lambda:
 		case debug_line:
 			return 0;

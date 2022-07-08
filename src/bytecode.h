@@ -8,27 +8,39 @@
 // registers r0-r4 are scratch and are used for expression evaluation
 // registers r5-r7 are allocatable
 // register rs is a stack pointer, and it must be aligned to 16 bytes before executing a call instruction
+#define ENUMERATE_REGISTERS \
+e(sr0) \
+e(sr1) \
+e(sr2) \
+e(sr3) \
+d(first_scratch_register , sr0) \
+d(last_scratch_register  , sr3) \
+e(ar0) \
+e(ar1) \
+e(ar2) \
+e(ar3) \
+d(first_allocatable_register, ar0) \
+d(last_allocatable_register , ar3) \
+e(r8) \
+e(r9) \
+e(r10) \
+e(rs) \
+e(rb) \
+e(parameters) \
+e(locals) \
+e(temporary) \
+e(constants) \
+e(rwdata) \
+e(zeros) \
+e(instructions) \
+
 enum class Register : u8 {
-	r0,  // scratch
-	r1,  // scratch
-	r2,  // scratch
-	r3,  // allocatable
-	r4,  // allocatable
-	r5,  // allocatable
-	r6,  // allocatable
-	r7,  // allocatable
-	r8,  // rax
-	r9,  // r10
-	r10, // r11
-	rs,  //
-	rb,  // stack base
-	parameters,
-	locals,
-	temporary,
-	constants,
-	rwdata,
-	zeros,
-	instructions,
+
+#define e(x) x,
+#define d(x, y) x = y,
+	ENUMERATE_REGISTERS
+#undef d
+#undef e
 	count,
 };
 
@@ -63,7 +75,7 @@ struct Address {
 	}
 
 	Address() = default;
-	Address(Register base) : base(base) {}
+	explicit Address(Register base) : base(base) {}
 };
 
 inline Address operator+(Register r, s64 c) {
@@ -141,11 +153,11 @@ e(mov1_mr            , m(Address, d) m(Register, s)) \
 e(mov2_mr            , m(Address, d) m(Register, s)) \
 e(mov4_mr            , m(Address, d) m(Register, s)) \
 e(mov8_mr            , m(Address, d) m(Register, s)) \
-e(xchg_r             , m(Register, a) m(Register, b)) \
-e(xchg1_m            , m(Address, a) m(Register, b)) \
-e(xchg2_m            , m(Address, a) m(Register, b)) \
-e(xchg4_m            , m(Address, a) m(Register, b)) \
-e(xchg8_m            , m(Address, a) m(Register, b)) \
+e(xchg_rr            , m(Register, a) m(Register, b)) \
+e(xchg1_mr           , m(Address, a) m(Register, b)) \
+e(xchg2_mr           , m(Address, a) m(Register, b)) \
+e(xchg4_mr           , m(Address, a) m(Register, b)) \
+e(xchg8_mr           , m(Address, a) m(Register, b)) \
 e(movsx21_rm         , m(Register, d) m(Address, s)) \
 e(movsx41_rm         , m(Register, d) m(Address, s)) \
 e(movsx81_rm         , m(Register, d) m(Address, s)) \
@@ -215,11 +227,16 @@ e(mod_rr             , m(Register, d) m(Register, s)) \
 e(mod_rm             , m(Register, d) m(Address, s)) \
 e(mod_mc             , m(Address, d) m(s64, s)) \
 e(mod_mr             , m(Address, d) m(Register, s)) \
+e(rotl_rc            , m(Register, d) m(s64, s)) \
+e(rotr_rc            , m(Register, d) m(s64, s)) \
 e(not_r              , m(Register, d)) \
 e(not_m              , m(Address, d)) \
 e(or_rc              , m(Register, d) m(s64, s)) \
 e(or_rr              , m(Register, d) m(Register, s)) \
-e(or_rm              , m(Register, d) m(Address, s)) \
+e(or1_rm             , m(Register, d) m(Address, s)) \
+e(or2_rm             , m(Register, d) m(Address, s)) \
+e(or4_rm             , m(Register, d) m(Address, s)) \
+e(or8_rm             , m(Register, d) m(Address, s)) \
 e(or_mc              , m(Address, d) m(s64, s)) \
 e(or_mr              , m(Address, d) m(Register, s)) \
 e(and_rc             , m(Register, d) m(s64, s)) \
@@ -273,24 +290,20 @@ e(setf_mcc           , m(Address, d) m(s8, s) m(s32, size)) \
 e(setb_mcc           , m(Address, d) m(s8, s) m(s32, size)) \
 e(begin_lambda       , m(AstLambda *, lambda) m(CallingConvention, convention)) \
 e(end_lambda         , m(AstLambda *, lambda) m(CallingConvention, convention)) \
-e(cvt_f32_s32        , ) \
-e(cvt_s32_f32        , ) \
-e(cvt_f64_s64        , ) \
-e(cvt_s64_f64        , ) \
+e(cvt_f32_s32        , m(Register, d)) \
+e(cvt_s32_f32        , m(Register, d)) \
+e(cvt_f64_s64        , m(Register, d)) \
+e(cvt_s64_f64        , m(Register, d)) \
 e(mov_fr             , m(XRegister, d) m(Register, s)) \
 e(mov_rf             , m(Register, d) m(XRegister, s)) \
 e(mov1_xm            , m(XRegister, d) m(Address, s)) \
 e(mov2_xm            , m(XRegister, d) m(Address, s)) \
 e(mov4_xm            , m(XRegister, d) m(Address, s)) \
 e(mov8_xm            , m(XRegister, d) m(Address, s)) \
-e(add_f32_f32        , m(XRegister, d) m(XRegister, s)) \
-e(add_f64_f64        , m(XRegister, d) m(XRegister, s)) \
-e(mul_f32_f32        , m(XRegister, d) m(XRegister, s)) \
-e(mul_f64_f64        , m(XRegister, d) m(XRegister, s)) \
-e(sub_f32_f32        , m(XRegister, d) m(XRegister, s)) \
-e(sub_f64_f64        , m(XRegister, d) m(XRegister, s)) \
-e(div_f32_f32        , m(XRegister, d) m(XRegister, s)) \
-e(div_f64_f64        , m(XRegister, d) m(XRegister, s)) \
+e(add_ff             , m(Register, d) m(Register, s)) \
+e(mul_ff             , m(Register, d) m(Register, s)) \
+e(sub_ff             , m(Register, d) m(Register, s)) \
+e(div_ff             , m(Register, d) m(Register, s)) \
 e(xor_ff             , m(XRegister, d) m(XRegister, s)) \
 e(tobool_r           , m(Register, d)) \
 e(toboolnot_r        , m(Register, d)) \
@@ -317,6 +330,16 @@ ENUMERATE_INSTRUCTIONS
 
 // Make sure instruction count does not go over 256
 static_assert((int)InstructionKind::count >= 127);
+
+inline umm append(StringBuilder &builder, InstructionKind kind) {
+	switch (kind) {
+		using enum InstructionKind;
+#define e(name, ...) case name: return append(builder, #name);
+ENUMERATE_INSTRUCTIONS
+#undef e
+		default: return append(builder, "unknown");
+	}
+}
 
 #pragma pack(push, 1)
 

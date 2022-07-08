@@ -88,7 +88,11 @@ static void append_instructions(CompilerContext &context, StringBuilder &builder
 		}
 		for (umm i = n; i < 30; ++i)
 			append(builder, ' ');
+#if BYTECODE_DEBUG
 		append_format(builder, "; #{} @ bytecode.cpp:{}\n", idx, i.line);
+#else
+		append_format(builder, "; #{}\n", idx);
+#endif
 		++idx;
 	}
 }

@@ -74,6 +74,7 @@ e(EmptyStatement) \
 e(For) \
 e(LoopControl) \
 e(Match) \
+e(Using) \
 
 enum AstKind : u8 {
 	Ast_Unknown = 0,
@@ -108,14 +109,9 @@ inline static constexpr AstKind kind_of = Ast_Unknown;
 struct AstNode;
 struct AstStatement;
 struct AstExpression;
-struct AstDefinition;
-struct AstLambda;
-struct AstStruct;
-struct AstLiteral;
-struct AstDefer;
-struct AstCall;
-struct AstIdentifier;
-struct AstPack;
+#define e(name) struct Ast##name;
+	ENUMERATE_AST_KIND
+#undef e
 
 #pragma pack(push, 1)
 template <class T>
@@ -239,6 +235,7 @@ struct Scope : DefaultAllocatable<Scope> {
 	u32 level = 0;
 	SmallList<Scope *> children;
 	SmallList<AstStatement *> statements;
+	SmallList<AstUsing *> usings;
 	Map<KeyString, DefinitionList> definitions; // multiple definitions for a single name in case of function overloading
 	SmallList<AstDefer *> bytecode_defers;
 	u32 defers_start_index = 0;
@@ -296,8 +293,12 @@ struct AstExpressionStatement : AstStatement, StatementPool<AstExpressionStateme
 
 struct AstExpression : AstNode {
 	Expression<> type = {};
+	Expression<> directed = {};
 	// Expression<AstLiteral> evaluated = {};
 	bool is_parenthesized : 1 = false;
+	AstExpression() {
+		directed = this;
+	}
 };
 
 #define ENUMERATE_LITERAL_KINDS \
@@ -519,7 +520,7 @@ struct AstLambda : AstExpression, ExpressionPool<AstLambda> {
 
 	SmallList<HardenedPoly> hardened_polys;
 	Expression<AstLambda> original_poly = {};
-
+	Expression<> insert_into = {};
 
 	bool has_body                   : 1 = true;
 	bool is_type                    : 1 = false;
@@ -959,6 +960,15 @@ struct AstMatch : AstStatement, StatementPool<AstMatch> {
 	BlockList<MatchCase> cases; // elements need to be persistent in memory cause they contain Scope.
 	MatchCase *default_case = 0;
 	String default_case_location = {};
+};
+
+struct AstUsing : AstStatement, StatementPool<AstUsing> {
+	AstUsing() {
+		kind = Ast_Using;
+	}
+
+	Expression<> expression = {};
+	Statement<AstDefinition> definition = {};
 };
 
 struct BuiltinStruct {

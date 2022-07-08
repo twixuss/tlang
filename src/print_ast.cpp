@@ -15,26 +15,8 @@ void print_tabs() {
 
 #define print_label(...) (print_tabs(), print(__VA_ARGS__))
 
-void print_ast(AstBinaryOperator *node);
-void print_ast(AstDefinition *node);
-void print_ast(AstLambda *node);
-void print_ast(AstIdentifier *node);
-void print_ast(AstLiteral *node);
-void print_ast(AstReturn *node);
-void print_ast(AstCall *node);
-void print_ast(AstStruct *node);
-void print_ast(AstIf *node);
-void print_ast(AstIfx *node);
-void print_ast(AstWhile *node);
-void print_ast(AstExpressionStatement *node);
-void print_ast(AstUnaryOperator *node);
-void print_ast(AstSubscript *node);
-void print_ast(AstTuple*node);
-void print_ast(AstAssert*node);
-void print_ast(AstParse* parse);
 void print_ast(AstNode *node) {
-	print_tabs();
-	print("{}\n", node->location);
+	with(ConsoleColor::dark_green, print_tabbed("{}\n", node->location));
 	switch (node->kind) {
 		case Ast_Definition: return print_ast((AstDefinition *)node);
 		case Ast_Lambda:     return print_ast((AstLambda     *)node);
@@ -45,6 +27,7 @@ void print_ast(AstNode *node) {
 		case Ast_If:         return print_ast((AstIf         *)node);
 		case Ast_Ifx:        return print_ast((AstIfx        *)node);
 		case Ast_While:      return print_ast((AstWhile      *)node);
+		case Ast_Match:      return print_ast((AstMatch      *)node);
 		case Ast_ExpressionStatement: return print_ast((AstExpressionStatement *)node);
 		case Ast_BinaryOperator: return print_ast((AstBinaryOperator *)node);
 		case Ast_Struct: return print_ast((AstStruct *)node);
@@ -56,6 +39,12 @@ void print_ast(AstNode *node) {
 		default:
 			print_tabbed("unknown - uid: {}\n", node->uid());
 			break;
+	}
+}
+
+void print_ast(Scope &scope) {
+	for (auto statement : scope.statements) {
+		print_ast(statement);
 	}
 }
 
@@ -264,9 +253,7 @@ void print_ast(AstWhile *node) {
 	tab_count -= 1;
 	print_label("statements:\n");
 	tab_count += 1;
-	for (auto statement : node->scope.statements) {
-		print_ast(statement);
-	}
+	print_ast(node->scope);
 	tab_count -= 1;
 	tab_count -= 1;
 }
@@ -288,6 +275,42 @@ void print_ast(AstParse* parse) {
 	print_tabbed("parse - uid: {}\n", parse->uid());
 	tab_count += 1;
 	print_ast(parse->expression);
+	tab_count -= 1;
+}
+void print_ast(AstMatch* match) {
+	print_tabbed("match - uid: {}\n", match->uid());
+	tab_count += 1;
+
+	print_tabbed("expression:\n");
+	tab_count += 1;
+	print_ast(match->expression);
+	tab_count -= 1;
+
+	print_tabbed("cases:\n");
+	tab_count += 1;
+	u32 case_index = 0;
+	for (auto &Case : match->cases) {
+		defer {case_index += 1;};
+		print_tabbed("case {}:\n", case_index);
+		tab_count += 1;
+		if (Case.expression) {
+			print_tabbed("expression:\n");
+			tab_count += 1;
+			print_ast(Case.expression);
+			tab_count -= 1;
+		} else {
+			print_tabbed("default case:\n");
+		}
+
+		print_tabbed("scope:\n");
+		tab_count += 1;
+		print_ast(Case.scope);
+		tab_count -= 1;
+
+		tab_count -= 1;
+	}
+	tab_count -= 1;
+
 	tab_count -= 1;
 }
 

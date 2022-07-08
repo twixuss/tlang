@@ -29,6 +29,7 @@ E(continue, 0x100000b) \
 E(break,    0x100000c) \
 E(match,    0x100000d) \
 E(empty,    0x100000e) \
+E(using,    0x100000f) \
 
 #define ENUMERATE_TOKEN_KINDS(E) \
 E(identifier,        0x2000000) \

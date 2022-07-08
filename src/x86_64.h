@@ -10,26 +10,26 @@ enum class Register16:u8{ ax, cx, dx, bx, sp, bp, si, di,r8w,r9w,r10w,r11w,r12w,
 enum class Register8 :u8{ al, cl, dl, bl,spl,bpl,sil,dil,r8b,r9b,r10b,r11b,r12b,r13b,r14b,r15b};
 
 // Microsoft 64 bit calling convention - saved registers
-// -------------------------------------
-// | reg | volatile | used in bytecode |
-// -------------------------------------
-// | rax |    +     |                  |
-// | rbx |          |                  | used for bunch of bytecode instructions, for example to save rdx in div/idiv, or for pushing/popping floats
-// | rcx |    +     | +                |
-// | rdx |    +     | +                |
-// | rsi |          |                  |
-// | rdi |          |                  |
-// | rsp |          | +                |
-// | rbp |          | +                |
-// | r8  |    +     | +                |
-// | r9  |    +     | +                |
-// | r10 |    +     |                  |
-// | r11 |    +     |                  |
-// | r12 |          | +                |
-// | r13 |          | +                |
-// | r14 |          | +                |
-// | r15 |          | +                |
-// -------------------------------------
+// +-----+----------+
+// | reg | volatile |
+// +-----+----------+
+// | rax |    +     |
+// | rbx |          | used for bunch of bytecode instructions, for example to save rdx in div/idiv, or for pushing/popping floats
+// | rcx |    +     |
+// | rdx |    +     |
+// | rsi |          |
+// | rdi |          |
+// | rsp |          |
+// | rbp |          |
+// | r8  |    +     |
+// | r9  |    +     |
+// | r10 |    +     |
+// | r11 |    +     |
+// | r12 |          |
+// | r13 |          |
+// | r14 |          |
+// | r15 |          |
+// +-----+----------+
 
 inline static constexpr Register64 stdcall_int_registers[] {
 	Register64::rcx,
@@ -46,14 +46,14 @@ inline static constexpr XRegister stdcall_float_registers[] {
 };
 
 #define REGISTER_MAP \
-	C(r0, rcx) \
-	C(r1, rdx) \
-	C(r2, r8)  \
-	C(r3, r9)  \
-	C(r4, r12) \
-	C(r5, r13) \
-	C(r6, r14) \
-	C(r7, r15) \
+	C(sr0, rcx) \
+	C(sr1, rdx) \
+	C(sr2, r8)  \
+	C(sr3, r9)  \
+	C(ar0, r12) \
+	C(ar1, r13) \
+	C(ar2, r14) \
+	C(ar3, r15) \
 	C(r8, rax) \
 	C(r9, r10) \
 	C(r10, r11) \

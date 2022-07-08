@@ -115,6 +115,11 @@ dprint_hex :: fn (_val : uint) {
     }
 }
 
+dprintln :: fn (value) {
+	dprint(value);
+	dprint_char('\n');
+}
+
 print :: fn (value) {
 	b := StringBuilder.create();
 	append(&b, value);

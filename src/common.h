@@ -266,7 +266,7 @@ extern CompilerContext context;
 		timed_block(context.profiler, as_utf8(as_span(message))); \
         context.phase_timers.add(create_precise_timer()); \
 		++context.tabs; \
-        defer { if(!context.do_profile) return; --context.tabs; for (int i = 0; i < context.tabs;++i) print("  "); print("{} done in {} ms.\n", message, get_time(context.phase_timers.pop()) * 1000); }
+        defer { if(!context.do_profile) return; --context.tabs; for (int i = 0; i < context.tabs;++i) print("  "); print("{} done in {} ms.\n", message, get_time(context.phase_timers.pop().value()) * 1000); }
 
 enum class Comparison : u8 {
 	e,

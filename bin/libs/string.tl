@@ -16,12 +16,13 @@ StringBuilder :: struct {
 	last: *Block;
 	alloc_last: *Block;
     count: uint;
-    create :: fn (): result: StringBuilder {
-        // result.allocator = current_allocator;
-        result.first.capacity = STRING_BUILDER_INITIAL_BUFFER_CAPACITY;
-        result.last = &result.first;
-        result.alloc_last = &result.first;
-    }
+}
+create :: fn (this :: StringBuilder): result: StringBuilder {
+	using result;
+	// allocator = current_allocator;
+	first.capacity = STRING_BUILDER_INITIAL_BUFFER_CAPACITY;
+	last = &first;
+	alloc_last = &first;
 }
 
 begin :: fn (block: *StringBuilder.Block): *u8 => @&block[1];
@@ -118,6 +119,45 @@ append :: fn (b: *StringBuilder, _val : uint) {
         dst_index += 1;
     }
 }
+append_hex :: fn (b: *StringBuilder, _val: uint) {
+    val := _val;
+    if val == 0 {
+        append(b, "0");
+        return;
+    }
+
+	max_char_count: uint : 16;
+
+    i := val;
+    buffer: u8[max_char_count];
+    dst_index := max_char_count;
+
+    while i != 0 {
+        digit := i & 15;
+
+        dst_index -= 1;
+		
+		if digit < 10
+			buffer[dst_index] = @(digit + '0');
+		else 
+			buffer[dst_index] = @(digit + ('a' - 10));
+
+        i >>= 4;
+    }
+    
+    dst_index -= 1;
+	
+	while true {
+		buffer[dst_index] = '0';
+		
+		if dst_index == 0
+			break;
+		dst_index -= 1;
+	}
+	
+	append(b, string(&buffer[dst_index], max_char_count - dst_index));
+}
+
 append :: fn (b: *StringBuilder, v: s8 ) => append(b, v as s64);
 append :: fn (b: *StringBuilder, v: s16) => append(b, v as s64);
 append :: fn (b: *StringBuilder, v: s32) => append(b, v as s64);
@@ -160,35 +200,22 @@ append :: fn (b: *StringBuilder, value: any): void {
 			}
 			append(b, "}");
 		}
-		.pointer => append(b, value.pointer as uint);
+		.pointer => append_hex(b, *(value.pointer as *uint));
 		.array => {
 			i :u64 = 0;
 			append(b, "[");
 			
-			if info.array_count > 16 {
-				while i < 8 {
-					if i != 0
-						append(b, ", ");
-						
-					append(b, any(value.pointer + i * info.pointee.size, info.pointee));
-					i += 1;
-				}
-				append(b, ", ...");
-				
-				i = info.array_count - 8;
-				while i < info.array_count {
+			while i < info.array_count {
+				if i != 0
 					append(b, ", ");
-					append(b, any(value.pointer + i * info.pointee.size, info.pointee));
-					i += 1;
+				
+				if i == 8 && i < info.array_count - 8 as uint {
+					i = info.array_count - 8;
+					append(b, "..., ");
 				}
-			} else {
-				while i < info.array_count {
-					if i != 0
-						append(b, ", ");
-						
-					append(b, any(value.pointer + i * info.pointee.size, info.pointee));
-					i += 1;
-				}
+				
+				append(b, any(value.pointer + i * info.pointee.size, info.pointee));
+				i += 1;
 			}
 			append(b, "]");
 		}
