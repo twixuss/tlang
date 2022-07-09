@@ -1,29 +1,31 @@
-SHORT :: s16;
-INT   :: s32;
-LONG  :: s32;
+#stdcall
 
-USHORT :: u16;
-UINT   :: u32;
-ULONG  :: u32;
+SHORT :: S16;
+INT   :: S32;
+LONG  :: S32;
 
-PUINT :: *u32;
+USHORT :: U16;
+UINT   :: U32;
+ULONG  :: U32;
 
-BOOL :: s32;
+PUINT :: *U32;
 
-BYTE  :: u8;
-WORD  :: u16;
-DWORD :: u32;
-QWORD :: u64;
+BOOL :: S32;
+
+BYTE  :: U8;
+WORD  :: U16;
+DWORD :: U32;
+QWORD :: U64;
 
 LPBYTE  :: *BYTE;
 LPWORD  :: *WORD;
 LPDWORD :: *DWORD;
 LPQWORD :: *QWORD;
 
-INT_PTR :: int;
-LONG_PTR :: int;
-UINT_PTR :: uint;
-ULONG_PTR :: uint;
+INT_PTR   :: Int;
+LONG_PTR  :: Int;
+UINT_PTR  :: UInt;
+ULONG_PTR :: UInt;
 
 SIZE_T  :: ULONG_PTR;
 SSIZE_T :: LONG_PTR;
@@ -32,28 +34,28 @@ WPARAM  :: UINT_PTR;
 LPARAM  :: LONG_PTR;
 LRESULT :: LONG_PTR;
 
-ATOM :: u16;
+ATOM :: U16;
 
-LPVOID :: *void;
-LPCVOID :: *void;
+LPVOID  :: *Void;
+LPCVOID :: *Void;
 
-HANDLE    :: *void;
-HMODULE   :: *void;
-HWND      :: *void;
-HICON     :: *void;
-HBRUSH    :: *void;
-HCURSOR   :: *void;
-HINSTANCE :: *void;
-HMENU     :: *void;
-HDC       :: *void;
-HRAWINPUT :: *void;
+HANDLE    :: *Void;
+HMODULE   :: *Void;
+HWND      :: *Void;
+HICON     :: *Void;
+HBRUSH    :: *Void;
+HCURSOR   :: *Void;
+HINSTANCE :: *Void;
+HMENU     :: *Void;
+HDC       :: *Void;
+HRAWINPUT :: *Void;
 
-PSTR   :: *u8;
+PSTR   :: *U8;
 PCSTR  :: PSTR;
 LPSTR  :: PSTR;
 LPCSTR :: PSTR;
 
-WNDPROC :: #type fn #stdcall (hwnd : HWND, uMsg : UINT, wParam : WPARAM, lParam : LPARAM): LRESULT;
+WNDPROC :: (hwnd : HWND, uMsg : UINT, wParam : WPARAM, lParam : LPARAM): LRESULT #type;
 
 #layout_c
 
@@ -61,8 +63,8 @@ WNDCLASSEXA :: struct {
 	cbSize        : UINT;
 	style         : UINT;
 	lpfnWndProc   : WNDPROC;
-	cbClsExtra    : s32;
-	cbWndExtra    : s32;
+	cbClsExtra    : INT;
+	cbWndExtra    : INT;
 	hInstance     : HINSTANCE;
 	hIcon         : HICON;
 	hCursor       : HCURSOR;
@@ -169,12 +171,12 @@ RAWINPUT :: struct {
 PRAWINPUT  :: *RAWINPUT;
 LPRAWINPUT :: *RAWINPUT;
 
-STD_INPUT_HANDLE  :: -10 as u32; // The standard input device. Initially, this is the console input buffer, CONIN$.
-STD_OUTPUT_HANDLE :: -11 as u32; // The standard output device. Initially, this is the active console screen buffer, CONOUT$.
-STD_ERROR_HANDLE  :: -12 as u32; // The standard error device. Initially, this is the active console screen buffer, CONOUT$.
+STD_INPUT_HANDLE  :: -10 as U32; // The standard input device. Initially, this is the console input buffer, CONIN$.
+STD_OUTPUT_HANDLE :: -11 as U32; // The standard output device. Initially, this is the active console screen buffer, CONOUT$.
+STD_ERROR_HANDLE  :: -12 as U32; // The standard error device. Initially, this is the active console screen buffer, CONOUT$.
 
-SECURITY_ATTRIBUTES :: void;
-OVERLAPPED :: void;
+SECURITY_ATTRIBUTES :: Void;
+OVERLAPPED :: Void;
 
 GENERIC_READ    :: 0x80000000;
 GENERIC_WRITE   :: 0x40000000;
@@ -874,32 +876,30 @@ RI_MOUSE_BUTTON_3_DOWN :: RI_MOUSE_MIDDLE_BUTTON_DOWN;
 RI_MOUSE_BUTTON_3_UP   :: RI_MOUSE_MIDDLE_BUTTON_UP;
 
 
-IDC_APPSTARTING :: 32650 as *u8;
-IDC_ARROW       :: 32512 as *u8;
-IDC_CROSS       :: 32515 as *u8;
-IDC_HAND        :: 32649 as *u8;
-IDC_HELP        :: 32651 as *u8;
-IDC_IBEAM       :: 32513 as *u8;
-IDC_ICON        :: 32641 as *u8;
-IDC_NO          :: 32648 as *u8;
-IDC_SIZE        :: 32640 as *u8;
-IDC_SIZEALL     :: 32646 as *u8;
-IDC_SIZENESW    :: 32643 as *u8;
-IDC_SIZENS      :: 32645 as *u8;
-IDC_SIZENWSE    :: 32642 as *u8;
-IDC_SIZEWE      :: 32644 as *u8;
-IDC_UPARROW     :: 32516 as *u8;
-IDC_WAIT        :: 32514 as *u8;
+IDC_APPSTARTING :: 32650 as *U8;
+IDC_ARROW       :: 32512 as *U8;
+IDC_CROSS       :: 32515 as *U8;
+IDC_HAND        :: 32649 as *U8;
+IDC_HELP        :: 32651 as *U8;
+IDC_IBEAM       :: 32513 as *U8;
+IDC_ICON        :: 32641 as *U8;
+IDC_NO          :: 32648 as *U8;
+IDC_SIZE        :: 32640 as *U8;
+IDC_SIZEALL     :: 32646 as *U8;
+IDC_SIZENESW    :: 32643 as *U8;
+IDC_SIZENS      :: 32645 as *U8;
+IDC_SIZENWSE    :: 32642 as *U8;
+IDC_SIZEWE      :: 32644 as *U8;
+IDC_UPARROW     :: 32516 as *U8;
+IDC_WAIT        :: 32514 as *U8;
 
-
-#stdcall
 #extern_library "kernel32"
 
-GetStdHandle :: fn (nStdHandle: DWORD): HANDLE;
+GetStdHandle :: (nStdHandle: DWORD): HANDLE;
 
-WriteConsoleA :: fn (hConsoleOutput: HANDLE, lpBuffer: LPCVOID, nNumberOfCharsToWrite: DWORD, lpNumberOfCharsWritten: LPDWORD, lpReserved: LPVOID): BOOL;
+WriteConsoleA :: (hConsoleOutput: HANDLE, lpBuffer: LPCVOID, nNumberOfCharsToWrite: DWORD, lpNumberOfCharsWritten: LPDWORD, lpReserved: LPVOID): BOOL;
 
-CreateFileA :: fn (
+CreateFileA :: (
 	lpFileName: LPCSTR,
 	dwDesiredAccess: DWORD,
 	dwShareMode: DWORD,
@@ -909,7 +909,7 @@ CreateFileA :: fn (
 	hTemplateFile: HANDLE
 ): HANDLE;
 
-WriteFile :: fn (
+WriteFile :: (
 	hFile:                  HANDLE,
 	lpBuffer:               LPCVOID,
 	nNumberOfBytesToWrite:  DWORD,
@@ -917,56 +917,56 @@ WriteFile :: fn (
 	lpOverlapped:           *OVERLAPPED
 ): BOOL;
 
-GetLastError :: fn (): DWORD;
+GetLastError :: (): DWORD;
 
-VirtualAlloc :: fn (
+VirtualAlloc :: (
 	lpAddress        : LPVOID,
 	dwSize           : SIZE_T,
 	flAllocationType : DWORD,
 	flProtect        : DWORD
 ): LPVOID;
 
-VirtualFree :: fn (
+VirtualFree :: (
 	lpAddress: LPVOID,
 	dwSize: SIZE_T,
 	dwFreeType: DWORD
 ): BOOL;
 
-GetModuleHandleA :: fn (
+GetModuleHandleA :: (
 	lpModuleName : LPCSTR
 ): HMODULE;
 
-ExitProcess :: fn (ret: u32);
+ExitProcess :: (ret: UINT);
 
 #extern_library "user32"
 
-RegisterClassExA :: fn (
+RegisterClassExA :: (
 	unnamedParam1 : *WNDCLASSEXA
 ): ATOM;
 
-DefWindowProcA :: fn (
+DefWindowProcA :: (
 	hWnd   : HWND,
 	Msg    : UINT,
 	wParam : WPARAM,
 	lParam : LPARAM 
 ): LRESULT ;
 
-CreateWindowExA :: fn (
+CreateWindowExA :: (
 	dwExStyle    : DWORD,
 	lpClassName  : LPCSTR,
 	lpWindowName : LPCSTR,
 	dwStyle      : DWORD,
-	X            : s32,
-	Y            : s32,
-	nWidth       : s32,
-	nHeight      : s32,
+	X            : INT,
+	Y            : INT,
+	nWidth       : INT,
+	nHeight      : INT,
 	hWndParent   : HWND,
 	hMenu        : HMENU,
 	hInstance    : HINSTANCE,
 	lpParam      : LPVOID
 ): HWND;
 
-PeekMessageA :: fn (
+PeekMessageA :: (
 	lpMsg         : LPMSG,
 	hWnd          : HWND,
 	wMsgFilterMin : UINT, 
@@ -974,38 +974,38 @@ PeekMessageA :: fn (
 	wRemoveMsg    : UINT 
 ): BOOL;
 
-TranslateMessage :: fn (
+TranslateMessage :: (
 	lpMsg : *MSG
 ): BOOL;
 
-DispatchMessageA :: fn (
+DispatchMessageA :: (
 	lpMsg : *MSG
 ): LRESULT;
 
-PostQuitMessage :: fn (
-  nExitCode : s32
+PostQuitMessage :: (
+  nExitCode : INT
 );
 
-LoadCursorA :: fn (
+LoadCursorA :: (
   hInstance    : HINSTANCE,
   lpCursorName : LPCSTR
 ): HCURSOR;
 
-GetDC :: fn (
+GetDC :: (
   hWnd : HWND
 ): HDC;
 
-RegisterRawInputDevices :: fn (
+RegisterRawInputDevices :: (
     pRawInputDevices: PCRAWINPUTDEVICE,
     uiNumDevices: UINT,
     cbSize: UINT
 ): BOOL;
 
-SetCapture :: fn (hWnd: HWND): HWND;
+SetCapture :: (hWnd: HWND): HWND;
 
-ReleaseCapture :: fn (): BOOL;
+ReleaseCapture :: (): BOOL;
 
-GetRawInputData :: fn (
+GetRawInputData :: (
   hRawInput:    HRAWINPUT,
   uiCommand:    UINT,
   pData:	    LPVOID,

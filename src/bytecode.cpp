@@ -118,6 +118,14 @@ struct InstructionThatReferencesLambda {
 	AstLambda *lambda;
 };
 
+struct DefinitionAddress {
+	bool is_known;
+	union {
+		RegisterOrAddress computed_address;
+		Address           known_address;
+	};
+};
+
 struct Converter {
 	InstructionList builder;
 	//SectionBuilder constant_data_builder;
@@ -206,12 +214,13 @@ struct Converter {
 
 	void append(Scope &scope);
 
-
 	void load_address_of(AstExpression *expression, RegisterOrAddress destination);
 	void load_address_of(AstDefinition *definition, RegisterOrAddress destination);
 
 	RegisterOrAddress load_address_of(AstExpression *expression) { auto destination = get_destination({}, context.stack_word_size); load_address_of(expression, destination); return destination; }
 	RegisterOrAddress load_address_of(AstDefinition *definition) { auto destination = get_destination({}, context.stack_word_size); load_address_of(definition, destination); return destination; }
+
+	DefinitionAddress get_address_of(AstDefinition *definition);
 
 	void append_memory_set(InstructionList &list, Address d, s64 s, s64 size, bool reverse);
 	void append_memory_set(Address d, s64 s, s64 size, bool reverse);
@@ -285,12 +294,12 @@ void remove_last_instruction(Converter &conv) {
 #define LOAD_ADDRESS_INTO_REGISTER(name, source, fallback) \
 	auto _reg_or_addr = load_address_of(source); \
 	defer { \
-		if (_reg_or_addr.is_register) { \
+		if (_reg_or_addr.is_in_register) { \
 			free_register(_reg_or_addr.reg); \
 		} \
 	}; \
 	Register name = fallback; \
-	if (_reg_or_addr.is_register) { \
+	if (_reg_or_addr.is_in_register) { \
 		name = _reg_or_addr.reg; \
 	} else { \
 		I(mov8_rm, name, _reg_or_addr.address); \
@@ -300,12 +309,12 @@ void remove_last_instruction(Converter &conv) {
 	assert(get_size(source->type) <= context.stack_word_size); \
 	auto CONCAT(_, __LINE__) = append(source); \
 	defer { \
-		if (CONCAT(_, __LINE__).is_register) { \
+		if (CONCAT(_, __LINE__).is_in_register) { \
 			free_register(CONCAT(_, __LINE__).reg); \
 		} \
 	}; \
 	Register name = fallback; \
-	if (CONCAT(_, __LINE__).is_register) { \
+	if (CONCAT(_, __LINE__).is_in_register) { \
 		name = CONCAT(_, __LINE__).reg; \
 	} else { \
 		mov_rm(get_size(source->type), name, CONCAT(_, __LINE__).address); \
@@ -388,14 +397,14 @@ void Converter::copy(RegisterOrAddress dst, RegisterOrAddress src, s64 size, boo
 	if (size == 0)
 		return;
 
-	if (dst.is_register) {
-		if (src.is_register) {
+	if (dst.is_in_register) {
+		if (src.is_in_register) {
 			I(mov_rr, dst.reg, src.reg);
 		} else {
 			mov_rm(size, dst.reg, src.address);
 		}
 	} else {
-		if (src.is_register) {
+		if (src.is_in_register) {
 			mov_mr(size, dst.address, src.reg);
 		} else {
 			REDECLARE_VAL(src, src.address);
@@ -1086,7 +1095,7 @@ inline umm append(StringBuilder &b, LambdaDefinitionLocation d) {
 }
 
 void check_destination(RegisterOrAddress destination) {
-	if (destination.is_register) {
+	if (destination.is_in_register) {
 		assert(destination.reg != sr0);
 		assert(destination.reg != sr1);
 		assert(destination.reg != sr2);
@@ -1150,52 +1159,38 @@ DefinitionOrigin get_definition_origin(AstDefinition *definition) {
 }
 
 Address get_known_address_of(AstDefinition *definition) {
-	s64 definition_size = ceil(get_size(definition->type), context.stack_word_size);
-
 	assert(definition->offset != -1);
 
 	if (definition->parent_lambda_or_struct && !definition->is_constant) {
 		switch (definition->parent_lambda_or_struct->kind) {
 			case Ast_Lambda: {
+				auto parent_lambda = (AstLambda *)definition->parent_lambda_or_struct;
+				assert(parent_lambda->kind == Ast_Lambda);
+				assert(parent_lambda->parameters_size != -1);
+
+				s64 const stack_base_register_size = context.stack_word_size;
+				s64 const return_address_size = context.stack_word_size;
+				s64 const parameters_end_offset = stack_base_register_size + return_address_size + parent_lambda->parameters_size;
+				s64 const return_parameters_start_offset = parameters_end_offset;
+
 				switch (definition->definition_location) {
 					case LambdaDefinitionLocation::return_parameter:
+						return rb + return_parameters_start_offset;
+
 					case LambdaDefinitionLocation::parameter:
+						return rb + parameters_end_offset - 8 - definition->offset;
+
 					case LambdaDefinitionLocation::body: {
-
-						auto parent_lambda = (AstLambda *)definition->parent_lambda_or_struct;
-						assert(parent_lambda->kind == Ast_Lambda);
-						assert(parent_lambda->parameters_size != -1);
-
-						s64 const stack_base_register_size = context.stack_word_size;
-						s64 const return_address_size = context.stack_word_size;
-						s64 const parameters_end_offset = stack_base_register_size + return_address_size + parent_lambda->parameters_size;
-						s64 const return_parameters_start_offset = parameters_end_offset;
-
-						Instruction *offset_instr = 0;
-
-						switch (definition->definition_location) {
-							case LambdaDefinitionLocation::return_parameter:
-								return rb + return_parameters_start_offset;
-
-							case LambdaDefinitionLocation::parameter:
-								return rb + parameters_end_offset - 8 - definition->offset;
-
-							case LambdaDefinitionLocation::body: {
-								return locals + definition->offset;
-							}
-							default: invalid_code_path();
-						}
-						break;
+						return locals + definition->offset;
 					}
 					default: invalid_code_path();
 				}
+				break;
 			}
 			default: invalid_code_path();
 		}
 	} else {
-		//
 		// Global
-		//
 		auto offset = definition->offset;
 		if (definition->is_constant) {
 			return constants + offset;
@@ -1212,8 +1207,6 @@ Address get_known_address_of(AstDefinition *definition) {
 void Converter::load_address_of(AstDefinition *definition, RegisterOrAddress destination) {
 	push_comment(format("load address of {} (definition_location={})"str, definition->name, definition->definition_location));
 
-	s64 definition_size = ceil(get_size(definition->type), context.stack_word_size);
-
 	assert(definition->offset != -1);
 
 	if (definition->parent_lambda_or_struct && !definition->is_constant) {
@@ -1222,7 +1215,7 @@ void Converter::load_address_of(AstDefinition *definition, RegisterOrAddress des
 				switch (definition->definition_location) {
 					case LambdaDefinitionLocation::body: {
 						auto addr = get_known_address_of(definition);
-						if (destination.is_register) {
+						if (destination.is_in_register) {
 							I(lea, destination.reg, addr);
 						} else {
 							I(lea, sr0, addr);
@@ -1234,14 +1227,14 @@ void Converter::load_address_of(AstDefinition *definition, RegisterOrAddress des
 					case LambdaDefinitionLocation::parameter: {
 						auto addr = get_known_address_of(definition);
 						if (get_size(definition->type) <= context.stack_word_size) {
-							if (destination.is_register) {
+							if (destination.is_in_register) {
 								I(lea, destination.reg, addr);
 							} else {
 								I(lea, sr0, addr);
 								I(mov8_mr, destination.address, sr0);
 							}
 						} else {
-							if (destination.is_register) {
+							if (destination.is_in_register) {
 								I(lea, destination.reg, addr);
 								I(mov8_rm, destination.reg, Address(destination.reg));
 							} else {
@@ -1259,7 +1252,7 @@ void Converter::load_address_of(AstDefinition *definition, RegisterOrAddress des
 		}
 	} else {
 		auto addr = get_known_address_of(definition);
-		if (destination.is_register) {
+		if (destination.is_in_register) {
 			I(lea, destination.reg, addr);
 		} else {
 			I(lea, sr0, addr);
@@ -1283,13 +1276,13 @@ void Converter::load_address_of(AstExpression *expression, RegisterOrAddress des
 
 			if (lambda->has_body) {
 				Instruction *instr = 0;
-				if (destination.is_register) { instr = II(lea, destination.reg, Address(instructions)); }
+				if (destination.is_in_register) { instr = II(lea, destination.reg, Address(instructions)); }
 				else                         { instr = II(lea, sr0, Address(instructions)); I(mov8_mr, destination.address, sr0); }
 
 				instructions_that_reference_lambdas.add({.instruction=instr, .lambda=lambda});
 			} else {
 				assert((s64)(s32)count_of(lambda->definition->name) == (s64)count_of(lambda->definition->name));
-				if (destination.is_register) {
+				if (destination.is_in_register) {
 					I(mov_re, destination.reg, (String)lambda->definition->name);
 				} else {
 					I(mov_re, sr0, (String)lambda->definition->name);
@@ -1333,7 +1326,7 @@ void Converter::load_address_of(AstExpression *expression, RegisterOrAddress des
 				load_address_of(binop->left, destination);
 
 			if (offset) {
-				if (destination.is_register) I(add_rc, destination.reg, offset);
+				if (destination.is_in_register) I(add_rc, destination.reg, offset);
 				else                         I(add_mc, destination.address, offset);
 			}
 
@@ -1346,7 +1339,7 @@ void Converter::load_address_of(AstExpression *expression, RegisterOrAddress des
 
 			if (auto span = direct_as<AstSpan>(subscript->expression->type)) {
 				load_address_of(subscript->expression, destination);
-				if (destination.is_register) {
+				if (destination.is_in_register) {
 					I(mov8_rm, destination.reg, Address(destination.reg));
 				} else {
 					I(mov8_rm, sr0, destination.address);
@@ -1358,7 +1351,7 @@ void Converter::load_address_of(AstExpression *expression, RegisterOrAddress des
 
 				I(mul_rc, index, get_size(subscript->type));
 
-				if (destination.is_register)
+				if (destination.is_in_register)
 					I(add_rr, destination.reg, index);
 				else
 					I(add_mr, destination.address, index);
@@ -1369,7 +1362,7 @@ void Converter::load_address_of(AstExpression *expression, RegisterOrAddress des
 
 				I(mul_rc, index, get_size(subscript->type));
 
-				if (destination.is_register)
+				if (destination.is_in_register)
 					I(add_rr, destination.reg, index);
 				else
 					I(add_mr, destination.address, index);
@@ -1379,17 +1372,17 @@ void Converter::load_address_of(AstExpression *expression, RegisterOrAddress des
 				auto _reg_or_addr1 = load_address_of(subscript->expression);
 				auto _reg_or_addr2 = append(subscript->index_expression);
 				defer {
-					if (_reg_or_addr1.is_register) free_register(_reg_or_addr1.reg);
-					if (_reg_or_addr2.is_register) free_register(_reg_or_addr2.reg);
+					if (_reg_or_addr1.is_in_register) free_register(_reg_or_addr1.reg);
+					if (_reg_or_addr2.is_in_register) free_register(_reg_or_addr2.reg);
 				};
 
 				Register string = sr0;
 				Register index = sr1;
 
-				if (_reg_or_addr1.is_register) string = _reg_or_addr1.reg;
+				if (_reg_or_addr1.is_in_register) string = _reg_or_addr1.reg;
 				else                           I(mov8_rm, string, _reg_or_addr1.address);
 
-				if (_reg_or_addr2.is_register) index = _reg_or_addr2.reg;
+				if (_reg_or_addr2.is_in_register) index = _reg_or_addr2.reg;
 				else                           I(mov8_rm, index, _reg_or_addr2.address);
 
 				auto count = sr2;
@@ -1406,7 +1399,7 @@ void Converter::load_address_of(AstExpression *expression, RegisterOrAddress des
 				I(mul_rc, index, get_size(subscript->type));
 				I(add_rr, index, string);
 
-				if (destination.is_register)
+				if (destination.is_in_register)
 					I(mov_rr, destination.reg, index);
 				else
 					I(mov8_mr, destination.address, index);
@@ -1418,7 +1411,7 @@ void Converter::load_address_of(AstExpression *expression, RegisterOrAddress des
 
 				I(mul_rc, index, get_size(subscript->type));
 
-				if (destination.is_register)
+				if (destination.is_in_register)
 					I(add_rr, destination.reg, index);
 				else
 					I(add_mr, destination.address, index);
@@ -1494,6 +1487,60 @@ void Converter::load_address_of(AstExpression *expression, RegisterOrAddress des
 	}
 }
 
+DefinitionAddress Converter::get_address_of(AstDefinition *definition) {
+	push_comment(format("load address of {} (definition_location={})"str, definition->name, definition->definition_location));
+
+	assert(definition->offset != -1);
+
+	if (definition->parent_lambda_or_struct && !definition->is_constant) {
+		switch (definition->parent_lambda_or_struct->kind) {
+			case Ast_Lambda: {
+				switch (definition->definition_location) {
+					case LambdaDefinitionLocation::body: {
+						return {
+							.is_known = true,
+							.known_address = get_known_address_of(definition),
+						};
+					}
+					case LambdaDefinitionLocation::return_parameter:
+					case LambdaDefinitionLocation::parameter: {
+						auto destination = get_destination({}, context.stack_word_size);
+						auto addr = get_known_address_of(definition);
+						if (get_size(definition->type) <= context.stack_word_size) {
+							if (destination.is_in_register) {
+								I(lea, destination.reg, addr);
+							} else {
+								I(lea, sr0, addr);
+								I(mov8_mr, destination.address, sr0);
+							}
+						} else {
+							if (destination.is_in_register) {
+								I(lea, destination.reg, addr);
+								I(mov8_rm, destination.reg, Address(destination.reg));
+							} else {
+								I(mov8_rm, sr0, addr);
+								I(mov8_mr, destination.address, sr0);
+							}
+						}
+						return {
+							.is_known = false,
+							.computed_address = destination,
+						};
+					}
+					default: invalid_code_path();
+				}
+				break;
+			}
+			default: invalid_code_path();
+		}
+	} else {
+		return {
+			.is_known = true,
+			.known_address = get_known_address_of(definition),
+		};
+	}
+}
+
 void Converter::append_memory_set(InstructionList &list, Address d, s64 s, s64 size, bool reverse) {
 
 	s &= 0xff;
@@ -1520,13 +1567,13 @@ void Converter::append_memory_set(Address d, s64 s, s64 size, bool reverse) {
 
 void Converter::append_struct_initializer(AstStruct *Struct, SmallList<AstExpression *> values, RegisterOrAddress destination) {
 	Address tmp;
-	if (destination.is_register) {
+	if (destination.is_in_register) {
 		debug_break();
 		tmp = allocate_temporary_space(Struct->size);
 	}
 
 	{
-		scoped_replace_if(destination, tmp, destination.is_register);
+		scoped_replace_if(destination, tmp, destination.is_in_register);
 		auto struct_size = ceil(get_size(Struct), 8ll);
 
 		push_comment(format("struct initializer {}"str, Struct->definition ? Struct->definition->name : where(Struct->location.data)));
@@ -1539,8 +1586,6 @@ void Converter::append_struct_initializer(AstStruct *Struct, SmallList<AstExpres
 			auto member_address = destination.address + member->offset;
 
 			if (arg) {
-				assert(types_match(arg->type, member->type));
-
 				append(arg, member_address);
 			} else {
 				// zero initialize
@@ -1549,13 +1594,21 @@ void Converter::append_struct_initializer(AstStruct *Struct, SmallList<AstExpres
 		}
 	}
 
-	if (destination.is_register) {
+	if (destination.is_in_register) {
 		I(mov8_rm, destination.reg, tmp);
 	}
 }
 
 void Converter::append(Scope &scope) {
 	scoped_replace(ls->current_scope, &scope);
+
+	ls->temporary_size = max(ls->temporary_size, ls->temporary_cursor);
+	auto start_temporary_cursor = ls->temporary_cursor;
+	defer {
+		ls->temporary_size = max(ls->temporary_size, ls->temporary_cursor);
+		ls->temporary_cursor = start_temporary_cursor;
+	};
+
 	for (auto statement : scope.statements) {
 		// if (statement->uid() == 1826)
 		// 	debug_break();
@@ -1564,8 +1617,7 @@ void Converter::append(Scope &scope) {
 
 		push_comment((Span<utf8>)format("==== {}: {} ====", where(statement->location.data), statement->location));
 
-		ls->temporary_size = max(ls->temporary_size, ls->temporary_cursor);
-		ls->temporary_cursor = 0;
+		// ls->temporary_cursor = 0;
 
 		assert(ls->available_registers.bits == ls->initial_available_registers.bits);
 		append(statement);
@@ -1829,7 +1881,7 @@ void Converter::append(AstExpressionStatement *es) {
 	// TODO: FIXME: this may allocate temporary space.
 	// Figure a way to not produce the result.
 	auto value = append(es->expression);
-	if (value.is_register)
+	if (value.is_in_register)
 		free_register(value.reg);
 }
 void Converter::append(AstAssert *Assert) {
@@ -1988,7 +2040,7 @@ void Converter::append(AstBinaryOperator *bin, RegisterOrAddress destination) {
 		case bxor:
 		case bsr:
 		case bsl: {
-			if (destination.is_register) {
+			if (destination.is_in_register) {
 				append(left, destination);
 				APPEND_INTO_REGISTER(rr, right, sr1);
 
@@ -2026,17 +2078,17 @@ void Converter::append(AstBinaryOperator *bin, RegisterOrAddress destination) {
 				auto left_  = append(left);
 				auto right_ = append(right);
 				defer {
-					if (left_ .is_register) free_register(left_.reg);
-					if (right_.is_register) free_register(right_.reg);
+					if (left_ .is_in_register) free_register(left_.reg);
+					if (right_.is_in_register) free_register(right_.reg);
 				};
 				Register l = sr0;
 				Register r = sr1;
-				if (left_.is_register) {
+				if (left_.is_in_register) {
 					l = left_.reg;
 				} else {
 					I(mov8_rm, l, left_.address);
 				}
-				if (right_.is_register) {
+				if (right_.is_in_register) {
 					r = right_.reg;
 				} else {
 					I(mov8_rm, r, right_.address);
@@ -2090,7 +2142,7 @@ void Converter::append(AstBinaryOperator *bin, RegisterOrAddress destination) {
 				I(mov8_rm, sr2, ra + 8);
 				I(cmpu8, sr0, sr1, sr2, Comparison::e);
 				I(jnz_cr, 3, sr0);
-				if (destination.is_register) {
+				if (destination.is_in_register) {
 					I(mov_rc, destination.reg, 0);
 				} else {
 					I(mov1_mc, destination.address, 0);
@@ -2102,7 +2154,7 @@ void Converter::append(AstBinaryOperator *bin, RegisterOrAddress destination) {
 				I(mov8_rm, sr0, la);
 				I(mov8_rm, sr1, ra);
 				I(cmpstr, sr2, Address(sr0), Address(sr1));
-				if (destination.is_register) {
+				if (destination.is_in_register) {
 					I(mov_rr, destination.reg, sr2);
 				} else {
 					I(mov1_mr, destination.address, sr2);
@@ -2116,17 +2168,17 @@ void Converter::append(AstBinaryOperator *bin, RegisterOrAddress destination) {
 			auto la = append(left);
 			auto ra = append(right);
 			defer {
-				if (la.is_register) free_register(la.reg);
-				if (ra.is_register) free_register(ra.reg);
+				if (la.is_in_register) free_register(la.reg);
+				if (ra.is_in_register) free_register(ra.reg);
 			};
 			Register rl = sr0;
 			Register rr = sr1;
-			if (la.is_register) {
+			if (la.is_in_register) {
 				rl = la.reg;
 			} else {
 				I(mov8_rm, rl, la.address);
 			}
-			if (ra.is_register) {
+			if (ra.is_in_register) {
 				rr = ra.reg;
 			} else {
 				I(mov8_rm, rr, ra.address);
@@ -2134,7 +2186,7 @@ void Converter::append(AstBinaryOperator *bin, RegisterOrAddress destination) {
 
 			auto comparison = comparison_from_binary_operation(bin->operation);
 
-			if (destination.is_register) {
+			if (destination.is_in_register) {
 				if (::is_signed(left->type)) {
 					switch (get_size(left->type)) {
 						case 1: I(cmps1, .d=destination.reg, .a=rl, .b=rr, .c = comparison); break;
@@ -2177,8 +2229,8 @@ void Converter::append(AstBinaryOperator *bin, RegisterOrAddress destination) {
 		case ass: {
 #if 1
 			auto dst_addr = load_address_of(left);
-			defer { if (dst_addr.is_register) free_register(dst_addr.reg); };
-			if (dst_addr.is_register) {
+			defer { if (dst_addr.is_in_register) free_register(dst_addr.reg); };
+			if (dst_addr.is_in_register) {
 
 				//auto original = allocate_temporary_space(8);
 				//I(mov8_mr, original, dst_addr.reg);
@@ -2194,10 +2246,10 @@ void Converter::append(AstBinaryOperator *bin, RegisterOrAddress destination) {
 			} else {
 				auto src = append(right);
 				defer {
-					if (src.is_register) free_register(src.reg);
+					if (src.is_in_register) free_register(src.reg);
 				};
 				Register dst = sr0;
-				if (dst_addr.is_register) {
+				if (dst_addr.is_in_register) {
 					dst = dst_addr.reg;
 				} else {
 					I(mov8_rm, dst, dst_addr.address);
@@ -2211,11 +2263,11 @@ void Converter::append(AstBinaryOperator *bin, RegisterOrAddress destination) {
 			auto dst_rm = load_address_of(left);
 			auto src = append(right);
 			defer {
-				if (dst_rm.is_register) free_register(dst_rm.reg);
-				if (src.is_register) free_register(src.reg);
+				if (dst_rm.is_in_register) free_register(dst_rm.reg);
+				if (src.is_in_register) free_register(src.reg);
 			};
 			Register dst = sr0;
-			if (dst_rm.is_register) {
+			if (dst_rm.is_in_register) {
 				dst = dst_rm.reg;
 			} else {
 				I(mov8_rm, dst, dst_rm.address);
@@ -2223,7 +2275,7 @@ void Converter::append(AstBinaryOperator *bin, RegisterOrAddress destination) {
 
 			auto size = get_size(bin->left->type);
 
-			if (src.is_register) {
+			if (src.is_in_register) {
 				mov_mr(size, dst, src.reg);
 			} else {
 				copy(dst, src.address, size, false, {}, {});
@@ -2282,7 +2334,7 @@ void Converter::append(AstBinaryOperator *bin, RegisterOrAddress destination) {
 				auto array = as_array(from);
 				auto span = as_span(to);
 				if (array && span) {
-					assert(!destination.is_register);
+					assert(!destination.is_in_register);
 					assert(context.stack_word_size == 8);
 
 					if (is_addressable(left)) {
@@ -2307,11 +2359,11 @@ void Converter::append(AstBinaryOperator *bin, RegisterOrAddress destination) {
 			if (auto span = as_span(from)) {
 				auto from_value = append(cast->left);
 
-				assert(!from_value.is_register, "not implemented");
+				assert(!from_value.is_in_register, "not implemented");
 
 				if (::is_integer(bin->right)) {
 					auto count_addr = from_value.address + context.stack_word_size;
-					if (destination.is_register) {
+					if (destination.is_in_register) {
 						I(mov8_rm, destination.reg, count_addr);
 					} else {
 						I(mov8_rm, sr0, count_addr);
@@ -2319,7 +2371,7 @@ void Converter::append(AstBinaryOperator *bin, RegisterOrAddress destination) {
 					}
 				} else if (::is_pointer(bin->right)) {
 					auto data_addr = from_value.address;
-					if (destination.is_register) {
+					if (destination.is_in_register) {
 						I(mov8_rm, destination.reg, data_addr);
 					} else {
 						I(mov8_rm, sr0, data_addr);
@@ -2341,17 +2393,17 @@ void Converter::append(AstBinaryOperator *bin, RegisterOrAddress destination) {
 				//auto uncasted = destination;
 				//append(cast->left, destination);
 				auto uncasted = append(cast->left);
-				defer { if (uncasted.is_register) free_register(uncasted.reg); };
+				defer { if (uncasted.is_in_register) free_register(uncasted.reg); };
 
 				bool extended = false;
 
 #define C(z,d,s) \
 	extended = true; \
-	if (destination.is_register) { \
-		if (uncasted.is_register) I(mov##z##x##d##s##_rr, destination.reg, uncasted.reg); \
+	if (destination.is_in_register) { \
+		if (uncasted.is_in_register) I(mov##z##x##d##s##_rr, destination.reg, uncasted.reg); \
 		else                      I(mov##z##x##d##s##_rm, destination.reg, uncasted.address); \
 	} else { \
-		if (uncasted.is_register) I(mov##z##x##d##s##_rr, sr0, uncasted.reg); /* NOTE: movsx/movzx into a memory is not a thing! */ \
+		if (uncasted.is_in_register) I(mov##z##x##d##s##_rr, sr0, uncasted.reg); /* NOTE: movsx/movzx into a memory is not a thing! */ \
 		else                      I(mov##z##x##d##s##_rm, sr0, uncasted.address); \
 		I(mov##d##_mr, destination.address, sr0); \
 	}
@@ -2403,7 +2455,7 @@ void Converter::append(AstBinaryOperator *bin, RegisterOrAddress destination) {
 			if (::is_integer(from) && ::is_float(to)) {
 				append(cast->left, destination);
 
-				if (destination.is_register) {
+				if (destination.is_in_register) {
 					if (false) {
 					} else if (from == builtin_s32.Struct) {
 						if (false) {}
@@ -2430,7 +2482,7 @@ void Converter::append(AstBinaryOperator *bin, RegisterOrAddress destination) {
 
 					append(cast->left, tmp);
 
-					if (destination.is_register) {
+					if (destination.is_in_register) {
 						I(mov1_rm, destination.reg, tmp + get_size(option->expression));
 					} else {
 						I(mov1_rm, sr0, tmp + get_size(option->expression));
@@ -2442,7 +2494,7 @@ void Converter::append(AstBinaryOperator *bin, RegisterOrAddress destination) {
 			}
 
 			if (auto option = as_option(to)) {
-				assert(!destination.is_register, "not implemented");
+				assert(!destination.is_in_register, "not implemented");
 				append(cast->left, destination);
 				I(mov1_mc, destination.address + get_size(option->expression), 1);
 				return;
@@ -2452,7 +2504,7 @@ void Converter::append(AstBinaryOperator *bin, RegisterOrAddress destination) {
 			break;
 		}
 		case lor: {
-			if (destination.is_register) {
+			if (destination.is_in_register) {
 				append(bin->left, destination);
 
 				auto jump = I(jnz_cr, 0, destination.reg);
@@ -2481,7 +2533,7 @@ void Converter::append(AstBinaryOperator *bin, RegisterOrAddress destination) {
 			break;
 		}
 		case land: {
-			if (destination.is_register) {
+			if (destination.is_in_register) {
 				append(bin->left, destination);
 
 				auto jump = I(jz_cr, 0, destination.reg);
@@ -3095,9 +3147,25 @@ void Converter::append(AstIdentifier *identifier, RegisterOrAddress destination)
 
 	auto definition = identifier->definition();
 
-	LOAD_ADDRESS_INTO_REGISTER(definition_address, definition, sr0);
+	//LOAD_ADDRESS_INTO_REGISTER(definition_address, definition, sr0);
 
-	copy(destination, Address(definition_address), get_size(identifier->type), false);
+	auto definition_address = get_address_of(definition);
+	if (definition_address.is_known) {
+		copy(destination, definition_address.known_address, get_size(identifier->type), false);
+	} else {
+		auto computed_address = definition_address.computed_address;
+		defer {
+			if (computed_address.is_in_register)
+				free_register(computed_address.reg);
+		};
+		Register definition_address_register = sr0;
+		if (computed_address.is_in_register) {
+			definition_address_register = computed_address.reg;
+		} else {
+			mov_rm(context.stack_word_size, definition_address_register, computed_address.address);
+		}
+		copy(destination, Address(definition_address_register), get_size(identifier->type), false);
+	}
 
 	return;
 	not_implemented();
@@ -3483,7 +3551,7 @@ void Converter::append(AstLiteral *literal, RegisterOrAddress destination) {
 	// TODO: FIXME: there is a lot of copypasta
 	switch (literal->literal_kind) {
 		case string: {
-			assert(!destination.is_register);
+			assert(!destination.is_in_register);
 			assert(context.stack_word_size == 8);
 			assert(literal->string.offset != -1);
 			I(lea, sr0, constants + literal->string.offset);
@@ -3492,13 +3560,13 @@ void Converter::append(AstLiteral *literal, RegisterOrAddress destination) {
 			break;
 		}
 		case character:
-			if (destination.is_register) I(mov_rc, destination.reg, (s64)literal->character);
+			if (destination.is_in_register) I(mov_rc, destination.reg, (s64)literal->character);
 			else                         I(mov1_mc, destination.address, (s64)literal->character);
 			break;
 		case Float:
 			push_comment(format(u8"float {}", literal->Float));
 
-			if (destination.is_register) {
+			if (destination.is_in_register) {
 				switch (get_size(literal->type)) {
 					case 4: I(mov_rc, destination.reg, (s64)std::bit_cast<s32>((f32)literal->Float)); break;
 					case 8: I(mov_rc, destination.reg, (s64)std::bit_cast<s64>((f64)literal->Float)); break;
@@ -3513,12 +3581,12 @@ void Converter::append(AstLiteral *literal, RegisterOrAddress destination) {
 			}
 			break;
 		case boolean:
-			if (destination.is_register) I(mov_rc, destination.reg, (s64)literal->Bool);
+			if (destination.is_in_register) I(mov_rc, destination.reg, (s64)literal->Bool);
 			else                         I(mov1_mc, destination.address, (s64)literal->Bool);
 			break;
 		case integer: {
 			assert(context.stack_word_size == 8);
-			if (destination.is_register) {
+			if (destination.is_in_register) {
 				if (dtype == builtin_u8 .Struct|| dtype == builtin_s8.Struct)
 					I(mov_rc, destination.reg, (s64)literal->integer);
 				else if (dtype == builtin_u16 .Struct|| dtype == builtin_s16.Struct)
@@ -3560,7 +3628,7 @@ void Converter::append(AstLiteral *literal, RegisterOrAddress destination) {
 			break;
 		}
 		case null: {
-			if (destination.is_register) {
+			if (destination.is_in_register) {
 				I(xor_rr, destination.reg, destination.reg);
 			} else {
 				append_memory_set(destination.address, 0, get_size(literal->type), false);
@@ -3578,7 +3646,7 @@ void Converter::append(AstUnaryOperator *unop, RegisterOrAddress destination) {
 		using enum UnaryOperation;
 		case minus: {
 			append(unop->expression, destination);
-			if (destination.is_register) {
+			if (destination.is_in_register) {
 				auto size = get_size(unop->type);
 				if (::is_integer(unop->type)) {
 					I(negi_r, destination.reg);
@@ -3647,14 +3715,14 @@ void Converter::append(AstUnaryOperator *unop, RegisterOrAddress destination) {
 		}
 		case dereference: {
 			auto pointer = append(unop->expression);
-			defer { if (pointer.is_register) free_register(pointer.reg); };
+			defer { if (pointer.is_in_register) free_register(pointer.reg); };
 
-			auto src = pointer.is_register ? pointer.reg : sr0;
-			if (!pointer.is_register)
+			auto src = pointer.is_in_register ? pointer.reg : sr0;
+			if (!pointer.is_in_register)
 				I(mov8_rm, src, pointer.address);
 
-			auto dst = destination.is_register ? destination.reg : sr1;
-			if (!destination.is_register)
+			auto dst = destination.is_in_register ? destination.reg : sr1;
+			if (!destination.is_in_register)
 				I(mov8_rm, dst, destination.address);
 
 			auto size = get_size(unop->type);
@@ -3668,17 +3736,17 @@ void Converter::append(AstUnaryOperator *unop, RegisterOrAddress destination) {
 					default: invalid_code_path();
 				}
 
-				if (!destination.is_register)
+				if (!destination.is_in_register)
 					I(mov8_mr, destination.address, dst);
 			} else {
-				assert(!destination.is_register);
+				assert(!destination.is_in_register);
 				copy(destination.address, Address(src), size, false);
 			}
 			break;
 		}
 		case bnot: {
 			append(unop->expression, destination);
-			if (destination.is_register) {
+			if (destination.is_in_register) {
 				I(not_r, destination.reg);
 			} else {
 				I(not_m, destination.address);
@@ -3687,9 +3755,9 @@ void Converter::append(AstUnaryOperator *unop, RegisterOrAddress destination) {
 		}
 		case unwrap: {
 			auto option = append(unop->expression);
-			defer { if (option.is_register) free_register(option.reg); };
-			assert(!option.is_register);
-			assert(!destination.is_register);
+			defer { if (option.is_in_register) free_register(option.reg); };
+			assert(!option.is_in_register);
+			assert(!destination.is_in_register);
 
 			auto value_size = get_size(unop->type);
 
@@ -3713,13 +3781,17 @@ void Converter::append(AstUnaryOperator *unop, RegisterOrAddress destination) {
 
 			append(unop->expression, tmp);
 
-			if (destination.is_register) {
+			if (destination.is_in_register) {
 				I(lea, destination.reg, tmp);
 			} else {
 				I(lea, sr0, tmp);
 				I(mov8_mr, destination.address, sr0);
 			}
-			break;;
+			break;
+		}
+		case pack: {
+			append(unop->expression, destination);
+			break;
 		}
 		default:
 			invalid_code_path();
@@ -3994,6 +4066,8 @@ void Converter::append(AstLambda *lambda, bool load_address, RegisterOrAddress d
 
 			auto return_location = count_of(ls->body_builder);
 
+			//print("{}: temporary_size: {}\n", lambda->definition ? lambda->definition->name : where(lambda->location.data), ls->temporary_size);
+
 			for (auto i : lambda->return_jumps) {
 				auto offset = return_location - i.index;
 				if (offset == 1) {
@@ -4111,7 +4185,7 @@ void Converter::append(AstPack *pack, RegisterOrAddress destination) {
 	check_destination(destination);
 
 	push_comment(format("pack {}"str, pack->location));
-	assert(!destination.is_register);
+	assert(!destination.is_in_register);
 
 	assert(pack->type->kind == Ast_Subscript);
 	auto type = ((AstSubscript *)pack->type)->expression;

@@ -430,8 +430,8 @@ struct AstDefinition : AstStatement, StatementPool<AstDefinition> {
 	bool is_constant         : 1 = false;
 	bool built_in            : 1 = false;
 	bool is_poly             : 1 = false;
-	bool is_pack             : 1 = false;
 	bool depends_on_poly     : 1 = false;
+	bool is_pack             : 1 = false;
 };
 
 // Started with 176
@@ -593,8 +593,8 @@ struct AstStruct : AstExpression, ExpressionPool<AstStruct> {
 
 	Scope scope;
 
-	s64 size = 0;
-	s64 alignment = 0;
+	s64 size = -1;
+	s64 alignment = -1;
 
 	StructLayout layout = StructLayout::none;
 
@@ -772,6 +772,7 @@ enum class UnaryOperation : u8 {
 	poly,        // $
 	typeinfo,    // #typeinfo
 	dot,         // .
+	pack,        // ..
 	count,
 	pointer_or_dereference_or_unwrap,
 	internal_move_to_temporary, // move the value into temporary space, result is a pointer to that space.
@@ -794,6 +795,7 @@ inline String as_string(UnaryOperation unop) {
 		case poly:        return "$"str;
 		case typeinfo:    return "#typeinfo"str;
 		case dot:         return "."str;
+		case pack:        return ".."str;
 		case pointer_or_dereference_or_unwrap: return "<*>"str;
 		case internal_move_to_temporary: return "<tmp>"str;
 	}
@@ -815,6 +817,7 @@ inline Optional<UnaryOperation> as_unary_operation(Token token) {
 		case '@': return autocast;
 		case '$': return poly;
 		case '.': return dot;
+		case '..': return pack;
 		case Token_directive:
 			if (token.string == "#sizeof")   return Sizeof;
 			if (token.string == "#typeof")   return typeof;
@@ -1112,10 +1115,8 @@ HeapString type_to_string(AstExpression *type, bool silent_error = false);
 // Returns just the name of the type without synonyms
 HeapString type_name     (AstExpression *type, bool silent_error = false);
 
-s64 get_align(AstExpression *type);
-
-s64 get_size(AstExpression *type);
-s64 get_align(AstExpression *type);
+s64 get_size(AstExpression *type, bool check_struct = true);
+s64 get_align(AstExpression *type, bool check_struct = true);
 
 bool types_match(AstExpression *type_a, AstExpression *type_b);
 inline bool types_match(AstStruct *type_a, AstStruct *type_b) { return type_a == type_b; }
@@ -1143,6 +1144,8 @@ AstExpression *direct(AstExpression *type);
 template <class T>
 T *direct_as(AstExpression *expression) {
 	auto directed = direct(expression);
+	if (!directed)
+		return 0;
 	if (directed->kind == kind_of<T>) {
 		return (T *)directed;
 	}

@@ -1,18 +1,18 @@
 import "windows.tl"
 import "string.tl"
 
-write_to_console :: fn (str : string) {
-    WriteConsoleA(GetStdHandle(STD_OUTPUT_HANDLE), str.data, str.count as u32, null, null);
+write_to_console :: (str: String) {
+    WriteConsoleA(GetStdHandle(STD_OUTPUT_HANDLE), str.data, str.count as U32, null, null);
 }
 
-dprint :: fn (str: string) {
+dprint :: (str: String) {
     write_to_console(str);
 }
-dprint_char :: fn (char : u8) {
-    write_to_console(string(&char, 1));
+dprint_char :: (char: U8) {
+    write_to_console(String(&char, 1));
 }
 
-dprint :: fn (_val : int) {
+dprint :: (_val: Int) {
     val := _val;
     if val == 0 {
         dprint_char('0');
@@ -24,7 +24,7 @@ dprint :: fn (_val : int) {
 	}
 
     i := val;
-    buffer : u8[64];
+    buffer: U8[64];
     dst_index := 64;
 
     while i != 0 {
@@ -41,7 +41,7 @@ dprint :: fn (_val : int) {
         dst_index += 1;
     }
 }
-dprint :: fn (_val : uint) {
+dprint :: (_val: UInt) {
     val := _val;
     if val == 0 {
         dprint_char('0');
@@ -49,7 +49,7 @@ dprint :: fn (_val : uint) {
     }
 
     i := val;
-    buffer : u8[64];
+    buffer: U8[64];
     dst_index := 64;
 
     while i != 0 {
@@ -66,14 +66,14 @@ dprint :: fn (_val : uint) {
         dst_index += 1;
     }
 }
-dprint :: fn (v: s8 ) => dprint(v as s64);
-dprint :: fn (v: s16) => dprint(v as s64);
-dprint :: fn (v: s32) => dprint(v as s64);
-dprint :: fn (v: u8 ) => dprint(v as u64);
-dprint :: fn (v: u16) => dprint(v as u64);
-dprint :: fn (v: u32) => dprint(v as u64);
+dprint :: (v: S8 ) => dprint(v as S64);
+dprint :: (v: S16) => dprint(v as S64);
+dprint :: (v: S32) => dprint(v as S64);
+dprint :: (v: U8 ) => dprint(v as U64);
+dprint :: (v: U16) => dprint(v as U64);
+dprint :: (v: U32) => dprint(v as U64);
 
-dprint_hex :: fn (_val : uint) {
+dprint_hex :: (_val: UInt) {
     val := _val;
     if val == 0 {
         dprint_char('0');
@@ -83,7 +83,7 @@ dprint_hex :: fn (_val : uint) {
 	max_char_count :: 16;
 
     i := val;
-    buffer: u8[max_char_count];
+    buffer: U8[max_char_count];
     dst_index := max_char_count;
 
     while i != 0 {
@@ -115,29 +115,45 @@ dprint_hex :: fn (_val : uint) {
     }
 }
 
-dprintln :: fn (value) {
+dprintln :: (value: $T) {
 	dprint(value);
 	dprint_char('\n');
 }
 
-print :: fn (value) {
+print :: (value: $T) {
 	b := StringBuilder.create();
 	append(&b, value);
 	write_to_console(to_string(&b));
 	free(&b);
 }
 
-println :: fn (value) {
+//print :: (format: String, values: ..any) {
+//	b := StringBuilder.create();
+//	append_format(&b, format, values);
+//	write_to_console(to_string(&b));
+//	free(&b);
+//}
+
+println :: (value: $T) {
 	print(value);
 	dprint_char('\n');
 }
 
-merge :: fn (a : u8, b : u8): u16 {
-	return (a as u16 << 8) | b;
+println :: (value: String) {
+	dprint(value);
+	dprint_char('\n');
+}
+//println :: (format: String, values: ..any) {
+//	print(format, values);
+//	dprint_char('\n');
+//}
+
+merge :: (a: U8, b: U8): U16 {
+	return (a as U16 << 8) | b;
 }
 
-strlen :: fn (str: *u8): uint {
+strlen :: (str: *U8): UInt {
 	c := str;
 	while *c != 0 c += 1;
-	return c as uint - str as uint;
+	return c as UInt - str as UInt;
 }

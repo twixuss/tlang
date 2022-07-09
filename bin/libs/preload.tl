@@ -43,5 +43,5 @@ any :: struct {
 }
 */
 
-debug_break :: fn #intrinsic ();
-memcpy :: fn #intrinsic (dst: *void, src: *void, size: uint): void;
+debug_break :: () #intrinsic;
+memcpy :: (dst: *Void, src: *Void, size: UInt): Void #intrinsic;

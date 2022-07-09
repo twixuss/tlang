@@ -4,7 +4,6 @@
 #define ENUMERATE_KEYWORDS(E) \
 E(eof,      'eof') \
 E(as,       'as') \
-E(fn,       'fn') \
 E(true,     'true') \
 E(if,       'if') \
 E(then,     'then') \

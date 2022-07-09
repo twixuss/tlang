@@ -262,7 +262,7 @@ HeapString type_name(AstExpression *type, bool silent_error) {
 	return (HeapString)to_string<MyAllocator>(builder);
 }
 
-s64 get_size(AstExpression *_type) {
+s64 get_size(AstExpression *_type, bool check_struct) {
 	auto type = _type->directed ? _type->directed : direct(_type);
 
 	assert(type);
@@ -270,6 +270,8 @@ s64 get_size(AstExpression *_type) {
 	switch (type->kind) {
 		case Ast_Struct: {
 			auto Struct = (AstStruct *)type;
+			if (check_struct)
+				assert(Struct->size != -1, "Size for {} is not computed yet. If this happens when typechecking, use an overload that accepts TypecheckState. When generating bytecode this assert should not fire.");
 			return Struct->size;
 		}
 		case Ast_Identifier: {
@@ -283,6 +285,7 @@ s64 get_size(AstExpression *_type) {
 				case pointer:  return context.stack_word_size;
 				case typeof:   return get_size(unop->expression->type);
 				case option:   return get_size(unop->expression) + get_align(unop->expression);
+				case pack:     return context.stack_word_size*2; // pointer+count;
 				default: invalid_code_path();
 			}
 		}
@@ -310,11 +313,13 @@ s64 get_size(AstExpression *_type) {
 	}
 }
 
-s64 get_align(AstExpression *type) {
+s64 get_align(AstExpression *type, bool check_struct) {
 	assert(type);
 	switch (type->kind) {
 		case Ast_Struct: {
 			auto Struct = (AstStruct *)type;
+			if (check_struct)
+				assert(Struct->alignment != -1, "Alignment for {} is not computed yet. If this happens when typechecking, use an overload that accepts TypecheckState. When generating bytecode this assert should not fire.");
 			return Struct->alignment;
 		}
 		case Ast_Identifier: {
@@ -580,7 +585,10 @@ AstUnaryOperator *as_pointer(AstExpression *type) {
 	switch (type->kind) {
 		case Ast_Identifier: {
 			auto ident = (AstIdentifier *)type;
-			return as_pointer(ident->definition()->expression);
+			auto definition = ident->definition();
+			if (!definition)
+				return 0;
+			return as_pointer(definition->expression);
 		}
 		case Ast_UnaryOperator: {
 			auto unop = (AstUnaryOperator *)type;
@@ -737,12 +745,16 @@ bool is_sized_array(AstExpression *type) {
 
 AstSubscript *as_array(AstExpression *type) {
 	auto d = direct(type);
+	if (!d)
+		return 0;
 	if (d->kind == Ast_Subscript)
 		return (AstSubscript *)d;
 	return 0;
 }
 AstSpan *as_span(AstExpression *type) {
 	auto d = direct(type);
+	if (!d)
+		return 0;
 	if (d->kind == Ast_Span)
 		return (AstSpan *)d;
 	return 0;

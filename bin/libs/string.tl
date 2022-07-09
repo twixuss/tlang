@@ -5,19 +5,19 @@ STRING_BUILDER_INITIAL_BUFFER_CAPACITY :: 0x4000;
 
 StringBuilder :: struct {
 	Block :: struct {
-		count: uint;
-		capacity: uint;
+		count: UInt;
+		capacity: UInt;
 		next: *Block;
 	}
     
 	// allocator: Allocator = current_allocator;
 	first: Block;
-	initial_buffer: u8[STRING_BUILDER_INITIAL_BUFFER_CAPACITY];
+	initial_buffer: U8[STRING_BUILDER_INITIAL_BUFFER_CAPACITY];
 	last: *Block;
 	alloc_last: *Block;
-    count: uint;
+    count: UInt;
 }
-create :: fn (this :: StringBuilder): result: StringBuilder {
+create :: (this :: StringBuilder): result: StringBuilder {
 	using result;
 	// allocator = current_allocator;
 	first.capacity = STRING_BUILDER_INITIAL_BUFFER_CAPACITY;
@@ -25,11 +25,11 @@ create :: fn (this :: StringBuilder): result: StringBuilder {
 	alloc_last = &first;
 }
 
-begin :: fn (block: *StringBuilder.Block): *u8 => @&block[1];
-end   :: fn (block: *StringBuilder.Block): *u8 => begin(block) + block.count;
-available_space :: fn (block: *StringBuilder.Block): uint => block.capacity - block.count;
+begin :: (block: *StringBuilder.Block): *U8 => @&block[1];
+end   :: (block: *StringBuilder.Block): *U8 => begin(block) + block.count;
+available_space :: (block: *StringBuilder.Block): UInt => block.capacity - block.count;
 
-allocate_block :: fn (b: *StringBuilder) {
+allocate_block :: (b: *StringBuilder) {
     capacity := b.alloc_last.capacity*2;
     block := VirtualAlloc(null, #sizeof StringBuilder.Block, MEM_RESERVE|MEM_COMMIT, PAGE_READWRITE) as *StringBuilder.Block;
     // block := (Block *)allocator.allocate_uninitialized(sizeof(Block) + capacity, alignof(Block) TL_LA);
@@ -41,7 +41,7 @@ allocate_block :: fn (b: *StringBuilder) {
     return block;
 }
 
-append_bytes :: fn (b: *StringBuilder, data: *u8, size: uint): uint {
+append_bytes :: (b: *StringBuilder, data: *U8, size: UInt): UInt {
     chars_to_write := size;
     d := data;
     while available_space(b.last) < chars_to_write {
@@ -62,10 +62,10 @@ append_bytes :: fn (b: *StringBuilder, data: *u8, size: uint): uint {
     return size;
 }
 
-append :: fn (b: *StringBuilder, str: string) => append_bytes(b, str.data, str.count);
-append_char :: fn (b: *StringBuilder, ch: u8) => append_bytes(b, &ch, 1);
+append :: (b: *StringBuilder, str: String) => append_bytes(b, str.data, str.count);
+append_char :: (b: *StringBuilder, ch: U8) => append_bytes(b, &ch, 1);
 
-append :: fn (b: *StringBuilder, _val : int) {
+append :: (b: *StringBuilder, _val: Int) {
     val := _val;
     if val == 0 {
         append_char(b, '0');
@@ -77,7 +77,7 @@ append :: fn (b: *StringBuilder, _val : int) {
 	}
 
     i := val;
-    buffer : u8[64];
+    buffer: U8[64];
     dst_index := 64;
 
     while i != 0 {
@@ -94,7 +94,7 @@ append :: fn (b: *StringBuilder, _val : int) {
         dst_index += 1;
     }
 }
-append :: fn (b: *StringBuilder, _val : uint) {
+append :: (b: *StringBuilder, _val: UInt) {
     val := _val;
     if val == 0 {
         append_char(b, '0');
@@ -102,7 +102,7 @@ append :: fn (b: *StringBuilder, _val : uint) {
     }
 
     i := val;
-    buffer : u8[64];
+    buffer: U8[64];
     dst_index := 64;
 
     while i != 0 {
@@ -119,17 +119,17 @@ append :: fn (b: *StringBuilder, _val : uint) {
         dst_index += 1;
     }
 }
-append_hex :: fn (b: *StringBuilder, _val: uint) {
+append_hex :: (b: *StringBuilder, _val: UInt) {
     val := _val;
     if val == 0 {
         append(b, "0");
         return;
     }
 
-	max_char_count: uint : 16;
+	max_char_count: UInt: 16;
 
     i := val;
-    buffer: u8[max_char_count];
+    buffer: U8[max_char_count];
     dst_index := max_char_count;
 
     while i != 0 {
@@ -155,66 +155,86 @@ append_hex :: fn (b: *StringBuilder, _val: uint) {
 		dst_index -= 1;
 	}
 	
-	append(b, string(&buffer[dst_index], max_char_count - dst_index));
+	append(b, String(&buffer[dst_index], max_char_count - dst_index));
 }
 
-append :: fn (b: *StringBuilder, v: s8 ) => append(b, v as s64);
-append :: fn (b: *StringBuilder, v: s16) => append(b, v as s64);
-append :: fn (b: *StringBuilder, v: s32) => append(b, v as s64);
-append :: fn (b: *StringBuilder, v: u8 ) => append(b, v as u64);
-append :: fn (b: *StringBuilder, v: u16) => append(b, v as u64);
-append :: fn (b: *StringBuilder, v: u32) => append(b, v as u64);
+append :: (b: *StringBuilder, v: S8 ) => append(b, v as S64);
+append :: (b: *StringBuilder, v: S16) => append(b, v as S64);
+append :: (b: *StringBuilder, v: S32) => append(b, v as S64);
+append :: (b: *StringBuilder, v: U8 ) => append(b, v as U64);
+append :: (b: *StringBuilder, v: U16) => append(b, v as U64);
+append :: (b: *StringBuilder, v: U32) => append(b, v as U64);
 
-append :: fn (b: *StringBuilder, value: any): void {
+append :: (b: *StringBuilder, value: Any): Void {
 	info := value.type;
 	match info.kind {
-		.s8  => append(b, *(value.pointer as *s8));
-		.s16 => append(b, *(value.pointer as *s16));
-		.s32 => append(b, *(value.pointer as *s32));
-		.s64 => append(b, *(value.pointer as *s64));
-		.u8  => append(b, *(value.pointer as *u8));
-		.u16 => append(b, *(value.pointer as *u16));
-		.u32 => append(b, *(value.pointer as *u32));
-		.u64 => append(b, *(value.pointer as *u64));
+		.S8  => append(b, *(value.pointer as *S8));
+		.S16 => append(b, *(value.pointer as *S16));
+		.S32 => append(b, *(value.pointer as *S32));
+		.S64 => append(b, *(value.pointer as *S64));
+		.U8  => append(b, *(value.pointer as *U8));
+		.U16 => append(b, *(value.pointer as *U16));
+		.U32 => append(b, *(value.pointer as *U32));
+		.U64 => append(b, *(value.pointer as *U64));
 		.\struct => {
-			if info.name == "string" {
-				append(b, *(value.pointer as *string));
+			if info.name == "String" {
+				append(b, *(value.pointer as *String));
 				return;
 			}
 			append(b, "{");
-			i := 0;
+			i: UInt = 0;
 			while i < info.members.count {
 				member := &info.members[i];
 				if i != 0
 					append(b, ", ");
 				append(b, member.name);
 				append(b, "=");
-				if member.type.name == "string" {
+				if member.type.name == "String" {
 					append(b, "\"");
-					append(b, *((value.pointer + member.offset) as *string));
+					append(b, *((value.pointer + member.offset) as *String));
 					append(b, "\"");
 				} else {
-					append(b, any(value.pointer + member.offset, member.type));
+					append(b, Any(value.pointer + member.offset, member.type));
 				}
 				i += 1;
 			}
 			append(b, "}");
 		}
-		.pointer => append_hex(b, *(value.pointer as *uint));
+		.pointer => append_hex(b, *(value.pointer as *UInt));
 		.array => {
-			i :u64 = 0;
+			i: UInt = 0;
 			append(b, "[");
 			
 			while i < info.array_count {
 				if i != 0
 					append(b, ", ");
 				
-				if i == 8 && i < info.array_count - 8 as uint {
+				if i == 8 && i < info.array_count - 8 as UInt {
 					i = info.array_count - 8;
 					append(b, "..., ");
 				}
 				
-				append(b, any(value.pointer + i * info.pointee.size, info.pointee));
+				append(b, Any(value.pointer + i * info.pointee.size, info.pointee));
+				i += 1;
+			}
+			append(b, "]");
+		}
+		.span => {
+			i: UInt = 0;
+			append(b, "[");
+			
+			span := *(value.pointer as *[]U8);
+			
+			while i < span.count {
+				if i != 0
+					append(b, ", ");
+				
+				if i == 8 && i < span.count - 8 as UInt {
+					i = span.count - 8;
+					append(b, "..., ");
+				}
+				
+				append(b, Any(span.data + i * info.pointee.size, info.pointee));
 				i += 1;
 			}
 			append(b, "]");
@@ -224,7 +244,7 @@ append :: fn (b: *StringBuilder, value: any): void {
 }
 
 
-fill :: fn (builder: *StringBuilder, dst_string: string): result: string {
+fill :: (builder: *StringBuilder, dst_string: String): result: String {
     dst_char := dst_string.data;
     block := &builder.first;
     while block != null {
@@ -236,13 +256,13 @@ fill :: fn (builder: *StringBuilder, dst_string: string): result: string {
     result.count = builder.count;
 }
 
-to_string :: fn (builder: *StringBuilder): result: string {
+to_string :: (builder: *StringBuilder): result: String {
     result.data = @ VirtualAlloc(null, builder.count, MEM_RESERVE|MEM_COMMIT, PAGE_READWRITE);
 	result.count = builder.count;
 	fill(builder, result);
 }
 
-free :: fn (builder: *StringBuilder) {
+free :: (builder: *StringBuilder) {
 	block := builder.first.next;
 	while block != null {
 		next := block.next;

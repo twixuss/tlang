@@ -691,6 +691,7 @@ struct Parser {
 		if (token->kind == 'eof') {
 			return false;
 		}
+
 		return true;
 	}
 
@@ -786,12 +787,12 @@ AstLiteral *make_integer(String location, s64 value, AstExpression *type = built
 	return make_integer(location, make_big_int<BigInteger>(value), type);
 }
 
-AstLiteral *make_boolean(bool value) {
-	auto i = AstLiteral::create();
-	i->literal_kind = LiteralKind::boolean;
-	i->Bool = value;
-	i->type = builtin_bool.ident;
-	return i;
+AstLiteral *make_bool(bool val) {
+	auto result = AstLiteral::create();
+	result->literal_kind = LiteralKind::boolean;
+	result->Bool = val;
+	result->type = builtin_bool.ident;
+	return result;
 }
 
 AstLiteral *make_float(f64 value, AstExpression *type = builtin_unsized_float.ident) {
@@ -977,32 +978,10 @@ AstLambdaType *create_lambda_type(AstLambda *lambda) {
 	return type;
 }
 
-AstLambda *parse_lambda(Parser *parser, bool is_parsing_type) {
+AstExpression *parse_lambda(Parser *parser) {
 	auto lambda = AstLambda::create();
 
 	lambda->location = parser->token->string;
-
-	parser->next();
-
-	if (parser->token->kind == Token_directive) {
-		if (parser->token->string == "#stdcall"str) {
-			lambda->convention = CallingConvention::stdcall;
-		} else if (parser->token->string == "#tlangcall"str) {
-			lambda->convention = CallingConvention::tlang;
-		} else if (parser->token->string == "#intrinsic"str) {
-			lambda->is_intrinsic = true;
-		} else if (parser->token->string == "#print_bytecode"str) {
-			lambda->print_bytecode = true;
-		} else {
-			parser->reporter->error(parser->token->string, "Unknown directive.");
-			return 0;
-		}
-		parser->next();
-	}
-
-	if (lambda->convention == CallingConvention::none) {
-		lambda->convention = parser->current_convention;
-	}
 
 	if (!parser->expect('('))
 		return 0;
@@ -1065,11 +1044,6 @@ AstLambda *parse_lambda(Parser *parser, bool is_parsing_type) {
 
 				definition = create_definition_in_current_scope(parser, name, 0);
 
-				if (parser->token->kind == '..') {
-					definition->is_pack = true;
-					parser->next();
-				}
-
 				if (parser->token->kind == '%') {
 					definition->is_constant = true;
 					lambda->is_poly = true;
@@ -1087,11 +1061,9 @@ AstLambda *parse_lambda(Parser *parser, bool is_parsing_type) {
 				definition->poly_ident = parser->poly_identifier;
 				definition->is_poly = definition->poly_ident != 0;
 				lambda->is_poly |= definition->is_poly;
-				if (definition->is_pack) {
-					auto span = AstSpan::create();
-					span->location = definition->type->location;
-					span->expression = definition->type;
-					definition->type = span;
+				if (definition->type->kind == Ast_UnaryOperator && ((AstUnaryOperator *)definition->type)->operation == UnaryOperation::pack) {
+					definition->is_pack = true;
+					definition->type = make_span_type(((AstUnaryOperator *)definition->type)->expression);
 					lambda->has_pack = true;
 				}
 			} else {
@@ -1156,6 +1128,28 @@ AstLambda *parse_lambda(Parser *parser, bool is_parsing_type) {
 		}
 	}
 
+	while (parser->token->kind == Token_directive) {
+		if (parser->token->string == "#stdcall"str) {
+			lambda->convention = CallingConvention::stdcall;
+		} else if (parser->token->string == "#tlangcall"str) {
+			lambda->convention = CallingConvention::tlang;
+		} else if (parser->token->string == "#intrinsic"str) {
+			lambda->is_intrinsic = true;
+		} else if (parser->token->string == "#print_bytecode"str) {
+			lambda->print_bytecode = true;
+		} else if (parser->token->string == "#type"str) {
+			lambda->is_type = true;
+		} else {
+			parser->reporter->error(parser->token->string, "Unknown directive.");
+			return 0;
+		}
+		parser->next();
+	}
+
+	if (lambda->convention == CallingConvention::none) {
+		lambda->convention = parser->current_convention;
+	}
+
 	lambda->location = {lambda->location.begin(), parser->token[-1].string.end()};
 
 	if (parser->token->kind != '{' && parser->token->kind != '=>' && parser->token->kind != ';') {
@@ -1165,7 +1159,7 @@ AstLambda *parse_lambda(Parser *parser, bool is_parsing_type) {
 
 	bool is_short = false;
 
-	if (is_parsing_type) {
+	if (lambda->is_type) {
 		lambda->has_body = false;
 		if (parser->token->kind == '{' || parser->token->kind == '=>') {
 			parser->reporter->error(lambda->location, "Body of a lambda can not be specified after a #type directive.");
@@ -1220,7 +1214,7 @@ AstLambda *parse_lambda(Parser *parser, bool is_parsing_type) {
 		}
 		parser->next();
 	} else {
-		if (!is_parsing_type && !lambda->is_intrinsic) {
+		if (!lambda->is_type && !lambda->is_intrinsic) {
 			// Extern functions
 
 			auto print_example = [&]{
@@ -1253,12 +1247,17 @@ AstLambda *parse_lambda(Parser *parser, bool is_parsing_type) {
 		}
 	}
 
+	if (lambda->is_type) {
+		return create_lambda_type(lambda);
+	}
 	return lambda;
 }
 
-AstExpression *parse_expression_0(Parser *parser) {
-	bool is_parsing_type = false;
+bool should_parse_lambda(Parser *parser) {
+	return parser->token[1].kind == ')' || parser->token[2].kind == ':';
+}
 
+AstExpression *parse_expression_0(Parser *parser) {
 	switch (parser->token->kind) {
 		case Token_simd: {
 			parser->next();
@@ -1464,18 +1463,6 @@ AstExpression *parse_expression_0(Parser *parser) {
 			parser->next();
 			return identifier;
 		}
-		case Token_fn: {
-
-		parse_function:
-
-			auto lambda = parse_lambda(parser, is_parsing_type);
-			if (is_parsing_type) {
-				lambda->is_type = true;
-				return create_lambda_type(lambda);
-			}
-
-			return lambda;
-		}
 		case Token_struct: {
 			auto token = parser->token->string;
 			parser->next();
@@ -1606,11 +1593,20 @@ AstExpression *parse_expression_0(Parser *parser) {
 		}
 					 */
 		case '(': {
+			if (should_parse_lambda(parser)) {
+				auto lambda = parse_lambda(parser);
+				if (!lambda)
+					return 0;
+
+				return lambda;
+			}
+
 			auto start_token = parser->token->string;
 			if (!parser->next()) {
 				parser->reporter->error(parser->token->string, "Unexpected end of file. Unclosed ')'.");
 				return 0;
 			}
+
 
 			auto expression = parse_expression(parser);
 			if (!expression) {
@@ -1732,13 +1728,7 @@ AstExpression *parse_expression_0(Parser *parser) {
 
 				return unop;
 			} else if (parser->token->kind == Token_directive) {
-				if (parser->token->string == "#type"str) {
-					if (!parser->next_expect(Token_fn))
-						return 0;
-
-					is_parsing_type = true;
-					goto parse_function;
-				} else if (parser->token->string == "#file"str) {
+				if (parser->token->string == "#file"str) {
 					auto result = make_string(parser->lexer->source_info->path);
 					result->location = parser->token->string;
 					parser->next();
@@ -1776,9 +1766,9 @@ AstExpression *parse_expression_0(Parser *parser) {
 			} else {
 				auto kind_string = token_kind_to_string(parser->token->kind);
 				if (kind_string == parser->token->string) {
-					parser->reporter->error(parser->token->string, "Unexpected token: {}.", kind_string);
+					parser->reporter->error(parser->token->string, "Unexpected token: {}", kind_string);
 				} else {
-					parser->reporter->error(parser->token->string, "Unexpected token: {} ({}).", parser->token->string, kind_string);
+					parser->reporter->error(parser->token->string, "Unexpected token: {} ({})", parser->token->string, kind_string);
 				}
 				return 0;
 			}
@@ -2058,12 +2048,12 @@ bool simplify(Reporter *reporter, CExpression auto *_expression) {
 									expression = make_integer({}, left << right, binop->type);
 									return true;
 								case bsr: expression = make_integer({}, left >> right, binop->type); return true;
-								case lt:  expression = make_boolean(left < right); return true;
-								case gt:  expression = make_boolean(left > right); return true;
-								case le: expression = make_boolean(left <= right); return true;
-								case ge: expression = make_boolean(left >= right); return true;
-								case ne: expression = make_boolean(left != right); return true;
-								case eq: expression = make_boolean(left == right); return true;
+								case lt:  expression = make_bool(left < right); return true;
+								case gt:  expression = make_bool(left > right); return true;
+								case le: expression = make_bool(left <= right); return true;
+								case ge: expression = make_bool(left >= right); return true;
+								case ne: expression = make_bool(left != right); return true;
+								case eq: expression = make_bool(left == right); return true;
 								default: invalid_code_path(); break;
 							}
 						}
@@ -2121,7 +2111,6 @@ bool simplify(Reporter *reporter, CExpression auto *_expression) {
 						} else {
 							invalid_code_path();
 						}
-						expression->location = binop->location;
 						break;
 					}
 					case ass:
@@ -2136,10 +2125,34 @@ bool simplify(Reporter *reporter, CExpression auto *_expression) {
 					case bslass:
 					case bsrass:
 						break;
-					// case lor:
-					// 	break;
-					// case land:
-					// 	break;
+					 case lor: {
+						auto left_literal  = get_literal(binop->left);
+						if (left_literal && left_literal->literal_kind == LiteralKind::boolean) {
+							if (left_literal->Bool) {
+								expression = make_bool(true);
+							} else {
+								auto right_literal = get_literal(binop->right);
+								if (right_literal && right_literal->literal_kind == LiteralKind::boolean) {
+									expression = make_bool(right_literal->Bool);
+								}
+							}
+						}
+					 	break;
+					 }
+					 case land: {
+						auto left_literal  = get_literal(binop->left);
+						if (left_literal && left_literal->literal_kind == LiteralKind::boolean) {
+							if (!left_literal->Bool) {
+								expression = make_bool(false);
+							} else {
+								auto right_literal = get_literal(binop->right);
+								if (right_literal && right_literal->literal_kind == LiteralKind::boolean) {
+									expression = make_bool(right_literal->Bool);
+								}
+							}
+						}
+					 	break;
+					 }
 					default:
 						with(ConsoleColor::yellow, print("unhandled binary operation in simplify\n"));
 						break;
@@ -2341,14 +2354,18 @@ AstExpression *parse_expression(Parser *parser, int right_precedence) {
 	AstExpression *left = 0;
 	switch (parser->token->kind) {
 		case '(':
-			parser->next();
-			left = parse_expression(parser);
-			if (!left)
-				return 0;
-			if (parser->token->kind != ')') {
-				parser->reporter->error(parser->token->string, "Expected )");
+			if (should_parse_lambda(parser)) {
+				left = parse_lambda(parser);
+			} else {
+				parser->next();
+				left = parse_expression(parser);
+				if (!left)
+					return 0;
+				if (parser->token->kind != ')') {
+					parser->reporter->error(parser->token->string, "Expected )");
+				}
+				parser->next();
 			}
-			parser->next();
 			break;
 		default:
 			left = parse_expression_1(parser);
@@ -2828,9 +2845,15 @@ void parse_statement(Parser *parser, AstStatement *&result) {
 						return;
 					parser->next();
 
-					definition->lambda = parse_lambda(parser, false);
-					if (!definition->lambda)
+					auto lambda = parse_lambda(parser);
+					if (!lambda)
 						return;
+					if (lambda->kind != Ast_Lambda) {
+						parser->reporter->error(lambda->location, "Expected a lambda expression.");
+						return;
+					}
+
+					definition->lambda = (AstLambda *)lambda;
 
 					if (definition->lambda->parameters.count != 2) {
 						parser->reporter->error(definition->lambda->location, "'{}' operator must have exactly two parameters.", definition->location);
@@ -2871,16 +2894,21 @@ void parse_statement(Parser *parser, AstStatement *&result) {
 						return;
 					parser->next();
 
-					auto lambda = parse_lambda(parser, false);
+					auto lambda = parse_lambda(parser);
 					if (!lambda)
 						return;
+					if (lambda->kind != Ast_Lambda) {
+						parser->reporter->error(lambda->location, "Expected a lambda expression.");
+						return;
+					}
 
-					if (lambda->parameters.count != 1) {
+					definition->lambda = (AstLambda *)lambda;
+
+					if (definition->lambda->parameters.count != 1) {
 						parser->reporter->error(lambda->location, "'as' operator must have exactly one parameter.");
 						return;
 					}
 
-					definition->lambda = lambda;
 					result = definition;
 					return;
 				}
@@ -2895,18 +2923,23 @@ void parse_statement(Parser *parser, AstStatement *&result) {
 						return;
 					parser->next();
 
-					auto lambda = parse_lambda(parser, false);
+					auto lambda = parse_lambda(parser);
 					if (!lambda)
 						return;
+					if (lambda->kind != Ast_Lambda) {
+						parser->reporter->error(lambda->location, "Expected a lambda expression.");
+						return;
+					}
 
-					if (lambda->parameters.count != 1) {
+					definition->lambda = (AstLambda *)lambda;
+
+					if (definition->lambda->parameters.count != 1) {
 						parser->reporter->error(lambda->location, "'?' operator must have exactly one parameter.");
 						return;
 					}
 
 					untypechecked_has_value_overloads_count += 1;
 
-					definition->lambda = lambda;
 					result = definition;
 					return;
 				}
@@ -2921,7 +2954,7 @@ void parse_statement(Parser *parser, AstStatement *&result) {
 						return;
 					parser->next();
 
-					auto lambda = parse_lambda(parser, false);
+					auto lambda = parse_lambda(parser);
 					if (!lambda)
 						return;
 
@@ -3361,15 +3394,6 @@ AstLiteral *make_type_literal(AstExpression *type) {
 	return result;
 }
 
-AstLiteral *make_bool(bool val) {
-	timed_function(context.profiler);
-	auto result = AstLiteral::create();
-	result->literal_kind = LiteralKind::boolean;
-	result->Bool = val;
-	result->type = builtin_bool.ident;
-	return result;
-}
-
 void ensure_definition_is_resolved(TypecheckState *state, AstIdentifier *identifier) {
 	if (!identifier->definition()) {
 		if (identifier->possible_definitions.count) {
@@ -3742,6 +3766,7 @@ AstUnaryOperator *make_pointer_type(AstExpression *type) {
 }
 AstSpan *make_span_type(AstExpression *type) {
 	auto span = AstSpan::create();
+	span->location = type->location;
 	span->expression = type;
 	span->type = builtin_type.ident;
 	return span;
@@ -3858,6 +3883,33 @@ void wait_for(TypecheckState *state, auto &&predicate, auto &&error_callback) {
 	}
 }
 
+s64 get_size(TypecheckState *state, AstExpression *type) {
+	s64 result;
+	wait_for(state,
+		[&] {
+			result = get_size(type, false);
+			return result != -1;
+		}, [&] {
+			state->reporter.error(type->location, "Failed to compute size.");
+		}
+	);
+	assert(result > 0);
+	return result;
+}
+s64 get_align(TypecheckState *state, AstExpression *type) {
+	s64 result;
+	wait_for(state,
+		[&] {
+			result = get_align(type, false);
+			return result != -1;
+		}, [&] {
+			state->reporter.error(type->location, "Failed to compute alignment.");
+		}
+	);
+	assert(result > 0);
+	return result;
+}
+
 void evaluate_and_put_definition_in_section(TypecheckState *state, AstDefinition *definition, Section &section) {
 	definition->evaluated = evaluate(state, definition->expression);
 	put_arrays_in_section(definition->evaluated, section);
@@ -3883,6 +3935,7 @@ u64 get_type_kind(AstExpression *type) {
 		switch (unop->operation) {
 			using enum UnaryOperation;
 			case pointer: return 14;
+			case pack: return 15;
 		}
 	}
 	if (direct_as<AstSpan>(type)) return 15;
@@ -4007,11 +4060,13 @@ AstUnaryOperator *get_typeinfo(TypecheckState *state, AstExpression *type, Strin
 		set_member(typeinfo_initializer, "array_count", 0);
 		set_member(typeinfo_initializer, "size", make_integer(location, get_size(type)));
 
-		if (auto subscript = direct_as<AstSubscript>(directed)) {
+		if (auto subscript = (AstSubscript *)directed; directed->kind == Ast_Subscript) {
 			if (is_constant(subscript->index_expression)) {
 				set_member(typeinfo_initializer, "array_count", subscript->index_expression);
 			}
 			set_member(typeinfo_initializer, "pointee", get_typeinfo(state, subscript->expression, location));
+		} else if (auto span = (AstSpan *)directed; directed->kind == Ast_Span) {
+			set_member(typeinfo_initializer, "pointee", get_typeinfo(state, span->expression, location));
 		}
 
 		definition->expression = typeinfo_initializer;
@@ -4092,6 +4147,13 @@ bool implicitly_cast(TypecheckState *state, Reporter *reporter, CExpression auto
 		return false;
 	}
 
+	if (expression->kind == Ast_UnaryOperator) {
+		auto unop = (AstUnaryOperator *)expression;
+		if (unop->operation == UnaryOperation::pack && types_match(unop->expression->type, type)) {
+			return true;
+		}
+	}
+
 	if (types_match(type, builtin_any)) {
 		if (conversion_distance)
 			*conversion_distance = 3;
@@ -4099,19 +4161,26 @@ bool implicitly_cast(TypecheckState *state, Reporter *reporter, CExpression auto
 		if (apply) {
 			harden_type(expression);
 
-			auto temporary = AstUnaryOperator::create();
 			auto initializer = AstCall::create();
-
-			temporary->expression = expression;
-			temporary->location = expression->location;
-			temporary->operation = UnaryOperation::internal_move_to_temporary;
-			temporary->type = builtin_void.pointer;
-
 			initializer->callable = builtin_any.ident;
 			initializer->location = expression->location;
 			initializer->type = builtin_any.ident;
+
 			initializer->sorted_arguments.resize(2);
-			initializer->sorted_arguments[0] = temporary;
+
+			if (is_addressable(expression)) {
+				initializer->sorted_arguments[0] = make_address_of(reporter, expression);
+			} else {
+				auto temporary = AstUnaryOperator::create();
+
+				temporary->expression = expression;
+				temporary->location = expression->location;
+				temporary->operation = UnaryOperation::internal_move_to_temporary;
+				temporary->type = builtin_void.pointer;
+
+				initializer->sorted_arguments[0] = temporary;
+			}
+
 			initializer->sorted_arguments[1] = get_typeinfo(state, expression->type, expression->location);
 
 			expression = initializer;
@@ -5363,6 +5432,10 @@ AstLambda *instantiate_head(TypecheckState *state, Reporter *reporter, SmallList
 		// TODO: FIXME: implement for packs
 		for (auto resolved : lambda->hardened_polys) {
 			bool all_types_match = true;
+
+			if (arguments.count != resolved.call->unsorted_arguments.count)
+				continue;
+
 			for (umm i = 0; i < arguments.count; ++i) {
 				if (!types_match(arguments[i]->type, resolved.call->unsorted_arguments[i].expression->type)) {
 					all_types_match = false;
@@ -5501,7 +5574,6 @@ AstLambda *instantiate_head(TypecheckState *state, Reporter *reporter, SmallList
 							span->type = builtin_type.ident;
 							hardened_param->type = span;
 							hardened_param->definition_location = LambdaDefinitionLocation::parameter;
-							hardened_param->is_pack = parameter->is_pack;
 							hardened_param->is_constant = parameter->is_constant;
 							hardened_param->parent_lambda_or_struct = hardened_lambda;
 
@@ -5547,7 +5619,6 @@ AstLambda *instantiate_head(TypecheckState *state, Reporter *reporter, SmallList
 					hardened_param->name = parameter->name;
 					hardened_param->type = argument->type;
 					hardened_param->definition_location = LambdaDefinitionLocation::parameter;
-					hardened_param->is_pack = parameter->is_pack;
 					hardened_param->is_constant = parameter->is_constant;
 					hardened_param->parent_lambda_or_struct = hardened_lambda;
 					hardened_params.add(hardened_param);
@@ -5592,6 +5663,12 @@ AstLambda *instantiate_head(TypecheckState *state, Reporter *reporter, SmallList
 			return hardened_lambda;
 		}
 	} else {
+		if (arguments.count != lambda->parameters.count) {
+			reporter->error(call->location, "Argument count does not match.");
+			*success = false;
+			return 0;
+		}
+
 		List<AstDefinition *> hardened_params;
 		hardened_params.allocator = temporary_allocator;
 		hardened_params.resize(arguments.count);
@@ -5639,7 +5716,6 @@ AstLambda *instantiate_head(TypecheckState *state, Reporter *reporter, SmallList
 					hardened_param->type = arg->type;
 					hardened_param->definition_location = LambdaDefinitionLocation::parameter;
 					hardened_param->is_constant = param->is_constant;
-					hardened_param->is_pack = param->is_pack;
 					hardened_param->parent_lambda_or_struct = hardened_lambda;
 
 					hardened_lambda->parameters.add(hardened_param);
@@ -6053,6 +6129,9 @@ AstExpression *typecheck(TypecheckState *state, AstCall *call) {
 
 						resolution.packs.resize(lambda->parameters.count);
 
+						//if (lambda->definition && lambda->definition->name == "foobar")
+						//	debug_break();
+
 						while (1) {
 							if (argument_index == arguments.count) {
 								while (1) {
@@ -6065,12 +6144,16 @@ AstExpression *typecheck(TypecheckState *state, AstCall *call) {
 									}
 								}
 							}
+							if (parameter_index == lambda->parameters.count) {
+								goto break_outer;
+							}
 							auto &argument = arguments[argument_index];
 							auto &parameter = lambda->parameters[parameter_index];
 
 							int distance = 0;
 							if (parameter->is_pack) {
 								assert(parameter->type->kind == Ast_Span);
+
 								if (implicitly_cast(state, &reporter, &argument, ((AstSpan *)parameter->type)->expression, &distance, false)) {
 									resolution.packs[parameter_index].expressions.add(argument);
 
@@ -6309,6 +6392,15 @@ AstExpression *typecheck(TypecheckState *state, AstCall *call) {
 						assert(parameter->type->kind == Ast_Span);
 						auto elem_type = ((AstSpan *)parameter->type)->expression;
 
+						// Don'n repack the argument if unpack is passed to a pack.
+						if (info.expressions.count == 1) {
+							auto expr = info.expressions[0];
+							if (expr->kind == Ast_UnaryOperator && ((AstUnaryOperator *)expr)->operation == UnaryOperation::pack) {
+								packed_arguments.add(expr);
+								continue;
+							}
+						}
+
 						for (auto &elem : info.expressions) {
 							if (!implicitly_cast(state, &state->reporter, &elem, elem_type, 0)) {
 								state->reporter.error(elem->location, "INTERNAL ERROR: implicit cast did not succeed the second time for pack.");
@@ -6508,6 +6600,8 @@ AstExpression *typecheck(TypecheckState *state, AstBinaryOperator *bin) {
 	//	debug_break();
 
 	typecheck(state, bin->left);
+
+
 	/*
 	if (!bin->left->type) {
 		if (bin->left->kind == Ast_Identifier) {
@@ -6661,8 +6755,8 @@ AstExpression *typecheck(TypecheckState *state, AstBinaryOperator *bin) {
 							bin->type = make_pointer_type(span->expression);
 							return make_cast(bin->left, builtin_void.pointer);
 						} else if (identifier->name == "count"str) {
-							bin->type = type_int;
-							return make_cast(bin->left, type_int);
+							bin->type = type_uint;
+							return make_cast(bin->left, type_uint);
 						} else {
 							state->reporter.error(bin->left->location, "The only members of any array type are identifiers 'data' and 'count'. You asked for '{}', which does not exist", identifier->name);
 							yield(TypecheckResult::fail);
@@ -7215,6 +7309,19 @@ AstExpression *typecheck(TypecheckState *state, AstUnaryOperator *unop) {
 			unop->expression->type = builtin_unknown_enum.ident;
 			break;
 		}
+		case pack: {
+			typecheck(state, unop->expression);
+			if (is_type(unop->expression)) {
+				unop->type = builtin_type.ident;
+			} else {
+				if (!direct_as<AstSpan>(unop->expression->type)) {
+					state->reporter.error(unop->expression->location, "Type {} is not unpackable. Only span type can be unpacked.", type_to_string(unop->expression->type));
+					yield(TypecheckResult::fail);
+				}
+				unop->type = unop->expression->type;
+			}
+			break;
+		}
 		default: {
 			state->reporter.error(unop->location, "INTERNAL ERROR: Unknown unary operation.");
 			yield(TypecheckResult::fail);
@@ -7230,13 +7337,10 @@ AstExpression *typecheck(TypecheckState *state, AstStruct *Struct) {
 		Struct->definition->type = Struct->type;
 	}
 
-	//if (Struct->definition && Struct->definition->name == "Thing")
-	//	debug_break();
-
 	scoped_replace(state->current_lambda_or_struct_or_enum, Struct);
 
-	s64 struct_size = 0;
-	s64 struct_alignment = 0;
+	s64 struct_size = 1;
+	s64 struct_alignment = 1;
 
 	{
 		push_scope(&Struct->scope);
@@ -7305,11 +7409,13 @@ AstExpression *typecheck(TypecheckState *state, AstStruct *Struct) {
 				switch (Struct->layout) {
 					case StructLayout::tlang:
 					case StructLayout::c: {
-						auto member_alignment = get_align(member->type);
-						struct_alignment = max(struct_alignment, member_alignment);
+						auto member_size  = get_size (state, member->type);
+						auto member_align = get_align(state, member->type);
+
+						struct_alignment = max(struct_alignment, member_align);
 
 						member->offset = 0;
-						struct_size = max(struct_size, get_size(member->type));
+						struct_size = max(struct_size, member_size);
 						break;
 					}
 					default:
@@ -7321,13 +7427,14 @@ AstExpression *typecheck(TypecheckState *state, AstStruct *Struct) {
 				switch (Struct->layout) {
 					case StructLayout::tlang:
 					case StructLayout::c: {
-						auto member_alignment = get_align(member->type);
-						struct_alignment = max(struct_alignment, member_alignment);
-						assert(member_alignment >= 1);
+						auto member_size  = get_size (state, member->type);
+						auto member_align = get_align(state, member->type);
 
-						struct_size = ceil(struct_size, member_alignment);
+						struct_alignment = max(struct_alignment, member_align);
+
+						struct_size = ceil(struct_size, member_align);
 						member->offset = struct_size;
-						struct_size += get_size(member->type);
+						struct_size += member_size;
 						break;
 					}
 					default:
@@ -7336,7 +7443,6 @@ AstExpression *typecheck(TypecheckState *state, AstStruct *Struct) {
 			}
 		}
 	}
-
 	Struct->alignment = struct_alignment;
 	Struct->size = ceil(struct_size, struct_alignment);
 	return Struct;
@@ -7391,7 +7497,7 @@ AstExpression *typecheck(TypecheckState *state, AstSubscript *subscript) {
 AstExpression *typecheck(TypecheckState *state, AstSpan *span) {
 	typecheck(state, span->expression);
 	if (!is_type(span->expression)) {
-		state->reporter.error(span->expression->location, "Slice expects this to be a type, but it isn't.");
+		state->reporter.error(span->expression->location, "Span expects this to be a type, but it isn't.");
 		yield(TypecheckResult::fail);
 	}
 	span->type = builtin_type.ident;
@@ -7547,32 +7653,20 @@ AstExpression *typecheck(TypecheckState *state, AstEnum *Enum) {
 void typecheck(TypecheckState *state, CExpression auto &expression) {
 	assert(expression);
 
-	defer { if (!throwing) {
-		if (expression->kind == Ast_Identifier && ((AstIdentifier *)expression)->possible_definitions.count) {
-		} else {
-			assert(expression->type);
-			if (!simplify(&state->reporter, &expression))
-				yield(TypecheckResult::fail);
-			assert(expression->type);
-
-			// assert(expression->type->directed == direct(expression->type));
-		}
-	}};
-
 	switch (expression->kind) {
-		case Ast_Identifier:     expression = typecheck(state, (AstIdentifier     *)expression); return;
-		case Ast_Call:           expression = typecheck(state, (AstCall           *)expression); return;
-		case Ast_Literal:        expression = typecheck(state, (AstLiteral        *)expression); return;
-		case Ast_Lambda:         expression = typecheck(state, (AstLambda         *)expression); return;
-		case Ast_LambdaType:     expression = typecheck(state, (AstLambdaType     *)expression); return;
-		case Ast_BinaryOperator: expression = typecheck(state, (AstBinaryOperator *)expression); return;
-		case Ast_UnaryOperator:  expression = typecheck(state, (AstUnaryOperator  *)expression); return;
-		case Ast_Struct:         expression = typecheck(state, (AstStruct         *)expression); return;
-		case Ast_Subscript:      expression = typecheck(state, (AstSubscript      *)expression); return;
-		case Ast_Span:           expression = typecheck(state, (AstSpan           *)expression); return;
-		case Ast_Ifx:            expression = typecheck(state, (AstIfx            *)expression); return;
-		case Ast_Test:           expression = typecheck(state, (AstTest           *)expression); return;
-		case Ast_Enum:           expression = typecheck(state, (AstEnum           *)expression); return;
+		case Ast_Identifier:     expression = typecheck(state, (AstIdentifier     *)expression); break;
+		case Ast_Call:           expression = typecheck(state, (AstCall           *)expression); break;
+		case Ast_Literal:        expression = typecheck(state, (AstLiteral        *)expression); break;
+		case Ast_Lambda:         expression = typecheck(state, (AstLambda         *)expression); break;
+		case Ast_LambdaType:     expression = typecheck(state, (AstLambdaType     *)expression); break;
+		case Ast_BinaryOperator: expression = typecheck(state, (AstBinaryOperator *)expression); break;
+		case Ast_UnaryOperator:  expression = typecheck(state, (AstUnaryOperator  *)expression); break;
+		case Ast_Struct:         expression = typecheck(state, (AstStruct         *)expression); break;
+		case Ast_Subscript:      expression = typecheck(state, (AstSubscript      *)expression); break;
+		case Ast_Span:           expression = typecheck(state, (AstSpan           *)expression); break;
+		case Ast_Ifx:            expression = typecheck(state, (AstIfx            *)expression); break;
+		case Ast_Test:           expression = typecheck(state, (AstTest           *)expression); break;
+		case Ast_Enum:           expression = typecheck(state, (AstEnum           *)expression); break;
 		case Ast_Import: {
 #if 0
 			auto import = (AstImport *)expression;
@@ -7613,6 +7707,21 @@ void typecheck(TypecheckState *state, CExpression auto &expression) {
 			yield(TypecheckResult::fail);
 		}
 	}
+	if (!throwing) {
+		if (expression->kind == Ast_Identifier && ((AstIdentifier *)expression)->possible_definitions.count) {
+		} else {
+			assert(expression->type);
+			if (!simplify(&state->reporter, &expression))
+				yield(TypecheckResult::fail);
+			assert(expression->type);
+
+			if (!direct(expression->type))
+				yield(TypecheckResult::fail);
+
+			// assert(expression->type->directed == direct(expression->type));
+		}
+	}
+
 }
 
 void typecheck_global(CoroState *corostate, TypecheckState *state) {
@@ -8323,31 +8432,31 @@ restart_main:
 	};
 
 	// Type:
-	init_struct(builtin_type, "type"str, 8, 8);
+	init_struct(builtin_type, "Type"str, 8, 8);
 
 	// Primitives:
-	init_struct(builtin_void, "void"str, 0, 0);
-	init_struct(builtin_bool, "bool"str, 1, 1);
-	init_struct(builtin_u8,   "u8"str,   1, 1);
-	init_struct(builtin_u16,  "u16"str,  2, 2);
-	init_struct(builtin_u32,  "u32"str,  4, 4);
-	init_struct(builtin_u64,  "u64"str,  8, 8);
-	init_struct(builtin_s8,   "s8"str,   1, 1);
-	init_struct(builtin_s16,  "s16"str,  2, 2);
-	init_struct(builtin_s32,  "s32"str,  4, 4);
-	init_struct(builtin_s64,  "s64"str,  8, 8);
-	init_struct(builtin_f32,  "f32"str,  4, 4);
-	init_struct(builtin_f64,  "f64"str,  8, 8);
+	init_struct(builtin_void, "Void"str, 0, 0);
+	init_struct(builtin_bool, "Bool"str, 1, 1);
+	init_struct(builtin_u8,   "U8"str,   1, 1);
+	init_struct(builtin_u16,  "U16"str,  2, 2);
+	init_struct(builtin_u32,  "U32"str,  4, 4);
+	init_struct(builtin_u64,  "U64"str,  8, 8);
+	init_struct(builtin_s8,   "S8"str,   1, 1);
+	init_struct(builtin_s16,  "S16"str,  2, 2);
+	init_struct(builtin_s32,  "S32"str,  4, 4);
+	init_struct(builtin_s64,  "S64"str,  8, 8);
+	init_struct(builtin_f32,  "F32"str,  4, 4);
+	init_struct(builtin_f64,  "F64"str,  8, 8);
 
 	// Structs:  NOTE: members are appended after every builtin type was initialized.
-	init_struct(builtin_string,        "string"str, 0, 0);
-	init_struct(builtin_struct_member, "struct_member"str, 0, 0);
-	init_struct(builtin_typeinfo,      "typeinfo"str, 0, 0);
-	init_struct(builtin_any,           "any"str, 0, 0);
-	init_struct(builtin_range,         "range"str, 0, 0);
+	init_struct(builtin_string,        "String"str, 0, 0);
+	init_struct(builtin_struct_member, "StructMember"str, 0, 0);
+	init_struct(builtin_typeinfo,      "TypeInfo"str, 0, 0);
+	init_struct(builtin_any,           "Any"str, 0, 0);
+	init_struct(builtin_range,         "Range"str, 0, 0);
 
 	// Enums:
-	init_enum(builtin_type_kind, "type_kind"str);
+	init_enum(builtin_type_kind, "TypeKind"str);
 
 	// Internal types:
 	init_struct(builtin_unsized_integer, "<integer>"str, 0, 0);
@@ -8371,10 +8480,20 @@ restart_main:
 	builtin_default_integer = builtin_default_signed_integer;
 	builtin_default_float = &builtin_f64;
 
-	type_sint  = add_global_alias("sint"str,  builtin_default_integer->ident);
-	type_uint  = add_global_alias("uint"str,  builtin_default_unsigned_integer->ident);
-	type_int   = add_global_alias("int"str,   builtin_default_signed_integer->ident);
-	type_float = add_global_alias("float"str, builtin_default_float->ident);
+	type_sint  = add_global_alias("SInt"str,  builtin_default_integer->ident);
+	type_uint  = add_global_alias("UInt"str,  builtin_default_unsigned_integer->ident);
+	type_int   = add_global_alias("Int"str,   builtin_default_signed_integer->ident);
+	type_float = add_global_alias("Float"str, builtin_default_float->ident);
+	add_global_alias("SInt8"str,  builtin_s8.ident);
+	add_global_alias("SInt16"str, builtin_s16.ident);
+	add_global_alias("SInt32"str, builtin_s32.ident);
+	add_global_alias("SInt64"str, builtin_s64.ident);
+	add_global_alias("UInt8"str,  builtin_u8.ident);
+	add_global_alias("UInt16"str, builtin_u16.ident);
+	add_global_alias("UInt32"str, builtin_u32.ident);
+	add_global_alias("UInt64"str, builtin_u64.ident);
+	add_global_alias("Float32"str, builtin_f32.ident);
+	add_global_alias("Float64"str, builtin_f64.ident);
 
 	auto append_member = [](BuiltinStruct &builtin, String name, AstExpression *type) {
 		auto Struct = builtin.Struct;
@@ -8437,18 +8556,18 @@ restart_main:
 	append_member(builtin_string, "count"str, type_uint);
 
 	// type_kind
-	append_value(builtin_type_kind, "void"str,    0);
-	append_value(builtin_type_kind, "bool"str,    1);
-	append_value(builtin_type_kind, "u8"str,      2);
-	append_value(builtin_type_kind, "u16"str,     3);
-	append_value(builtin_type_kind, "u32"str,     4);
-	append_value(builtin_type_kind, "u64"str,     5);
-	append_value(builtin_type_kind, "s8"str,      6);
-	append_value(builtin_type_kind, "s16"str,     7);
-	append_value(builtin_type_kind, "s32"str,     8);
-	append_value(builtin_type_kind, "s64"str,     9);
-	append_value(builtin_type_kind, "f32"str,     10);
-	append_value(builtin_type_kind, "f64"str,     11);
+	append_value(builtin_type_kind, "Void"str,    0);
+	append_value(builtin_type_kind, "Bool"str,    1);
+	append_value(builtin_type_kind, "U8"str,      2);
+	append_value(builtin_type_kind, "U16"str,     3);
+	append_value(builtin_type_kind, "U32"str,     4);
+	append_value(builtin_type_kind, "U64"str,     5);
+	append_value(builtin_type_kind, "S8"str,      6);
+	append_value(builtin_type_kind, "S16"str,     7);
+	append_value(builtin_type_kind, "S32"str,     8);
+	append_value(builtin_type_kind, "S64"str,     9);
+	append_value(builtin_type_kind, "F32"str,     10);
+	append_value(builtin_type_kind, "F64"str,     11);
 	append_value(builtin_type_kind, "struct"str,  12);
 	append_value(builtin_type_kind, "enum"str,    13);
 	append_value(builtin_type_kind, "pointer"str, 14);

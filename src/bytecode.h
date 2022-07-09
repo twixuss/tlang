@@ -101,18 +101,18 @@ inline Address operator-(Address a, s64 c) { return a + (-c); }
 // };
 
 struct RegisterOrAddress {
-	bool is_register : 1;
+	bool is_in_register : 1;
 	bool value_is_address : 1;
 	union {
 		Register reg;
 		Address address;
 	};
 
-	RegisterOrAddress(Register reg) : is_register(true), reg(reg) {}
-	RegisterOrAddress(Address address) : is_register(false), address(address) {}
+	RegisterOrAddress(Register reg) : is_in_register(true), reg(reg) {}
+	RegisterOrAddress(Address address) : is_in_register(false), address(address) {}
 
 	Address ensure_address() {
-		assert(!is_register);
+		assert(!is_in_register);
 		return address;
 	}
 };
