@@ -1,6 +1,6 @@
 import "std.tl"
 
-main :: fn() {
+main :: () {
     defer print("A\n");
     defer print("B\n");
     {

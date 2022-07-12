@@ -1,7 +1,7 @@
 
 import "std.tl"
 
-main :: fn () {
+main :: () {
 	array: [3]int;
 	array[0] = 11;
 	array[1] = 22;

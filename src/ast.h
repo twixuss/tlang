@@ -542,9 +542,14 @@ struct AstLambda : AstExpression, ExpressionPool<AstLambda> {
 	SmallList<AstLiteral *> function_directives;
 	String type_name;
 
-	s32 stack_cursor = 0;
+	s64 locals_size = 0;
 
 	// For bytecode generation
+
+	RegisterSet used_registers;
+
+	s64 temporary_size = 0;
+	s64 max_stack_space_used_for_call = 0;
 
 	// s64 offset_accumulator = 0;
 	s64 parameters_size = -1; // Sum of (parameters' size ceiled to context.stack_word_size)

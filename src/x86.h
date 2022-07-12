@@ -65,6 +65,8 @@ static Span<utf8> as_string(Register8  r){using enum Register8 ;switch(r){C( al)
 
 #undef C
 
+inline auto instruction_address(s64 val) { return FormatInt<s64>{.value=val, .radix=62}; }
+
 #define REGISTER_MAP \
 	C(r0, eax) \
 	C(r1, ebx) \
@@ -110,7 +112,14 @@ inline umm append(StringBuilder &builder, Address a) {
 	using namespace x86;
 	umm result = 0;
 	result += append(builder, '[');
-	result += append(builder, to_x86_register(a.base));
+	switch (a.base) {
+		using enum Register;
+		case constants: result += append(builder, "rel constants"); break;
+		case rwdata: result += append(builder, "rel rwdata"); break;
+		case zeros: result += append(builder, "rel zeros"); break;
+		case instructions: return append_format(builder, "rel .{}]", instruction_address(a.c));
+		default: result += append(builder, to_x86_register(a.base)); break;
+	}
 	if (a.r1_scale_index) {
 		if (a.r2_scale) {
 			invalid_code_path("not implemented");
@@ -166,7 +175,6 @@ inline static constexpr Register16 part2b(Register r) { return part2b(to_x86_reg
 inline static constexpr Register8  part1b(Register r) { return part1b(to_x86_register(r)); }
 
 
-inline auto instruction_address(s64 val) { return FormatInt<s64>{.value=val, .radix=62}; }
 inline void append_instruction(StringBuilder &builder, s64 idx, Instruction i) {
 	using enum Register32;
 	switch (i.kind) {

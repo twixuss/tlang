@@ -3,7 +3,7 @@ import "opengl.tl"
 
 dc: HDC;
 
-draw :: fn () {
+draw :: () {
     glColor3f(1, 1, 1);
     glBegin(GL_TRIANGLES);
 
@@ -16,7 +16,7 @@ draw :: fn () {
     SwapBuffers(dc);
 }
 
-main :: fn (): int {
+main :: (): Int {
 	class_name := "window_class\0".data;
 	window_name := "hello window\0".data;
 
@@ -25,11 +25,11 @@ main :: fn (): int {
 	wc : WNDCLASSEXA;
 	wc.hInstance = hInstance;
 	wc.cbSize = #sizeof WNDCLASSEXA;
-	wc.lpfnWndProc = fn (hwnd: HWND, uMsg: UINT, wParam: WPARAM, lParam: LPARAM): LRESULT {
+	wc.lpfnWndProc = (hwnd: HWND, uMsg: UINT, wParam: WPARAM, lParam: LPARAM): LRESULT {
 		if uMsg == WM_DESTROY {
 			PostQuitMessage(0);
 		} else if uMsg == WM_SIZE {
-            glViewport(0, 0, (lParam & 0xffff) as s32, ((lParam >> 16) & 0xffff) as s32);
+            glViewport(0, 0, (lParam & 0xffff) as S32, ((lParam >> 16) & 0xffff) as S32);
             draw();
         } else {
             return DefWindowProcA(hwnd, uMsg, wParam, lParam);
@@ -39,6 +39,8 @@ main :: fn (): int {
 	wc.lpszClassName = class_name;
 	wc.hCursor = LoadCursorA(null, IDC_ARROW);
     
+	println(wc);
+	
     print(if RegisterClassExA(&wc) != 0 then "Class created!\n" else "Class Failed!\n");
 	
 	window := CreateWindowExA(

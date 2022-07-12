@@ -1,9 +1,9 @@
-a :: fn #stdcall (x: int, y: int, z: int, w: int): int => x;
-b :: fn #stdcall (x: int, y: int, z: int, w: int): int => y;
-c :: fn #stdcall (x: int, y: int, z: int, w: int): int => z;
-d :: fn #stdcall (x: int, y: int, z: int, w: int): int => w;
+a :: #stdcall (x: int, y: int, z: int, w: int): int => x;
+b :: #stdcall (x: int, y: int, z: int, w: int): int => y;
+c :: #stdcall (x: int, y: int, z: int, w: int): int => z;
+d :: #stdcall (x: int, y: int, z: int, w: int): int => w;
 
-main :: fn (): int {
+main :: (): int {
 	return 
 		a( 1,  2,  3,  4) +
 		b( 5,  6,  7,  8) +

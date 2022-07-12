@@ -1,8 +1,8 @@
 
 import "std.tl"
  
-overloaded_poly2 :: fn () {}
-overloaded_poly2 :: fn (a: $T, b: int) {
+overloaded_poly2 :: () {}
+overloaded_poly2 :: (a: $T, b: int) {
     print("overloaded_poly2: ");
     print(a);
     print_char(' ');
@@ -10,7 +10,7 @@ overloaded_poly2 :: fn (a: $T, b: int) {
     print_char('\n');
 }
 
-double_poly :: fn (a: $T, b: T, c: $U) {
+double_poly :: (a: $T, b: T, c: $U) {
     print("double_poly: ");
     print(a);
     print_char(' ');
@@ -20,18 +20,18 @@ double_poly :: fn (a: $T, b: T, c: $U) {
     print_char('\n');
 }
 
-test :: fn (a: int) {}
-test :: fn (b: int) {}
+test :: (a: int) {}
+test :: (b: int) {}
 
 Thing :: struct {
-    do :: fn (this, a:    int) { print("Thing.do: "); print(a); print_char('\n'); }
-    do :: fn (this, a: string) { print("Thing.do: "); print(a); print_char('\n'); }
+    do :: (this, a:    int) { print("Thing.do: "); print(a); print_char('\n'); }
+    do :: (this, a: string) { print("Thing.do: "); print(a); print_char('\n'); }
 }
-main :: fn (): int {
+main :: (): int {
     #print #function;
     {
         print("1:\n");
-        f :: fn () {
+        f :: () {
             print("f()\n");
         }
         f();
@@ -40,7 +40,7 @@ main :: fn (): int {
     }
     {
         print("2:\n");
-        f :: fn (a: $T) {
+        f :: (a: $T) {
             print("f($T): ");
             print(a);
             print("\n");
@@ -52,7 +52,7 @@ main :: fn (): int {
     }
     {
         print("3:\n");
-        f :: fn (a: $T, b: int) {
+        f :: (a: $T, b: int) {
             print("f($T, int): ");
             print(a);
             print(" ");
@@ -66,7 +66,7 @@ main :: fn (): int {
     }
     {
         print("4:\n");
-        f :: fn (a: $T, b: T) {
+        f :: (a: $T, b: T) {
             print("f($T, T): ");
             print(a);
             print_char(' ');
@@ -80,12 +80,12 @@ main :: fn (): int {
     }
     {
         print("5:\n");
-        f :: fn (a: int) {
+        f :: (a: int) {
             print("f(int): ");
             print(a);
             print_char('\n');
         }
-        f :: fn (a: $T) {
+        f :: (a: $T) {
             print("f($T): ");
             print(a);
             print_char('\n');
@@ -97,7 +97,7 @@ main :: fn (): int {
     }
     {
         print("6:\n");
-        f :: fn (a: ..int) {
+        f :: (a: ..int) {
             print("f(..int): ");
             i := 0;
             while i != a.count {
@@ -113,7 +113,7 @@ main :: fn (): int {
     }
     {
         print("7:\n");
-        f :: fn (a: string, b: ..int, c: string, d: ..int, e: string) {
+        f :: (a: string, b: ..int, c: string, d: ..int, e: string) {
             print("f(string, ..int, string, ..int, string): ");
             print(a);
             print_char(' ');
@@ -142,7 +142,7 @@ main :: fn (): int {
     }
     {
         print("8:\n");
-        f :: fn (a: ..string, b: ..int) {
+        f :: (a: ..string, b: ..int) {
             print("f(..string, ..int): ");
             i := 0;
             while i != a.count {
@@ -169,7 +169,7 @@ main :: fn (): int {
     }
     {
         print("9:\n");
-        f :: fn (a: ..$T) {
+        f :: (a: ..$T) {
             print("f(..$T): ");
             i := 0;
             while i != a.count {

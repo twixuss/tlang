@@ -4,7 +4,7 @@ import "windows.tl"
 #stdcall
 #extern_library "gdi32"
 
-HGLRC :: *void;
+HGLRC :: *Void;
 
 PIXELFORMATDESCRIPTOR :: struct {
     nSize           : WORD;
@@ -66,24 +66,24 @@ PFD_DEPTH_DONTCARE        :: 0x20000000;
 PFD_DOUBLEBUFFER_DONTCARE :: 0x40000000;
 PFD_STEREO_DONTCARE       :: 0x80000000;
 
-ChoosePixelFormat :: fn (
+ChoosePixelFormat :: (
   hdc  : HDC,
   ppfd : *PIXELFORMATDESCRIPTOR
-): s32;
+): INT;
 
-SwapBuffers :: fn (
+SwapBuffers :: (
   unnamedParam1 : HDC
 ): BOOL;
 
-DescribePixelFormat :: fn (
+DescribePixelFormat :: (
   hdc          : HDC,
-  iPixelFormat : s32,
+  iPixelFormat : INT,
   nBytes       : UINT,
   ppfd         : *PIXELFORMATDESCRIPTOR
-): s32;
+): INT;
 
-SetPixelFormat :: fn (
+SetPixelFormat :: (
   hdc    : HDC,
-  format : s32,
+  format : INT,
   ppfd   : *PIXELFORMATDESCRIPTOR
 ): BOOL;

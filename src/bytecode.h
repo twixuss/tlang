@@ -3,47 +3,6 @@
 
 #define BYTECODE_DEBUG TL_DEBUG
 
-// General purpose registers
-// NOTE:
-// registers r0-r4 are scratch and are used for expression evaluation
-// registers r5-r7 are allocatable
-// register rs is a stack pointer, and it must be aligned to 16 bytes before executing a call instruction
-#define ENUMERATE_REGISTERS \
-e(sr0) \
-e(sr1) \
-e(sr2) \
-e(sr3) \
-d(first_scratch_register , sr0) \
-d(last_scratch_register  , sr3) \
-e(ar0) \
-e(ar1) \
-e(ar2) \
-e(ar3) \
-d(first_allocatable_register, ar0) \
-d(last_allocatable_register , ar3) \
-e(r8) \
-e(r9) \
-e(r10) \
-e(rs) \
-e(rb) \
-e(parameters) \
-e(locals) \
-e(temporary) \
-e(constants) \
-e(rwdata) \
-e(zeros) \
-e(instructions) \
-
-enum class Register : u8 {
-
-#define e(x) x,
-#define d(x, y) x = y,
-	ENUMERATE_REGISTERS
-#undef d
-#undef e
-	count,
-};
-
 // XMM registers
 enum class XRegister : u8 {
 	x0,
@@ -278,18 +237,17 @@ e(jgf_c              , m(s64, offset)) \
 e(jlef_c             , m(s64, offset)) \
 e(jgef_c             , m(s64, offset)) \
 e(jmp                , m(s64, offset)) \
-e(call_c             , m(s64, constant)) \
-e(call_r             , m(Register, s)) \
-e(call_m             , m(Address, s)) \
-e(stdcall_r          , m(Register, s)) \
+e(call_c             , m(s64, constant) m(AstLambda *, lambda)) \
+e(call_r             , m(Register, s)   m(AstLambda *, lambda)) \
+e(call_m             , m(Address, s)    m(AstLambda *, lambda)) \
 e(copyf_mmc          , m(Address, d) m(Address, s) m(s64, size)) \
 e(copyb_mmc          , m(Address, d) m(Address, s) m(s64, size)) \
 e(copyf_mmr          , m(Address, d) m(Address, s) m(Register, size)) \
 e(copyb_mmr          , m(Address, d) m(Address, s) m(Register, size)) \
 e(setf_mcc           , m(Address, d) m(s8, s) m(s32, size)) \
 e(setb_mcc           , m(Address, d) m(s8, s) m(s32, size)) \
-e(begin_lambda       , m(AstLambda *, lambda) m(CallingConvention, convention)) \
-e(end_lambda         , m(AstLambda *, lambda) m(CallingConvention, convention)) \
+e(begin_lambda       , m(AstLambda *, lambda)) \
+e(end_lambda         , m(AstLambda *, lambda)) \
 e(cvt_f32_s32        , m(Register, d)) \
 e(cvt_s32_f32        , m(Register, d)) \
 e(cvt_f64_s64        , m(Register, d)) \
@@ -309,8 +267,6 @@ e(tobool_r           , m(Register, d)) \
 e(toboolnot_r        , m(Register, d)) \
 e(jmp_label          , ) \
 e(noop               , ) \
-e(push_used_registers, m(u64, mask)) \
-e(pop_used_registers , m(u64, mask)) \
 e(prepare_stack      , m(s64, byte_count)) \
 e(debug_break        , ) \
 e(debug_line         , m(u32, line)) \
@@ -356,7 +312,8 @@ ENUMERATE_INSTRUCTIONS
 	InstructionKind kind;
 #if BYTECODE_DEBUG
 	String comment;
-	u64 line;
+	u32 line;
+	AstNode *node;
 #endif
 };
 

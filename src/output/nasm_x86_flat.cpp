@@ -22,6 +22,13 @@ static void append_instructions(CompilerContext &context, StringBuilder &builder
 
 	s64 idx = 0;
 	for (auto i : instructions) {
+#if BYTECODE_DEBUG
+		if (i.comment.data) {
+			split(i.comment, u8'\n', [&](auto part) {
+				append_format(builder, "; {}\n", part);
+			});
+		}
+#endif
 		if (i.kind == InstructionKind::jmp_label)
 			append_format(builder, ".{}: ", instruction_address(idx));
 		switch (i.kind) {
@@ -48,16 +55,6 @@ static void append_instructions(CompilerContext &context, StringBuilder &builder
 			case push_f: append_format(builder, "movq ebx, {}\npush ebx", i.push_f.s); break;
 			case push_m: append_format(builder, "push dword {}", i.push_m.s); break;
 
-			case push_a: append_format(builder, "push constants + {}", i.push_a.s); break;
-			case push_d: append_format(builder, "push data + {}"     , i.push_d.s); break;
-			case push_u: append_format(builder, "push zeros + {}"    , i.push_u.s); break;
-			case push_t: append_format(builder, "push .{}"           , instruction_address(i.push_t.s)); break;
-
-			case mov_ra: append_format(builder, "mov {}, constants + {}", i.mov_ra.d, i.mov_ra.s); break;
-			case mov_rd: append_format(builder, "mov {}, rwdata + {}"   , i.mov_rd.d, i.mov_rd.s); break;
-			case mov_ru: append_format(builder, "mov {}, zeros + {}"    , i.mov_ru.d, i.mov_ru.s); break;
-			case mov_rt: append_format(builder, "mov {}, .{}"           , i.mov_rt.d, instruction_address(i.mov_rt.s)); break;
-
 			case pop_r: append_format(builder, "pop {}", i.pop_r.d); break;
 			case pop_f: append_format(builder, "pop rbx\nmovq {}, rbx", i.pop_f.d); break;
 
@@ -80,6 +77,7 @@ static void append_instructions(CompilerContext &context, StringBuilder &builder
 			case sub_mr: append_format(builder, "sub dword {}, {}", i.sub_mr.d, i.sub_mr.s); break;
 
 			case mul_rc: append_format(builder, "imul {}, {}", i.mul_rc.d, i.mul_rc.s); break;
+			case mul_rr: append_format(builder, "imul {}, {}", i.mul_rr.d, i.mul_rr.s); break;
 			case mul_mr: append_format(builder, "imul {}, dword {}\nmov dword {}, {}", i.mul_mr.s, i.mul_mr.d, i.mul_mr.d, i.mul_mr.s); break;
 
 				//  DIV - Unsigned divide RDX:RAX by r/m64, with result stored in RAX - Quotient, RDX - Remainder.
@@ -161,7 +159,7 @@ static void append_instructions(CompilerContext &context, StringBuilder &builder
 
 			case jz_cr: { auto reg = part1b(i.jz_cr.reg); append_format(builder, "test {}, {}\njz .{}", reg, reg, instruction_address(idx + i.jz_cr.offset)); break; }
 
-				// Here move into rcx must be last, because it can be source for rdi or rsi
+				// Here move into ecx must be last, because it can be source for edi or esi
 			case copyf_mmc:
 				append_format(builder,
 					"mov esi, {}\n"
@@ -182,10 +180,8 @@ static void append_instructions(CompilerContext &context, StringBuilder &builder
 					i.copyb_mmc.s, i.copyb_mmc.size - 1, i.copyb_mmc.d, i.copyb_mmc.size - 1, i.copyb_mmc.size
 				);
 				break;
-			// case copyf_ssc: append_format(builder, "pop rsi\npop rdi\nmov rcx, {}\ncld\nrep movsb", i.copyf_ssc.size); break;
-			// case copyb_ssc: append_format(builder, "pop rsi\npop rdi\nadd rsi, {}\nadd rdi, {}\nmov rcx, {}\nstd\nrep movsb", i.copyb_ssc.size - 1, i.copyb_ssc.size - 1, i.copyb_ssc.size); break;
-			case setf_mcc: append_format(builder, "mov rdi, {}\nmov al, {}\nmov rcx, {}\ncld\nrep stosb", i.setf_mcc.d, i.setf_mcc.s, i.setf_mcc.size); break;
-			case setb_mcc: append_format(builder, "mov rdi, {}\nmov al, {}\nmov rcx, {}\nadd rdi, {}\nstd\nrep stosb", i.setb_mcc.d, i.setb_mcc.s, i.setb_mcc.size, i.setb_mcc.size-1); break;
+			case setf_mcc: append_format(builder, "mov edi, {}\nmov al, {}\nmov ecx, {}\ncld\nrep stosb", i.setf_mcc.d, i.setf_mcc.s, i.setf_mcc.size); break;
+			case setb_mcc: append_format(builder, "mov edi, {}\nmov al, {}\nmov ecx, {}\nadd edi, {}\nstd\nrep stosb", i.setb_mcc.d, i.setb_mcc.s, i.setb_mcc.size, i.setb_mcc.size-1); break;
 
 			case call_c: {
 				append_format(builder, "call .{}", instruction_address(i.call_c.constant));
@@ -228,21 +224,13 @@ static void append_instructions(CompilerContext &context, StringBuilder &builder
 			case mov4_xm: append_format(builder, "movd {}, dword {}", i.mov4_xm.d, i.mov4_xm.s); break;
 			case mov8_xm: append_format(builder, "movq {}, qword {}", i.mov8_xm.d, i.mov8_xm.s); break;
 
-			case add_f32_f32: append_format(builder, "addss {}, {}", i.add_f32_f32.d, i.add_f32_f32.s); break;
-			case sub_f32_f32: append_format(builder, "subss {}, {}", i.sub_f32_f32.d, i.sub_f32_f32.s); break;
-			case mul_f32_f32: append_format(builder, "mulss {}, {}", i.mul_f32_f32.d, i.mul_f32_f32.s); break;
-			case div_f32_f32: append_format(builder, "divss {}, {}", i.div_f32_f32.d, i.div_f32_f32.s); break;
-
-			case add_f64_f64: append_format(builder, "addsd {}, {}", i.add_f64_f64.d, i.add_f64_f64.s); break;
-			case sub_f64_f64: append_format(builder, "subsd {}, {}", i.sub_f64_f64.d, i.sub_f64_f64.s); break;
-			case mul_f64_f64: append_format(builder, "mulsd {}, {}", i.mul_f64_f64.d, i.mul_f64_f64.s); break;
-			case div_f64_f64: append_format(builder, "divsd {}, {}", i.div_f64_f64.d, i.div_f64_f64.s); break;
-
 			case xor_ff: append_format(builder, "xorps {}, {}", i.xor_ff.d, i.xor_ff.s); break;
 
 			case tobool_r:    { auto d = part1b(i.tobool_r.d);    append_format(builder, "test {}, {}\nsetnz {}", d, d, d); break; }
 			case toboolnot_r: { auto d = part1b(i.toboolnot_r.d); append_format(builder, "test {}, {}\nsetz {}" , d, d, d); break; }
-			case noop: break;
+			case noop:
+			case jmp_label:
+				break;
 
 			case debug_break: append(builder, "xchg bx, bx"s); break;
 
@@ -253,14 +241,72 @@ static void append_instructions(CompilerContext &context, StringBuilder &builder
 			case movzx21_rm: append_format(builder, "movzx {}, byte {}"s,  part2b(i.movsx21_rm.d), i.movsx21_rm.s); break;
 			case movzx41_rm: append_format(builder, "movzx {}, byte {}"s,  part4b(i.movsx41_rm.d), i.movsx41_rm.s); break;
 			case movzx42_rm: append_format(builder, "movzx {}, word {}"s,  part4b(i.movsx42_rm.d), i.movsx42_rm.s); break;
+			case push_used_registers: {
+				if (i.push_used_registers.mask == -1) {
+					append(builder,
+						//"push eax\n"
+						"push ebx\n"
+						//"push ecx\n"
+						//"push edx\n"
+						"push esi\n"
+						"push edi\n"
+						//"push esp\n"
+						//"push ebp\n"
+						//"push e8\n"
+						//"push e9\n"
+						//"push e10\n"
+						//"push e11\n"
+						"sub rsp, 4\n" // keep alignment
+					);
+					break;
+				}
 
+				for (u64 bit = 0; bit < sizeof(i.push_used_registers.mask) * 8; ++bit) {
+					if ((i.push_used_registers.mask >> bit) & 1) {
+						append_format(builder, "push {}\n", (Register)bit);
+					}
+				}
+
+				// keep the stack 16-byte aligned
+				if (count_bits(i.push_used_registers.mask) & 1)
+					append_format(builder, "sub esp, 4\n");
+				break;
+			}
+			case pop_used_registers: {
+				if (i.pop_used_registers.mask == -1) {
+					append(builder,
+						"add esp, 4\n" // keep alignment
+						//"pop e11\n"
+						//"pop e10\n"
+						//"pop e9\n"
+						//"pop e8\n"
+						//"pop ebp\n"
+						//"pop esp\n"
+						"pop edi\n"
+						"pop esi\n"
+						//"pop edx\n"
+						//"pop ecx\n"
+						"pop ebx\n"
+						//"pop eax\n"
+					);
+					break;
+				}
+
+				// keep the stack 16-byte aligned
+				if (count_bits(i.push_used_registers.mask) & 1)
+					append_format(builder, "add esp, 4\n");
+
+				for (u64 bit = sizeof(i.push_used_registers.mask) * 8 - 1; bit != ~0; --bit) {
+					if ((i.push_used_registers.mask >> bit) & 1) {
+						append_format(builder, "pop {}\n", (Register)bit);
+					}
+				}
+				break;
+			}
 			default:invalid_code_path();
 		}
 #if BYTECODE_DEBUG
 		append_format(builder, "; bytecode.cpp:{}\n", i.line);
-		if (i.comment.data) {
-			append_format(builder, "; {}\n", i.comment);
-		}
 #else
 		append(builder, '\n');
 #endif
@@ -286,24 +332,40 @@ DECLARE_OUTPUT_BUILDER {
 
 		assert(count_of(bytecode.extern_libraries) == 0);
 
-		not_implemented("data sections");
-#if 0
-		if (bytecode.constant_data.count) {
-			append(builder, "constants: db ");
-			for (auto byte : bytecode.constant_data) {
-				append_format(builder, "{},", byte);
-			}
-			append(builder, '\n');
-		}
 
-		if (bytecode.data.count) {
-			append(builder, "rwdata: db ");
-			for (auto byte : bytecode.data) {
-				append_format(builder, "{},", byte);
+		auto append_section = [&](auto name, auto label, auto &section) {
+			auto it = section.buffer.begin();
+			umm i = 0;
+			bool last_is_byte = true;
+			//append_format(builder, "section {}\n{}:db ", name, label);
+			append_format(builder, "{}:db ", label);
+			while (it != section.buffer.end()) {
+				auto relocation = binary_search(section.relocations, i);
+				if (relocation) {
+					u64 offset = 0;
+					for (umm j = 0; j < 8; ++j)
+						offset = (offset >> 8) | ((u64)*it++ << 56);
+
+					if (last_is_byte) {
+						append(builder, "\ndq ");
+						last_is_byte = false;
+					}
+					append_format(builder, "{}+{},", label, offset);
+
+					i += 8;
+				} else {
+					if (!last_is_byte) {
+						append(builder, "\ndb ");
+						last_is_byte = true;
+					}
+					append_format(builder, "{},", *it++);
+					i += 1;
+				}
 			}
 			append(builder, '\n');
-		}
-#endif
+		};
+		append_section(".rodata", "constants", context.constant_section);
+		append_section(".data", "rwdata", context.data_section);
 
 		if (context.zero_section_size) {
 			append_format(builder, "zeros: resb {}\n", context.zero_section_size);
@@ -338,7 +400,7 @@ DECLARE_OUTPUT_BUILDER {
 
 		auto process = start_process(bat_path);
 		if (!process.handle) {
-			print(Print_error, "Cannot execute file '{}'\n", bat_path);
+			with(ConsoleColor::red, print("Cannot execute file '{}'\n", bat_path));
 			return;
 		}
 
@@ -363,7 +425,7 @@ DECLARE_OUTPUT_BUILDER {
 		wait(process);
 		auto exit_code = get_exit_code(process);
 		if (exit_code != 0) {
-			print(Print_error, "Build command failed\n");
+			with(ConsoleColor::red, print("Build command failed\n"));
 			return;
 		}
 		print("Build succeeded\n");

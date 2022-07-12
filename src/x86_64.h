@@ -45,44 +45,26 @@ inline static constexpr XRegister stdcall_float_registers[] {
 	XRegister::x3,
 };
 
-#define REGISTER_MAP \
-	C(sr0, rcx) \
-	C(sr1, rdx) \
-	C(sr2, r8)  \
-	C(sr3, r9)  \
-	C(ar0, r12) \
-	C(ar1, r13) \
-	C(ar2, r14) \
-	C(ar3, r15) \
-	C(r8, rax) \
-	C(r9, r10) \
-	C(r10, r11) \
-	C(rs, rsp) \
-	C(rb, rbp)
-
-#define C(a, b) case Register::a: return Register64::b;
-
 inline static constexpr Register64 to_x86_register(Register r) {
-	switch (r) {
-		REGISTER_MAP;
+	using namespace Registers;
+	using enum Register64;
+	switch (r.v) {
+		case 0: return rcx;
+		case 1: return rdx;
+		case 2: return r8;
+		case 3: return r9;
+		case 4: return r12;
+		case 5: return r13;
+		case 6: return r14;
+		case 7: return r15;
+		case 8: return rsi;
+		case 9: return rdi;
+		case Registers::rs.v: return rsp;
+		case Registers::rb.v: return rbp;
 	}
-	invalid_code_path();
+	invalid_code_path("invalid register: {}", r.v);
 	return {};
 }
-
-#undef C
-
-#define C(a, b) case Register64::b: return Register::a;
-
-inline static constexpr Register to_bc_register(Register64 r) {
-	switch (r) {
-		REGISTER_MAP;
-	}
-	invalid_code_path();
-	return {};
-}
-
-#undef C
 
 inline static constexpr Register64 part8b(Register64 r) { return r; }
 inline static constexpr Register32 part4b(Register64 r) { return (Register32)r; }

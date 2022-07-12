@@ -617,14 +617,13 @@ bool lexer_function(Lexer *lexer) {
 				while (is_whitespace(c)) {
 					next_char();
 				}
-				token.string.data = current_p;
 				skip_identifier_chars();
 				token.string.count = current_p - token.string.data;
 				if (token.string.count == 0) {
 					lexer->reporter->error(token.string, "Expected an identifier after \\.");
 					return false;
 				}
-				token.kind = Token_identifier;
+				token.kind = Token_split_identifier;
 
 				auto &back = lexer->token_cursor[-1];
 
@@ -2351,28 +2350,9 @@ bool is_right_associative(BinaryOperation operation) {
 // Thanks to this: https://github.com/richardjennings/prattparser
 AstExpression *parse_expression(Parser *parser, int right_precedence) {
 	//null denotation
-	AstExpression *left = 0;
-	switch (parser->token->kind) {
-		case '(':
-			if (should_parse_lambda(parser)) {
-				left = parse_lambda(parser);
-			} else {
-				parser->next();
-				left = parse_expression(parser);
-				if (!left)
-					return 0;
-				if (parser->token->kind != ')') {
-					parser->reporter->error(parser->token->string, "Expected )");
-				}
-				parser->next();
-			}
-			break;
-		default:
-			left = parse_expression_1(parser);
-			if (!left)
-				return 0;
-			break;
-	}
+	AstExpression *left = parse_expression_1(parser);
+	if (!left)
+		return 0;
 
 	// left binding power
 	Optional<BinaryOperation> operation;
@@ -3916,30 +3896,52 @@ void evaluate_and_put_definition_in_section(TypecheckState *state, AstDefinition
 	definition->offset = put_in_section(definition->evaluated, section);
 }
 
-u64 get_type_kind(AstExpression *type) {
-	if (types_match(type, builtin_void)) return 0;
-	if (types_match(type, builtin_bool)) return 1;
-	if (types_match(type, builtin_u8))   return 2;
-	if (types_match(type, builtin_u16))  return 3;
-	if (types_match(type, builtin_u32))  return 4;
-	if (types_match(type, builtin_u64))  return 5;
-	if (types_match(type, builtin_s8))   return 6;
-	if (types_match(type, builtin_s16))  return 7;
-	if (types_match(type, builtin_s32))  return 8;
-	if (types_match(type, builtin_s64))  return 9;
-	if (types_match(type, builtin_f32))  return 10;
-	if (types_match(type, builtin_f64))  return 11;
-	if (direct_as<AstStruct>(type))      return 12;
-	if (direct_as<AstEnum>(type))        return 13;
+enum class TypeKind {
+	Void,
+	Bool,
+	U8,
+	U16,
+	U32,
+	U64,
+	S8,
+	S16,
+	S32,
+	S64,
+	F32,
+	F64,
+	Struct,
+	Enum,
+	Pointer,
+	Span,
+	Array,
+};
+
+TypeKind get_type_kind(AstExpression *type) {
+	using enum TypeKind;
+	if (types_match(type, builtin_void)) return Void;
+	if (types_match(type, builtin_bool)) return Bool;
+	if (types_match(type, builtin_u8))   return U8;
+	if (types_match(type, builtin_u16))  return U16;
+	if (types_match(type, builtin_u32))  return U32;
+	if (types_match(type, builtin_u64))  return U64;
+	if (types_match(type, builtin_s8))   return S8;
+	if (types_match(type, builtin_s16))  return S16;
+	if (types_match(type, builtin_s32))  return S32;
+	if (types_match(type, builtin_s64))  return S64;
+	if (types_match(type, builtin_f32))  return F32;
+	if (types_match(type, builtin_f64))  return F64;
+	if (direct_as<AstStruct>(type))      return Struct;
+	if (direct_as<AstEnum>(type))        return Enum;
 	if (auto unop = direct_as<AstUnaryOperator>(type)) {
 		switch (unop->operation) {
 			using enum UnaryOperation;
-			case pointer: return 14;
-			case pack: return 15;
+			case pointer: return Pointer;
+			case pack: return Span;
 		}
 	}
-	if (direct_as<AstSpan>(type)) return 15;
-	if (direct_as<AstSubscript>(type)) return 16;
+	if (direct_as<AstSpan>(type)) return Span;
+	if (direct_as<AstSubscript>(type)) return Array;
+	if (direct_as<AstLambdaType>(type)) return Pointer;
 
 	invalid_code_path();
 }
@@ -4016,7 +4018,7 @@ AstUnaryOperator *get_typeinfo(TypecheckState *state, AstExpression *type, Strin
 		};
 
 		auto typeinfo_initializer = create_initializer(builtin_typeinfo);
-		set_member(typeinfo_initializer, "kind", make_integer(location, get_type_kind(directed)));
+		set_member(typeinfo_initializer, "kind", make_integer(location, (s64)get_type_kind(directed)));
 		set_member(typeinfo_initializer, "name", make_string(name));
 
 		if (directed->kind == Ast_Struct) {
@@ -4444,10 +4446,9 @@ bool ensure_assignable(Reporter *reporter, AstExpression *expression) {
 		}
 		case Ast_Subscript: {
 			auto subscript = (AstSubscript *)expression;
-			assert(subscript->expression->kind == Ast_Identifier);
-			auto identifier = (AstIdentifier *)subscript->expression;
-
-			return ensure_assignable(reporter, identifier);
+			if (is_pointer(subscript->expression->type))
+				return true;
+			return ensure_assignable(reporter, subscript->expression);
 		}
 		case Ast_UnaryOperator: {
 			using enum UnaryOperation;
@@ -4782,9 +4783,10 @@ bool evaluate_if_possible(TypecheckState *state, AstDefinition *definition) {
 }
 
 void set_local_offset(AstDefinition *definition, AstLambda *lambda) {
-	lambda->stack_cursor -= ceil(get_size(definition->type), 16ll);
-	assert((lambda->stack_cursor & 0xf) == 0);
-	definition->offset = lambda->stack_cursor;
+	assert((lambda->locals_size & 0xf) == 0);
+	definition->offset = lambda->locals_size;
+	auto size = ceil(get_size(definition->type), 16ll);
+	lambda->locals_size += size;
 }
 
 void typecheck(TypecheckState *state, AstStatement *statement);
@@ -6778,7 +6780,6 @@ AstExpression *typecheck(TypecheckState *state, AstBinaryOperator *bin) {
 		}
 		case as: {
 			auto cast = bin;
-			// typecheck(state, cast->left);
 			typecheck(state, cast->right);
 			cast->type = cast->right;
 
@@ -6842,7 +6843,6 @@ AstExpression *typecheck(TypecheckState *state, AstBinaryOperator *bin) {
 			break;
 		}
 		case ass: {
-			typecheck(state, bin->left);
 			if (!ensure_assignable(&state->reporter, bin->left)) {
 				yield(TypecheckResult::fail);
 			}
@@ -6857,7 +6857,6 @@ AstExpression *typecheck(TypecheckState *state, AstBinaryOperator *bin) {
 		}
 		case lor:
 		case land: {
-			typecheck(state, bin->left);
 			if (!types_match(bin->left->type, builtin_bool)) {
 				state->reporter.error(bin->left->location, "This must be a boolean");
 				yield(TypecheckResult::fail);
@@ -6872,7 +6871,6 @@ AstExpression *typecheck(TypecheckState *state, AstBinaryOperator *bin) {
 			break;
 		}
 		case range: {
-			typecheck(state, bin->left);
 			harden_type(bin->left);
 			if (!::is_integer(bin->left->type)) {
 				state->reporter.error(bin->left->location, "This must be an integer");
@@ -7339,7 +7337,7 @@ AstExpression *typecheck(TypecheckState *state, AstStruct *Struct) {
 
 	scoped_replace(state->current_lambda_or_struct_or_enum, Struct);
 
-	s64 struct_size = 1;
+	s64 struct_size = 0;
 	s64 struct_alignment = 1;
 
 	{
@@ -7404,6 +7402,9 @@ AstExpression *typecheck(TypecheckState *state, AstStruct *Struct) {
 			}
 		}
 
+		//if (Struct->definition && Struct->definition->name == "WNDCLASSEXA")
+		//	debug_break();
+
 		if (Struct->is_union) {
 			for (auto &member : Struct->data_members) {
 				switch (Struct->layout) {
@@ -7444,7 +7445,7 @@ AstExpression *typecheck(TypecheckState *state, AstStruct *Struct) {
 		}
 	}
 	Struct->alignment = struct_alignment;
-	Struct->size = ceil(struct_size, struct_alignment);
+	Struct->size = max(1, ceil(struct_size, struct_alignment));
 	return Struct;
 }
 AstExpression *typecheck(TypecheckState *state, AstSubscript *subscript) {
@@ -8556,23 +8557,26 @@ restart_main:
 	append_member(builtin_string, "count"str, type_uint);
 
 	// type_kind
-	append_value(builtin_type_kind, "Void"str,    0);
-	append_value(builtin_type_kind, "Bool"str,    1);
-	append_value(builtin_type_kind, "U8"str,      2);
-	append_value(builtin_type_kind, "U16"str,     3);
-	append_value(builtin_type_kind, "U32"str,     4);
-	append_value(builtin_type_kind, "U64"str,     5);
-	append_value(builtin_type_kind, "S8"str,      6);
-	append_value(builtin_type_kind, "S16"str,     7);
-	append_value(builtin_type_kind, "S32"str,     8);
-	append_value(builtin_type_kind, "S64"str,     9);
-	append_value(builtin_type_kind, "F32"str,     10);
-	append_value(builtin_type_kind, "F64"str,     11);
-	append_value(builtin_type_kind, "struct"str,  12);
-	append_value(builtin_type_kind, "enum"str,    13);
-	append_value(builtin_type_kind, "pointer"str, 14);
-	append_value(builtin_type_kind, "span"str,    15);
-	append_value(builtin_type_kind, "array"str,   16);
+	{
+		using enum TypeKind;
+		append_value(builtin_type_kind, "Void"str,    (s64)Void   );
+		append_value(builtin_type_kind, "Bool"str,    (s64)Bool   );
+		append_value(builtin_type_kind, "U8"str,      (s64)U8     );
+		append_value(builtin_type_kind, "U16"str,     (s64)U16    );
+		append_value(builtin_type_kind, "U32"str,     (s64)U32    );
+		append_value(builtin_type_kind, "U64"str,     (s64)U64    );
+		append_value(builtin_type_kind, "S8"str,      (s64)S8     );
+		append_value(builtin_type_kind, "S16"str,     (s64)S16    );
+		append_value(builtin_type_kind, "S32"str,     (s64)S32    );
+		append_value(builtin_type_kind, "S64"str,     (s64)S64    );
+		append_value(builtin_type_kind, "F32"str,     (s64)F32    );
+		append_value(builtin_type_kind, "F64"str,     (s64)F64    );
+		append_value(builtin_type_kind, "struct"str,  (s64)Struct );
+		append_value(builtin_type_kind, "enum"str,    (s64)Enum   );
+		append_value(builtin_type_kind, "pointer"str, (s64)Pointer);
+		append_value(builtin_type_kind, "span"str,    (s64)Span   );
+		append_value(builtin_type_kind, "array"str,   (s64)Array  );
+	}
 
 	// struct_member
 	append_member(builtin_struct_member, "name"str,   builtin_string.ident);

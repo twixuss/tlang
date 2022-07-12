@@ -4,7 +4,7 @@ TYPEINFO :: struct {
 	name: string;
 }
 typeinfo_string :: TYPEINFO(name = "hello");
-main :: fn () {
+main :: () {
 	println(typeinfo_string.name);
 	println((#typeinfo typeinfo).name);
 	println((#typeinfo int).name);

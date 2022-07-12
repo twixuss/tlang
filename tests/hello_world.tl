@@ -1,5 +1,5 @@
 import "std.tl"
 
-main :: fn() {
+main :: () {
     print("Hello World!\n");
 }

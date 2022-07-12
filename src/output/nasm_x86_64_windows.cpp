@@ -31,35 +31,76 @@ static void append_instructions(CompilerContext &context, StringBuilder &builder
 	// expects size in rax
 	// in debug mode fills the memory with known value
 	if (/*debug*/ true) {
-		append(builder,
-			"._ps:"
-			"push rcx\n"
-			"push rdi\n"
-			"lea rdi, [rsp-1]\n"
-			"mov rcx, rax\n"
-			"std\n"
-			"rep stosb\n"
-			"cld\n"
-			"pop rdi\n"
-			"pop rcx\n"
-			"ret\n"
+		append(builder, R"(
+._ps:
+	push rcx
+	push rdi
+	lea rdi, [rsp-1]
+	mov rcx, rax
+	std
+	rep stosb
+	cld
+	pop rdi
+	pop rcx
+	ret
+)"
 		);
 	} else {
-		append(builder,
-			"._ps:"
-			"push rbx\n"
-			"mov rbx, rsp\n"
-			"sub rbx, rax\n"
-			"lea rax, [rsp-1]\n"
-			"._psl:\n"
-			"mov byte [rax], 0\n"
-			"sub rax, 4096\n"
-			"cmp rax, rbx\n"
-			"jg ._psl\n"
-			"pop rbx\n"
-			"ret\n"
+		append(builder, R"(
+._ps:
+	push rbx
+	mov rbx, rsp
+	sub rbx, rax
+	lea rax, [rsp-1]
+._psl:
+	mov byte [rax], 0
+	sub rax, 4096
+	cmp rax, rbx
+	jg ._psl
+	pop rbx
+	ret
+)"
 		);
 	}
+
+	// stdcall routine
+	// Input:
+	//     rax - lambda
+	//     rbx - args size
+	// Does:
+	//     1. convert tlangcall arguments to stdcall arguments
+	//     2. call rax
+	//     3. put rax into return value
+	append(builder, R"(
+._stdcall:
+	xor rcx, rcx
+._stdcall_l0:
+	cmp rcx, rbx
+	je ._stdcall_l1
+
+	lea	r8, [rsp + 8 + rcx]
+	lea	r9, [rsp + rbx]
+	sub r9, rcx
+
+	mov r10, [r8]
+	xchg [r9], r10
+	mov [r8], r10
+
+	add rcx, 8
+	jmp ._stdcall_l0
+._stdcall_l1:
+	lea r9, [rsp + 8 + rbx]
+	mov rcx, [r9 - 8];
+	mov rdx, [r9 - 16];
+	mov r8,  [r9 - 24];
+	mov r9,  [r9 - 32];
+	sub rsp, 32
+	call rax
+	add rsp, 32
+	mov [rsp + 8 + rbx], rax
+	ret
+)"
+	);
 
 	s64 idx = 0;
 	for (auto i : instructions) {
@@ -76,14 +117,6 @@ static void append_instructions(CompilerContext &context, StringBuilder &builder
 		switch (i.kind) {
 			using enum InstructionKind;
 			case mov_re: n += append_format(builder, "mov {}, {}", i.mov_re.d, i.mov_re.s); break;
-			case prepare_stack:
-				n += append_format(builder, "mov rax, {}\ncall ._ps", i.prepare_stack.byte_count);
-
-				// HACK: bytecode does not change instructions that point to code after inserting `unguard_stack` instruction.
-				// This accounts for adding `jmp_label` and `unguard_stack` instructions.
-				// idx -= 2;
-
-				break;
 			default: n += append_instruction(builder, idx, i); break;
 		}
 		for (umm i = n; i < 30; ++i)
@@ -94,26 +127,6 @@ static void append_instructions(CompilerContext &context, StringBuilder &builder
 		append_format(builder, "; #{}\n", idx);
 #endif
 		++idx;
-	}
-}
-
-template <class T>
-T *find_binary(Span<T> span, T value) {
-	auto begin = span.begin();
-	auto end   = span.end();
-	while (1) {
-		if (begin == end)
-			return 0;
-
-		auto mid = begin + (end - begin) / 2;
-		if (value == *mid)
-			return mid;
-
-		if (value < *mid) {
-			end = mid;
-		} else {
-			begin = mid + 1;
-		}
 	}
 }
 
@@ -157,7 +170,7 @@ DECLARE_OUTPUT_BUILDER {
 			bool last_is_byte = true;
 			append_format(builder, "section {}\n{}:db ", name, label);
 			while (it != section.buffer.end()) {
-				auto relocation = find_binary(section.relocations, i);
+				auto relocation = binary_search(section.relocations, i);
 				if (relocation) {
 					u64 offset = 0;
 					for (umm j = 0; j < 8; ++j)

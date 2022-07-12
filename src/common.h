@@ -221,6 +221,47 @@ struct Section {
 	}
 };
 
+// first 4 registers are scratch and are used for expression evaluation
+// rs is a stack pointer, and it must be aligned to 16 bytes before executing a call instruction
+struct Register {
+	u8 v;
+
+	inline static constexpr u32 count = 1 << (sizeof(v) * 8);
+
+	inline explicit operator u8 () { return v; }
+	inline explicit operator u16() { return v; }
+	inline explicit operator u32() { return v; }
+	inline explicit operator u64() { return v; }
+	inline explicit operator s8 () { return v; }
+	inline explicit operator s16() { return v; }
+	inline explicit operator s32() { return v; }
+	inline explicit operator s64() { return v; }
+
+	inline constexpr auto operator<=>(Register const &) const = default;
+};
+
+namespace Registers {
+
+inline static constexpr Register r0 = {0};
+inline static constexpr Register r1 = {1};
+inline static constexpr Register r2 = {2};
+inline static constexpr Register rs = {255};
+inline static constexpr Register rb = {254};
+inline static constexpr Register parameters        = {253};
+inline static constexpr Register return_parameters = {252};
+inline static constexpr Register locals            = {251};
+inline static constexpr Register temporary         = {250};
+inline static constexpr Register constants         = {249};
+inline static constexpr Register rwdata            = {248};
+inline static constexpr Register zeros             = {247};
+inline static constexpr Register instructions      = {246};
+inline static constexpr u32 allocatable_register_start = 3;
+inline static constexpr u32 allocatable_register_end   = 247;
+
+}
+
+using RegisterSet = BitSet<Register::count>;
+
 struct CompilerContext {
 	String source_path;
 	String source_path_without_extension;

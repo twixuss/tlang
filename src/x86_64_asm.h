@@ -3,6 +3,13 @@
 
 namespace x86_64 {
 
+inline List<AstLambda *> lambda_stack;
+inline AstLambda *current_lambda() { return lambda_stack.back(); }
+s64 saved_registers_size;
+s64 temporary_offset;
+s64 locals_offset;
+s64 parameters_size;
+
 static Span<utf8> cmov_string(Comparison c) {
 	using enum Comparison;
 	switch (c) {
@@ -69,12 +76,29 @@ inline umm append(StringBuilder &builder, Address a) {
 	using namespace x86_64;
 	umm result = 0;
 	result += append(builder, '[');
-	switch (a.base) {
-		using enum Register;
-		case constants: result += append(builder, "rel constants"); break;
-		case rwdata: result += append(builder, "rel rwdata"); break;
-		case zeros: result += append(builder, "rel zeros"); break;
-		case instructions: return append_format(builder, "rel .{}]", instruction_address(a.c));
+	switch (a.base.v) {
+		case Registers::locals.v:
+			a.base = Registers::rb;
+			a.c += locals_offset;
+			break;
+		case Registers::temporary.v:
+			a.base = Registers::rb;
+			a.c += temporary_offset;
+			break;
+		case Registers::parameters.v:
+			a.base = Registers::rb;
+			a.c = parameters_size - a.c + 8;
+			break;
+		case Registers::return_parameters.v:
+			a.base = Registers::rb;
+			a.c += parameters_size + 16;
+			break;
+	}
+	switch (a.base.v) {
+		case Registers::constants   .v: result += append(builder, "rel constants"); break;
+		case Registers::rwdata      .v: result += append(builder, "rel rwdata"); break;
+		case Registers::zeros       .v: result += append(builder, "rel zeros"); break;
+		case Registers::instructions.v: return append_format(builder, "rel .{}]", instruction_address(a.c));
 		default: result += append(builder, to_x86_register(a.base)); break;
 	}
 	if (a.r1_scale_index) {
@@ -478,7 +502,9 @@ inline umm append_instruction(StringBuilder &builder, s64 idx, Instruction i) {
 		// }
 
 		case call_c: {
-			return append_format(builder, "call .{}", instruction_address(i.call_c.constant));
+			REDECLARE_REF(i, i.call_c);
+			assert(i.lambda->convention == CallingConvention::tlang);
+			return append_format(builder, "call .{}", instruction_address(i.constant));
 			break;
 #if 0
 			auto lambda = i.call_c.lambda;
@@ -562,11 +588,24 @@ inline umm append_instruction(StringBuilder &builder, s64 idx, Instruction i) {
 #endif
 		}
 
-		case call_r: return append_format(builder, "call {}", i.call_r.s);
-		case stdcall_r: return append_format(builder, "call {}", i.stdcall_r.s);
-		case call_m:
-			return append_format(builder, "call qword {}", i.call_m.s);
+		case call_r: {
+			REDECLARE_REF(i, i.call_r);
+			switch (i.lambda->convention) {
+				case CallingConvention::tlang: return append_format(builder, "call {}", i.s);
+				case CallingConvention::stdcall: return append_format(builder, "mov rax, {}\nmov rbx, {}\ncall ._stdcall", i.s, i.lambda->parameters_size);
+				default: invalid_code_path();
+			}
 			break;
+		}
+		case call_m: {
+			REDECLARE_REF(i, i.call_m);
+			switch (i.lambda->convention) {
+				case CallingConvention::tlang:  return append_format(builder, "call qword {}", i.s);
+				case CallingConvention::stdcall: return append_format(builder, "mov rax, {}\nmov rbx, {}\ncall ._stdcall", i.s, i.lambda->parameters_size);
+				default: invalid_code_path();
+			}
+			break;
+		}
 #if 0
 			if (i.call_m.lambda->convention == CallingConvention::stdcall)
 				prepare_stdcall(i.call_m.lambda);
@@ -636,7 +675,7 @@ inline umm append_instruction(StringBuilder &builder, s64 idx, Instruction i) {
 		case movzx42_rm: return append_format(builder, "movzx {}, word {}",  part4b(i.movsx42_rm.d), i.movsx42_rm.s);
 		case movzx82_rm: return append_format(builder, "movzx {}, word {}",  part8b(i.movsx82_rm.d), i.movsx82_rm.s);
 		case movzx84_rm: return append_format(builder, "mov {}, dword {}", part4b(i.movsx84_rm.d), i.movsx84_rm.s);
-
+#if 0
 		case push_used_registers: {
 			umm ch = 0;
 			if (i.push_used_registers.mask == -1) {
@@ -709,6 +748,7 @@ inline umm append_instruction(StringBuilder &builder, s64 idx, Instruction i) {
 			}
 			return ch;
 		}
+#endif
 		case xchg_rr: return append_format(builder, "xchg {},{}", i.xchg_rr.a, i.xchg_rr.b);
 		case xchg1_mr: return append_format(builder, "xchg {},{}", i.xchg1_mr.a, part1b(i.xchg1_mr.b));
 		case xchg2_mr: return append_format(builder, "xchg {},{}", i.xchg2_mr.a, part2b(i.xchg2_mr.b));
@@ -717,6 +757,90 @@ inline umm append_instruction(StringBuilder &builder, s64 idx, Instruction i) {
 		case debug_start_lambda:
 		case debug_line:
 			return 0;
+
+		case begin_lambda: {
+			REDECLARE_REF(i, i.begin_lambda);
+
+			auto lambda = i.lambda;
+
+			// TODO:
+			//
+			// [x ] push rbp
+			// [x ] push used registers
+			// [x ] touch stack pages (if necessary)
+			// [  ] reserve temporary space
+			// [  ] set rsp away from rbp
+			// [ ] all of the above inverted in reverse for end_lambda
+			//
+			// patch:
+			// [ ] locals
+			// [ ] parameters
+			// [ ] return parameters
+
+			switch (lambda->convention) {
+				case CallingConvention::tlang: {
+					append_format(builder, "push rbp\nmov rbp, rsp\n");
+
+					saved_registers_size = 0;
+
+					for_each(lambda->used_registers, [&](umm bit) {
+						append_format(builder, "push {}\n", (Register)bit);
+						saved_registers_size += 8;
+					});
+
+					// keep the stack 16-byte aligned
+					if (lambda->used_registers.count() & 1) {
+						append_format(builder, "sub rsp, 8\n");
+						saved_registers_size += 8;
+					}
+
+
+					auto used_bytes = lambda->locals_size + lambda->temporary_size + lambda->max_stack_space_used_for_call;
+					if (used_bytes >= 4096) {
+						append_format(builder, "mov rax, {}\ncall ._ps\n", used_bytes);
+					}
+
+					if (used_bytes)
+						append_format(builder, "sub rsp, {}; reserve space for locals, temporary storage and call arguments\n", used_bytes);
+
+					temporary_offset = -(saved_registers_size + lambda->temporary_size);
+					locals_offset    = -(saved_registers_size + lambda->temporary_size + lambda->locals_size);
+					parameters_size  = lambda->parameters_size;
+
+					//not_implemented();
+					break;
+				}
+				case CallingConvention::stdcall: not_implemented();
+			}
+			return 0;
+		}
+		case end_lambda: {
+			REDECLARE_REF(i, i.end_lambda);
+			auto lambda = i.lambda;
+			switch (lambda->convention) {
+				case CallingConvention::tlang: {
+
+					auto used_bytes = lambda->locals_size + lambda->temporary_size + lambda->max_stack_space_used_for_call;
+
+					// keep the stack 16-byte aligned
+					if (lambda->used_registers.count() & 1) {
+						used_bytes += 8;
+					}
+					if (used_bytes)
+						append_format(builder, "add rsp, {}; remove space for locals, temporary storage and call arguments\n", used_bytes);
+
+					for_each(lambda->used_registers, [&](umm bit) {
+						append_format(builder, "pop {}\n", (Register)bit);
+					});
+
+					append_format(builder, "mov rsp, rbp\npop rbp\nret");
+					break;
+				}
+				case CallingConvention::stdcall: not_implemented();
+			}
+			return 0;
+		}
+
 		default:invalid_code_path();
 	}
 	invalid_code_path();
