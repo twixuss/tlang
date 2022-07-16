@@ -185,7 +185,7 @@ void print_ast(AstStruct *node) {
 	else
 		print_tabbed("struct - unnamed, uid: {}\n", node->uid());
 	tab_count += 1;
-	for_each(node->scope.definitions, [&](auto, auto member) {
+	for_each(node->member_scope.definitions, [&](auto, auto member) {
 		print_ast(member[0]);
 	});
 	tab_count -= 1;
@@ -567,10 +567,10 @@ void print_lowered(AstReturn *node) {
 	}
 }
 void print_lowered(AstStruct *node) {
-	if (node->scope.statements.count) {
+	if (node->member_scope.statements.count) {
 		print("struct {\n");
 		++tab_count;
-		for (auto statement : node->scope.statements) {
+		for (auto statement : node->member_scope.statements) {
 			print_lowered(statement);
 		}
 		--tab_count;

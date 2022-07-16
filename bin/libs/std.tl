@@ -127,12 +127,12 @@ print :: (value: $T) {
 	free(&b);
 }
 
-//print :: (format: String, values: ..any) {
-//	b := StringBuilder.create();
-//	append_format(&b, format, values);
-//	write_to_console(to_string(&b));
-//	free(&b);
-//}
+print :: (format: String, values: ..Any) {
+	b := StringBuilder.create();
+	append_format(&b, format, ..values);
+	write_to_console(to_string(&b));
+	free(&b);
+}
 
 println :: (value: $T) {
 	print(value);
@@ -143,10 +143,11 @@ println :: (value: String) {
 	dprint(value);
 	dprint_char('\n');
 }
-//println :: (format: String, values: ..any) {
-//	print(format, values);
-//	dprint_char('\n');
-//}
+
+println :: (format: String, values: ..Any) {
+	print(format, ..values);
+	dprint_char('\n');
+}
 
 merge :: (a: U8, b: U8): U16 {
 	return (a as U16 << 8) | b;

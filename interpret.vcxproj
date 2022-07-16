@@ -27,62 +27,27 @@
     </ProjectConfiguration>
   </ItemGroup>
   <ItemGroup>
-    <ClCompile Include="src\ast.cpp" />
-    <ClCompile Include="src\bytecode.cpp" />
-    <ClCompile Include="src\common.cpp" />
-    <ClCompile Include="src\main.cpp" />
-    <ClCompile Include="src\print_ast.cpp" />
-    <ClCompile Include="src\token.cpp" />
+    <ClCompile Include="src\output\interpret.cpp" />
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="src\ast.h" />
-    <ClInclude Include="src\bytecode.h" />
-    <ClInclude Include="src\common.h" />
-    <ClInclude Include="src\interpret.h" />
-    <ClInclude Include="src\print_ast.h" />
-    <ClInclude Include="src\token.h" />
-    <ClInclude Include="src\x86.h" />
-    <ClInclude Include="src\x86_64.h" />
-  </ItemGroup>
-  <ItemGroup>
-    <None Include="SwitchToFiber.asm">
-      <FileType>Document</FileType>
-    </None>
-  </ItemGroup>
-  <ItemGroup>
-    <ProjectReference Include="fasm_x86_64_windows.vcxproj">
-      <Project>{98a1bc8c-c1f5-4832-b3bd-60f7b63ba55f}</Project>
-    </ProjectReference>
-    <ProjectReference Include="interpret.vcxproj">
-      <Project>{9b9d13dd-3e2b-419b-9fbb-bf91c04a3ab3}</Project>
-    </ProjectReference>
-    <ProjectReference Include="nasm_x86_64_windows.vcxproj">
-      <Project>{1af0bd2e-16b1-4c3d-ab7e-17a7c29e1787}</Project>
-    </ProjectReference>
-    <ProjectReference Include="nasm_x86_flat.vcxproj">
-      <Project>{babbd040-c55a-4bf1-ae0c-da7676ea8dba}</Project>
-    </ProjectReference>
-    <ProjectReference Include="x86_64_windows.vcxproj">
-      <Project>{93a7b294-a46d-471d-9eca-87872f92e205}</Project>
-    </ProjectReference>
   </ItemGroup>
   <PropertyGroup Label="Globals">
     <VCProjectVersion>16.0</VCProjectVersion>
     <Keyword>Win32Proj</Keyword>
-    <ProjectGuid>{887185ac-60e5-40d9-bc99-f2de46cf0d29}</ProjectGuid>
-    <RootNamespace>tlang</RootNamespace>
+    <ProjectGuid>{9B9D13DD-3E2B-419B-9FBB-BF91C04A3AB3}</ProjectGuid>
+    <RootNamespace>nasm_x86_64_windows</RootNamespace>
     <WindowsTargetPlatformVersion>10.0</WindowsTargetPlatformVersion>
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'" Label="Configuration">
-    <ConfigurationType>Application</ConfigurationType>
+    <ConfigurationType>DynamicLibrary</ConfigurationType>
     <UseDebugLibraries>true</UseDebugLibraries>
     <PlatformToolset>v142</PlatformToolset>
     <CharacterSet>Unicode</CharacterSet>
     <EnableUnitySupport>false</EnableUnitySupport>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'" Label="Configuration">
-    <ConfigurationType>Application</ConfigurationType>
+    <ConfigurationType>DynamicLibrary</ConfigurationType>
     <UseDebugLibraries>false</UseDebugLibraries>
     <PlatformToolset>v142</PlatformToolset>
     <WholeProgramOptimization>true</WholeProgramOptimization>
@@ -90,7 +55,7 @@
     <EnableUnitySupport>false</EnableUnitySupport>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='UltraSpeed|Win32'" Label="Configuration">
-    <ConfigurationType>Application</ConfigurationType>
+    <ConfigurationType>DynamicLibrary</ConfigurationType>
     <UseDebugLibraries>false</UseDebugLibraries>
     <PlatformToolset>v142</PlatformToolset>
     <WholeProgramOptimization>true</WholeProgramOptimization>
@@ -98,14 +63,14 @@
     <EnableUnitySupport>false</EnableUnitySupport>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'" Label="Configuration">
-    <ConfigurationType>Application</ConfigurationType>
+    <ConfigurationType>DynamicLibrary</ConfigurationType>
     <UseDebugLibraries>true</UseDebugLibraries>
     <PlatformToolset>v142</PlatformToolset>
     <CharacterSet>Unicode</CharacterSet>
     <EnableUnitySupport>false</EnableUnitySupport>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'" Label="Configuration">
-    <ConfigurationType>Application</ConfigurationType>
+    <ConfigurationType>DynamicLibrary</ConfigurationType>
     <UseDebugLibraries>false</UseDebugLibraries>
     <PlatformToolset>v142</PlatformToolset>
     <WholeProgramOptimization>true</WholeProgramOptimization>
@@ -113,7 +78,7 @@
     <EnableUnitySupport>false</EnableUnitySupport>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='UltraSpeed|x64'" Label="Configuration">
-    <ConfigurationType>Application</ConfigurationType>
+    <ConfigurationType>DynamicLibrary</ConfigurationType>
     <UseDebugLibraries>false</UseDebugLibraries>
     <PlatformToolset>v142</PlatformToolset>
     <WholeProgramOptimization>true</WholeProgramOptimization>
@@ -122,7 +87,6 @@
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
   <ImportGroup Label="ExtensionSettings">
-    <Import Project="$(VCTargetsPath)\BuildCustomizations\masm.props" />
   </ImportGroup>
   <ImportGroup Label="Shared">
   </ImportGroup>
@@ -147,236 +111,153 @@
   <PropertyGroup Label="UserMacros" />
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
     <LinkIncremental>true</LinkIncremental>
-    <OutDir>$(SolutionDir)bin\</OutDir>
+    <OutDir>$(SolutionDir)bin\targets\</OutDir>
     <IntDir>$(SolutionDir)temp\$(ProjectName)-$(Platform)-$(Configuration)\</IntDir>
-    <IncludePath>$(SolutionDir)dep/tl/include/;$(SolutionDir)src/;$(SolutionDir)include/;$(SolutionDir)dep/coro/include/;$(IncludePath)</IncludePath>
-    <EnableMicrosoftCodeAnalysis>false</EnableMicrosoftCodeAnalysis>
+    <IncludePath>$(SolutionDir)dep/tl/include;$(SolutionDir)src;$(SolutionDir)dep/fadec;$(SolutionDir)dep/fadec/build;$(IncludePath)</IncludePath>
+    <LibraryPath>$(SolutionDir)dep/fadec/build/libfadec.a.p;$(LibraryPath)</LibraryPath>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
     <LinkIncremental>false</LinkIncremental>
-    <OutDir>$(SolutionDir)bin\</OutDir>
+    <OutDir>$(SolutionDir)bin\targets\</OutDir>
     <IntDir>$(SolutionDir)temp\$(ProjectName)-$(Platform)-$(Configuration)\</IntDir>
-    <IncludePath>$(SolutionDir)dep/tl/include/;$(SolutionDir)src/;$(SolutionDir)include/;$(SolutionDir)dep/coro/include/;$(IncludePath)</IncludePath>
-    <EnableMicrosoftCodeAnalysis>false</EnableMicrosoftCodeAnalysis>
+    <IncludePath>$(SolutionDir)dep/tl/include;$(SolutionDir)src;$(SolutionDir)dep/fadec;$(SolutionDir)dep/fadec/build;$(IncludePath)</IncludePath>
+    <LibraryPath>$(SolutionDir)dep/fadec/build/libfadec.a.p;$(LibraryPath)</LibraryPath>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='UltraSpeed|Win32'">
     <LinkIncremental>false</LinkIncremental>
-    <OutDir>$(SolutionDir)bin\</OutDir>
+    <OutDir>$(SolutionDir)bin\targets\</OutDir>
     <IntDir>$(SolutionDir)temp\$(ProjectName)-$(Platform)-$(Configuration)\</IntDir>
-    <IncludePath>$(SolutionDir)dep/tl/include/;$(SolutionDir)src/;$(SolutionDir)include/;$(SolutionDir)dep/coro/include/;$(IncludePath)</IncludePath>
-    <EnableMicrosoftCodeAnalysis>false</EnableMicrosoftCodeAnalysis>
+    <IncludePath>$(SolutionDir)dep/tl/include;$(SolutionDir)src;$(SolutionDir)dep/fadec;$(SolutionDir)dep/fadec/build;$(IncludePath)</IncludePath>
+    <LibraryPath>$(SolutionDir)dep/fadec/build/libfadec.a.p;$(LibraryPath)</LibraryPath>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
     <LinkIncremental>true</LinkIncremental>
-    <OutDir>$(SolutionDir)bin\</OutDir>
+    <OutDir>$(SolutionDir)bin\targets\</OutDir>
     <IntDir>$(SolutionDir)temp\$(ProjectName)-$(Platform)-$(Configuration)\</IntDir>
-    <IncludePath>$(SolutionDir)dep/tl/include/;$(SolutionDir)src/;$(SolutionDir)include/;$(SolutionDir)dep/coro/include/;$(IncludePath)</IncludePath>
-    <ReferencePath>$(ReferencePath)</ReferencePath>
-    <LibraryPath>$(SolutionDir)dep/coro/obj;$(LibraryPath)</LibraryPath>
-    <EnableMicrosoftCodeAnalysis>false</EnableMicrosoftCodeAnalysis>
+    <IncludePath>$(SolutionDir)dep/tl/include;$(SolutionDir)src;$(SolutionDir)dep/fadec;$(SolutionDir)dep/fadec/build;$(IncludePath)</IncludePath>
+    <LibraryPath>$(SolutionDir)dep/fadec/build/libfadec.a.p;$(LibraryPath)</LibraryPath>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
     <LinkIncremental>false</LinkIncremental>
-    <OutDir>$(SolutionDir)bin\</OutDir>
+    <OutDir>$(SolutionDir)bin\targets\</OutDir>
     <IntDir>$(SolutionDir)temp\$(ProjectName)-$(Platform)-$(Configuration)\</IntDir>
-    <IncludePath>$(SolutionDir)dep/tl/include/;$(SolutionDir)src/;$(SolutionDir)include/;$(SolutionDir)dep/coro/include/;$(IncludePath)</IncludePath>
-    <ReferencePath>$(ReferencePath)</ReferencePath>
-    <LibraryPath>$(SolutionDir)dep/coro/obj;$(LibraryPath)</LibraryPath>
-    <EnableMicrosoftCodeAnalysis>false</EnableMicrosoftCodeAnalysis>
+    <IncludePath>$(SolutionDir)dep/tl/include;$(SolutionDir)src;$(SolutionDir)dep/fadec;$(SolutionDir)dep/fadec/build;$(IncludePath)</IncludePath>
+    <LibraryPath>$(SolutionDir)dep/fadec/build/libfadec.a.p;$(LibraryPath)</LibraryPath>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='UltraSpeed|x64'">
     <LinkIncremental>false</LinkIncremental>
-    <OutDir>$(SolutionDir)bin\</OutDir>
+    <OutDir>$(SolutionDir)bin\targets\</OutDir>
     <IntDir>$(SolutionDir)temp\$(ProjectName)-$(Platform)-$(Configuration)\</IntDir>
-    <IncludePath>$(SolutionDir)dep/tl/include/;$(SolutionDir)src/;$(SolutionDir)include/;$(SolutionDir)dep/coro/include/;$(IncludePath)</IncludePath>
-    <ReferencePath>$(ReferencePath)</ReferencePath>
-    <LibraryPath>$(SolutionDir)dep/coro/obj;$(LibraryPath)</LibraryPath>
-    <EnableMicrosoftCodeAnalysis>false</EnableMicrosoftCodeAnalysis>
+    <IncludePath>$(SolutionDir)dep/tl/include;$(SolutionDir)src;$(SolutionDir)dep/fadec;$(SolutionDir)dep/fadec/build;$(IncludePath)</IncludePath>
+    <LibraryPath>$(SolutionDir)dep/fadec/build/libfadec.a.p;$(LibraryPath)</LibraryPath>
   </PropertyGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
     <ClCompile>
-      <WarningLevel>Level3</WarningLevel>
+      <WarningLevel>Level4</WarningLevel>
       <SDLCheck>false</SDLCheck>
       <PreprocessorDefinitions>WIN32;_DEBUG;_CONSOLE;%(PreprocessorDefinitions);BUILD_CONFIG=0</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
-      <LanguageStandard>stdcpp20</LanguageStandard>
-      <AdditionalOptions>/await /F1073741824 %(AdditionalOptions)</AdditionalOptions>
-      <ExceptionHandling>Async</ExceptionHandling>
-      <FloatingPointModel>Precise</FloatingPointModel>
-      <MultiProcessorCompilation>true</MultiProcessorCompilation>
-      <StringPooling>true</StringPooling>
-      <PreprocessToFile>false</PreprocessToFile>
-      <InlineFunctionExpansion>OnlyExplicitInline</InlineFunctionExpansion>
+      <LanguageStandard>stdcpplatest</LanguageStandard>
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
-      <AdditionalDependencies>%(AdditionalDependencies)</AdditionalDependencies>
-      <StackReserveSize>16777216</StackReserveSize>
-      <Profile>false</Profile>
-      <AdditionalOptions>$(SolutionDir)temp/SwitchToFiber.obj %(AdditionalOptions)</AdditionalOptions>
+      <Profile>true</Profile>
+      <AdditionalOptions>encode.c.obj %(AdditionalOptions)</AdditionalOptions>
     </Link>
-    <PreBuildEvent>
-      <Command>nasm -fwin64 $(SolutionDir)src/SwitchToFiber.asm -o $(SolutionDir)temp/SwitchToFiber.obj</Command>
-    </PreBuildEvent>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
     <ClCompile>
-      <WarningLevel>Level3</WarningLevel>
+      <WarningLevel>Level4</WarningLevel>
       <FunctionLevelLinking>true</FunctionLevelLinking>
       <IntrinsicFunctions>true</IntrinsicFunctions>
       <SDLCheck>false</SDLCheck>
       <PreprocessorDefinitions>WIN32;NDEBUG;_CONSOLE;%(PreprocessorDefinitions);BUILD_CONFIG=1</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
-      <LanguageStandard>stdcpp20</LanguageStandard>
-      <AdditionalOptions>/Ob3 /await /F1073741824 %(AdditionalOptions)</AdditionalOptions>
-      <ExceptionHandling>Async</ExceptionHandling>
-      <BufferSecurityCheck>false</BufferSecurityCheck>
-      <FloatingPointModel>Precise</FloatingPointModel>
-      <MultiProcessorCompilation>true</MultiProcessorCompilation>
-      <StringPooling>true</StringPooling>
-      <PreprocessToFile>false</PreprocessToFile>
+      <LanguageStandard>stdcpplatest</LanguageStandard>
+      <AdditionalOptions>/Ob3 %(AdditionalOptions)</AdditionalOptions>
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>
       <EnableCOMDATFolding>true</EnableCOMDATFolding>
       <OptimizeReferences>true</OptimizeReferences>
       <GenerateDebugInformation>true</GenerateDebugInformation>
-      <AdditionalDependencies>%(AdditionalDependencies)</AdditionalDependencies>
-      <StackReserveSize>16777216</StackReserveSize>
-      <AdditionalOptions>$(SolutionDir)temp/SwitchToFiber.obj %(AdditionalOptions)</AdditionalOptions>
+      <AdditionalOptions>encode.c.obj %(AdditionalOptions)</AdditionalOptions>
     </Link>
-    <PreBuildEvent>
-      <Command>nasm -fwin64 $(SolutionDir)src/SwitchToFiber.asm -o $(SolutionDir)temp/SwitchToFiber.obj</Command>
-    </PreBuildEvent>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='UltraSpeed|Win32'">
     <ClCompile>
-      <WarningLevel>Level3</WarningLevel>
+      <WarningLevel>Level4</WarningLevel>
       <FunctionLevelLinking>true</FunctionLevelLinking>
       <IntrinsicFunctions>true</IntrinsicFunctions>
       <SDLCheck>false</SDLCheck>
       <PreprocessorDefinitions>WIN32;NDEBUG;_CONSOLE;%(PreprocessorDefinitions);BUILD_CONFIG=2</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
-      <LanguageStandard>stdcpp20</LanguageStandard>
-      <AdditionalOptions>/await /F1073741824 %(AdditionalOptions)</AdditionalOptions>
-      <ExceptionHandling>Async</ExceptionHandling>
-      <BufferSecurityCheck>false</BufferSecurityCheck>
-      <FloatingPointModel>Precise</FloatingPointModel>
-      <MultiProcessorCompilation>true</MultiProcessorCompilation>
-      <FavorSizeOrSpeed>Speed</FavorSizeOrSpeed>
-      <OmitFramePointers>true</OmitFramePointers>
-      <EnableFiberSafeOptimizations>true</EnableFiberSafeOptimizations>
-      <StringPooling>true</StringPooling>
-      <InlineFunctionExpansion>AnySuitable</InlineFunctionExpansion>
-      <PreprocessToFile>false</PreprocessToFile>
+      <LanguageStandard>stdcpplatest</LanguageStandard>
+      <AdditionalOptions>/Ob3 %(AdditionalOptions)</AdditionalOptions>
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>
       <EnableCOMDATFolding>true</EnableCOMDATFolding>
       <OptimizeReferences>true</OptimizeReferences>
       <GenerateDebugInformation>true</GenerateDebugInformation>
-      <AdditionalDependencies>%(AdditionalDependencies)</AdditionalDependencies>
-      <StackReserveSize>16777216</StackReserveSize>
-      <AdditionalOptions>$(SolutionDir)temp/SwitchToFiber.obj %(AdditionalOptions)</AdditionalOptions>
+      <AdditionalOptions>encode.c.obj %(AdditionalOptions)</AdditionalOptions>
     </Link>
-    <PreBuildEvent>
-      <Command>nasm -fwin64 $(SolutionDir)src/SwitchToFiber.asm -o $(SolutionDir)temp/SwitchToFiber.obj</Command>
-    </PreBuildEvent>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
     <ClCompile>
-      <WarningLevel>Level3</WarningLevel>
+      <WarningLevel>Level4</WarningLevel>
       <SDLCheck>false</SDLCheck>
       <PreprocessorDefinitions>_DEBUG;_CONSOLE;%(PreprocessorDefinitions);BUILD_CONFIG=0</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
-      <LanguageStandard>stdcpp20</LanguageStandard>
-      <AdditionalOptions>/await /F1073741824 %(AdditionalOptions)</AdditionalOptions>
-      <ExceptionHandling>Async</ExceptionHandling>
-      <FloatingPointModel>Precise</FloatingPointModel>
-      <MultiProcessorCompilation>true</MultiProcessorCompilation>
-      <StringPooling>true</StringPooling>
-      <PreprocessToFile>false</PreprocessToFile>
-      <InlineFunctionExpansion>OnlyExplicitInline</InlineFunctionExpansion>
+      <LanguageStandard>stdcpplatest</LanguageStandard>
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
-      <AdditionalDependencies>yield_win64.obj;%(AdditionalDependencies)</AdditionalDependencies>
-      <StackReserveSize>16777216</StackReserveSize>
-      <Profile>false</Profile>
-      <AdditionalOptions>$(SolutionDir)temp/SwitchToFiber.obj %(AdditionalOptions)</AdditionalOptions>
+      <Profile>true</Profile>
+      <AdditionalOptions>encode.c.obj %(AdditionalOptions)</AdditionalOptions>
     </Link>
-    <PreBuildEvent>
-      <Command>nasm -fwin64 $(SolutionDir)src/SwitchToFiber.asm -o $(SolutionDir)temp/SwitchToFiber.obj</Command>
-    </PreBuildEvent>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
     <ClCompile>
-      <WarningLevel>Level3</WarningLevel>
+      <WarningLevel>Level4</WarningLevel>
       <FunctionLevelLinking>true</FunctionLevelLinking>
       <IntrinsicFunctions>true</IntrinsicFunctions>
       <SDLCheck>false</SDLCheck>
       <PreprocessorDefinitions>NDEBUG;_CONSOLE;%(PreprocessorDefinitions);BUILD_CONFIG=1</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
-      <LanguageStandard>stdcpp20</LanguageStandard>
-      <AdditionalOptions>/Ob3 /await /F1073741824 %(AdditionalOptions)</AdditionalOptions>
-      <ExceptionHandling>Async</ExceptionHandling>
-      <BufferSecurityCheck>false</BufferSecurityCheck>
-      <FloatingPointModel>Precise</FloatingPointModel>
-      <MultiProcessorCompilation>true</MultiProcessorCompilation>
-      <StringPooling>true</StringPooling>
-      <PreprocessToFile>false</PreprocessToFile>
+      <LanguageStandard>stdcpplatest</LanguageStandard>
+      <AdditionalOptions>/Ob3 %(AdditionalOptions)</AdditionalOptions>
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>
       <EnableCOMDATFolding>true</EnableCOMDATFolding>
       <OptimizeReferences>true</OptimizeReferences>
       <GenerateDebugInformation>true</GenerateDebugInformation>
-      <AdditionalDependencies>yield_win64.obj;%(AdditionalDependencies)</AdditionalDependencies>
-      <StackReserveSize>16777216</StackReserveSize>
-      <AdditionalOptions>$(SolutionDir)temp/SwitchToFiber.obj %(AdditionalOptions)</AdditionalOptions>
+      <AdditionalOptions>encode.c.obj %(AdditionalOptions)</AdditionalOptions>
     </Link>
-    <PreBuildEvent>
-      <Command>nasm -fwin64 $(SolutionDir)src/SwitchToFiber.asm -o $(SolutionDir)temp/SwitchToFiber.obj</Command>
-    </PreBuildEvent>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='UltraSpeed|x64'">
     <ClCompile>
-      <WarningLevel>Level3</WarningLevel>
+      <WarningLevel>Level4</WarningLevel>
       <FunctionLevelLinking>true</FunctionLevelLinking>
       <IntrinsicFunctions>true</IntrinsicFunctions>
       <SDLCheck>false</SDLCheck>
       <PreprocessorDefinitions>NDEBUG;_CONSOLE;%(PreprocessorDefinitions);BUILD_CONFIG=2</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
-      <LanguageStandard>stdcpp20</LanguageStandard>
-      <AdditionalOptions>/await /F1073741824 %(AdditionalOptions)</AdditionalOptions>
-      <ExceptionHandling>Async</ExceptionHandling>
-      <BufferSecurityCheck>false</BufferSecurityCheck>
-      <FloatingPointModel>Precise</FloatingPointModel>
-      <MultiProcessorCompilation>true</MultiProcessorCompilation>
-      <FavorSizeOrSpeed>Speed</FavorSizeOrSpeed>
-      <OmitFramePointers>true</OmitFramePointers>
-      <EnableFiberSafeOptimizations>true</EnableFiberSafeOptimizations>
-      <StringPooling>true</StringPooling>
-      <InlineFunctionExpansion>AnySuitable</InlineFunctionExpansion>
-      <PreprocessToFile>false</PreprocessToFile>
+      <LanguageStandard>stdcpplatest</LanguageStandard>
+      <AdditionalOptions>/Ob3 %(AdditionalOptions)</AdditionalOptions>
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>
       <EnableCOMDATFolding>true</EnableCOMDATFolding>
       <OptimizeReferences>true</OptimizeReferences>
       <GenerateDebugInformation>true</GenerateDebugInformation>
-      <AdditionalDependencies>yield_win64.obj;%(AdditionalDependencies)</AdditionalDependencies>
-      <StackReserveSize>16777216</StackReserveSize>
-      <AdditionalOptions>$(SolutionDir)temp/SwitchToFiber.obj %(AdditionalOptions)</AdditionalOptions>
+      <AdditionalOptions>encode.c.obj %(AdditionalOptions)</AdditionalOptions>
     </Link>
-    <PreBuildEvent>
-      <Command>nasm -fwin64 $(SolutionDir)src/SwitchToFiber.asm -o $(SolutionDir)temp/SwitchToFiber.obj</Command>
-    </PreBuildEvent>
   </ItemDefinitionGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
-    <Import Project="$(VCTargetsPath)\BuildCustomizations\masm.targets" />
   </ImportGroup>
 </Project>

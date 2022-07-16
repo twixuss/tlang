@@ -115,6 +115,10 @@ bool can_be_global(AstStatement *statement) {
 			switch (expression->kind) {
 				case Ast_Import:
 					return true;
+				case Ast_Lambda: {
+					auto Lambda = (AstLambda *)expression;
+					return Lambda->is_evaluated_at_compile_time;
+				}
 			}
 			return false;
 		}
@@ -159,17 +163,15 @@ void append_type(StringBuilder &builder, AstExpression *type, bool silent_error)
 	switch (type->kind) {
 		case Ast_Struct: {
 			auto Struct = (AstStruct *)type;
-			ensure(Struct->definition);
-			append(builder, Struct->definition->name);
+			if (Struct->definition)
+				append(builder, Struct->definition->name);
+			else
+				append(builder, "<unnamed>");
 			break;
 		}
 		case Ast_LambdaType: {
 			auto lambda = ((AstLambdaType *)type)->lambda;
 
-			append(builder, "fn ");
-			switch (lambda->convention) {
-				case CallingConvention::stdcall: append(builder, "#stdcall "); break;
-			}
 			append(builder, "(");
 			for (auto &parameter : lambda->parameters) {
 				if (&parameter != lambda->parameters.data) {
@@ -182,6 +184,9 @@ void append_type(StringBuilder &builder, AstExpression *type, bool silent_error)
 				append_type(builder, lambda->return_parameter->type, silent_error);
 			} else {
 				append(builder, ")");
+			}
+			switch (lambda->convention) {
+				case CallingConvention::stdcall: append(builder, " #stdcall"); break;
 			}
 			break;
 		}
@@ -263,7 +268,7 @@ HeapString type_name(AstExpression *type, bool silent_error) {
 }
 
 s64 get_size(AstExpression *_type, bool check_struct) {
-	auto type = _type->directed ? _type->directed : direct(_type);
+	auto type = _type->directed ? (AstExpression *)_type->directed : direct(_type);
 
 	assert(type);
 	assert(types_match(type->type, builtin_type), "attemt to get_size of an expression, not a type!");
@@ -282,10 +287,10 @@ s64 get_size(AstExpression *_type, bool check_struct) {
 			using enum UnaryOperation;
 			auto unop = (AstUnaryOperator *)type;
 			switch (unop->operation) {
-				case pointer:  return context.stack_word_size;
+				case pointer:  return compiler.stack_word_size;
 				case typeof:   return get_size(unop->expression->type);
 				case option:   return get_size(unop->expression) + get_align(unop->expression);
-				case pack:     return context.stack_word_size*2; // pointer+count;
+				case pack:     return compiler.stack_word_size*2; // pointer+count;
 				default: invalid_code_path();
 			}
 		}
@@ -297,14 +302,14 @@ s64 get_size(AstExpression *_type, bool check_struct) {
 			return get_size(subscript->expression) * (s64)count.value();
 		}
 		case Ast_Span: {
-			return context.stack_word_size*2; // pointer+count;
+			return compiler.stack_word_size*2; // pointer+count;
 		}
 		case Ast_LambdaType: {
-			return context.stack_word_size;
+			return compiler.stack_word_size;
 		}
 		case Ast_Enum: {
 			assert(!((AstEnum *)type)->underlying_type, "not implemented");
-			return context.stack_word_size;
+			return compiler.stack_word_size;
 		}
 		default: {
 			invalid_code_path();
@@ -331,7 +336,7 @@ s64 get_align(AstExpression *type, bool check_struct) {
 			switch (unop->operation) {
 				using enum UnaryOperation;
 				case pointer:
-					return context.stack_word_size;
+					return compiler.stack_word_size;
 				default: invalid_code_path();
 			}
 		}
@@ -340,14 +345,14 @@ s64 get_align(AstExpression *type, bool check_struct) {
 			return get_align(subscript->expression);
 		}
 		case Ast_LambdaType: {
-			return context.stack_word_size;
+			return compiler.stack_word_size;
 		}
 		case Ast_Enum: {
 			assert(!((AstEnum *)type)->underlying_type);
-			return context.stack_word_size;
+			return compiler.stack_word_size;
 		}
 		case Ast_Span: {
-			return context.stack_word_size;
+			return compiler.stack_word_size;
 		}
 		default: {
 			invalid_code_path();
@@ -376,8 +381,8 @@ bool types_match(AstExpression *a, AstExpression *b) {
 		return true;
 
 	// TODO: this is way too slow.
-	a = a->directed ? a->directed : direct(a);
-	b = b->directed ? b->directed : direct(b);
+	a = a->directed ? (AstExpression *)a->directed : direct(a);
+	b = b->directed ? (AstExpression *)b->directed : direct(b);
 
 	if (a->kind != b->kind) {
 		return false;

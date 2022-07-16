@@ -44,6 +44,9 @@ allocate_block :: (b: *StringBuilder) {
 append_bytes :: (b: *StringBuilder, data: *U8, size: UInt): UInt {
     chars_to_write := size;
     d := data;
+
+	xxxyyy := b;
+
     while available_space(b.last) < chars_to_write {
         space_in_block := available_space(b.last);
         memcpy(end(b.last), d, space_in_block);
@@ -167,7 +170,27 @@ append :: (b: *StringBuilder, v: U32) => append(b, v as U64);
 
 append :: (b: *StringBuilder, value: Any): Void {
 	info := value.type;
+	
+	append_span :: (b: *StringBuilder, data: *U8, count: UInt, info: *TypeInfo): Void {
+		append(b, "[");
+		i: UInt = 0;
+		while i < count {
+			if i != 0
+				append(b, ", ");
+			
+			if i == 8 && i < count - 8 as UInt {
+				i = count - 8;
+				append(b, "..., ");
+			}
+			
+			append(b, Any(data + i * info.size, info));
+			i += 1;
+		}
+		append(b, "]");
+	}
+	
 	match info.kind {
+		.Bool => append(b, if *(value.pointer as *Bool) then "true" else "false");
 		.S8  => append(b, *(value.pointer as *S8));
 		.S16 => append(b, *(value.pointer as *S16));
 		.S32 => append(b, *(value.pointer as *S32));
@@ -201,48 +224,59 @@ append :: (b: *StringBuilder, value: Any): Void {
 			append(b, "}");
 		}
 		.pointer => append_hex(b, *(value.pointer as *UInt));
-		.array => {
-			i: UInt = 0;
-			append(b, "[");
-			
-			while i < info.array_count {
-				if i != 0
-					append(b, ", ");
-				
-				if i == 8 && i < info.array_count - 8 as UInt {
-					i = info.array_count - 8;
-					append(b, "..., ");
-				}
-				
-				append(b, Any(value.pointer + i * info.pointee.size, info.pointee));
-				i += 1;
-			}
-			append(b, "]");
-		}
+		.array => append_span(b, value.pointer, info.array_count, info.pointee);
 		.span => {
-			i: UInt = 0;
-			append(b, "[");
-			
 			span := *(value.pointer as *[]U8);
-			
-			while i < span.count {
-				if i != 0
-					append(b, ", ");
-				
-				if i == 8 && i < span.count - 8 as UInt {
-					i = span.count - 8;
-					append(b, "..., ");
-				}
-				
-				append(b, Any(span.data + i * info.pointee.size, info.pointee));
-				i += 1;
-			}
-			append(b, "]");
+			append_span(b, span.data, span.count, info.pointee);
 		}
 		else => append(b, "unknown");
 	}
 }
 
+find :: (where: String, what: String): ?String {
+	if (where.count - what.count + 1) as Int <= 0
+		return null;
+	
+	i: UInt = 0;
+	same := true;
+	j: UInt = 0;
+	while i < where.count - what.count + 1 {
+		defer i += 1;
+		same = true;
+		j = 0;
+		while j < what.count {
+			defer j += 1;
+			if what[j] != where[i + j]
+				same = false;
+		}
+		if same
+			return String(&where[i], what.count);
+	}
+	return null;
+}
+append_format :: (b: *StringBuilder, format: String, args: ..Any): UInt {
+	remaining := format;
+
+	i: UInt = 0;
+	while i != args.count {
+		y := find(remaining, "{}");
+		assert y; // invalid format String
+		x := *y;
+		
+		append(b, String(remaining.data, @(x.data - remaining.data)));
+		
+		append(b, args[i]);
+		
+		remaining.count -= (x.data - remaining.data) as UInt + 2;
+		remaining.data = x.data + 2;
+		
+		i += 1;
+	}
+	
+	append(b, remaining);
+	
+	return 0;
+}
 
 fill :: (builder: *StringBuilder, dst_string: String): result: String {
     dst_char := dst_string.data;

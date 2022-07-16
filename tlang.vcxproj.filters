@@ -16,6 +16,7 @@
     <ClInclude Include="src\print_ast.h" />
     <ClInclude Include="src\x86_64.h" />
     <ClInclude Include="src\x86.h" />
+    <ClInclude Include="src\interpret.h" />
   </ItemGroup>
   <ItemGroup>
     <None Include="SwitchToFiber.asm" />

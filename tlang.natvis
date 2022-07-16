@@ -38,6 +38,6 @@
 -->
     </Type>
     <Type Name="Instruction">
-        <DisplayString>{kind}</DisplayString>
+        <DisplayString>{kind} {comment}</DisplayString>
     </Type>
 </AutoVisualizer>

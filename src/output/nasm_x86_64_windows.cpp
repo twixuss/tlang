@@ -8,8 +8,8 @@
 
 using namespace x86_64;
 
-static void append_instructions(CompilerContext &context, StringBuilder &builder, InstructionList instructions) {
-	timed_function(context.profiler);
+static void append_instructions(Compiler &compiler, StringBuilder &builder, List<Instruction> instructions) {
+	timed_function(compiler.profiler);
 
 	append_format(builder,
 		"section .text\n"
@@ -19,11 +19,11 @@ static void append_instructions(CompilerContext &context, StringBuilder &builder
 		"push 0\n"
 		"push 0\n"
 		"cld\n"
-		"call .{}\n"
+		"call i{}\n"
 		"mov rcx, [rsp]\n"
 		"call ExitProcess\n"
 		"ret\n",
-		instruction_address(context.main_lambda->location_in_bytecode)
+		compiler.main_lambda->location_in_bytecode
 	);
 
 	// prepare stack routine.
@@ -32,7 +32,7 @@ static void append_instructions(CompilerContext &context, StringBuilder &builder
 	// in debug mode fills the memory with known value
 	if (/*debug*/ true) {
 		append(builder, R"(
-._ps:
+_ps:
 	push rcx
 	push rdi
 	lea rdi, [rsp-1]
@@ -47,7 +47,7 @@ static void append_instructions(CompilerContext &context, StringBuilder &builder
 		);
 	} else {
 		append(builder, R"(
-._ps:
+_ps:
 	push rbx
 	mov rbx, rsp
 	sub rbx, rax
@@ -72,7 +72,7 @@ static void append_instructions(CompilerContext &context, StringBuilder &builder
 	//     2. call rax
 	//     3. put rax into return value
 	append(builder, R"(
-._stdcall:
+_stdcall:
 	xor rcx, rcx
 ._stdcall_l0:
 	cmp rcx, rbx
@@ -113,7 +113,7 @@ static void append_instructions(CompilerContext &context, StringBuilder &builder
 #endif
 		umm n = 0;
 		if (i.kind == InstructionKind::jmp_label)
-			n += append_format(builder, ".{}: ", instruction_address(idx));
+			n += append_format(builder, "i{}: ", idx);
 		switch (i.kind) {
 			using enum InstructionKind;
 			case mov_re: n += append_format(builder, "mov {}, {}", i.mov_re.d, i.mov_re.s); break;
@@ -134,9 +134,9 @@ DECLARE_OUTPUT_BUILDER {
 	init_allocator();
 	init_printer();
 
-	timed_function(context.profiler);
+	timed_function(compiler.profiler);
 
-	auto output_path_base = format("{}\\{}", context.current_directory, parse_path(context.source_path).name);
+	auto output_path_base = format("{}\\{}", compiler.current_directory, parse_path(compiler.source_path).name);
 	auto asm_path = to_pathchars(format(u8"{}.asm", output_path_base));
 
 	auto msvc_directory = locate_msvc();
@@ -194,12 +194,12 @@ DECLARE_OUTPUT_BUILDER {
 			}
 			append(builder, '\n');
 		};
-		append_section(".rodata", "constants", context.constant_section);
-		append_section(".data", "rwdata", context.data_section);
+		append_section(".rodata", "constants", compiler.constant_section);
+		append_section(".data", "rwdata", compiler.data_section);
 
-		append_format(builder, "section .bss\nzeros: resb {}\n", context.zero_section_size);
+		append_format(builder, "section .bss\nzeros: resb {}\n", compiler.zero_section_size);
 
-		append_instructions(context, builder, bytecode.instructions);
+		append_instructions(compiler, builder, bytecode.instructions);
 
 		write_entire_file(asm_path, as_bytes(to_string(builder)));
 	}
@@ -212,14 +212,14 @@ DECLARE_OUTPUT_BUILDER {
 
 		append_format(bat_builder, u8R"(@echo off
 {}\nasm -f win64 -gcv8 "{}.asm" -o "{}.obj" -w-number-overflow -w-db-empty
-)", context.compiler_directory, output_path_base, output_path_base);
+)", compiler.compiler_directory, output_path_base, output_path_base);
 
 		append(bat_builder, "if %errorlevel% neq 0 exit /b %errorlevel%\n");
 		append_format(bat_builder,
 			R"("{}link" /nologo "{}.obj" /out:"{}" /nodefaultlib /entry:"main" /subsystem:console /DEBUG:FULL /LIBPATH:"{}" kernel32.lib)",
 			msvc_directory,
 			output_path_base,
-			context.output_path,
+			compiler.output_path,
 			wkits_directory
 		);
 		for_each(bytecode.extern_libraries, [&](auto library, auto) {
@@ -229,7 +229,7 @@ DECLARE_OUTPUT_BUILDER {
 		auto bat_path = u8"nasm_build.bat"s;
 		write_entire_file(bat_path, as_bytes(to_string(bat_builder)));
 #if 1
-		timed_block(context.profiler, "nasm + link"s);
+		timed_block(compiler.profiler, "nasm + link"s);
 
 		auto process = start_process(bat_path);
 		if (!process.handle) {
@@ -262,17 +262,17 @@ DECLARE_OUTPUT_BUILDER {
 			return;
 		}
 #endif
-		if (!context.keep_temp)
+		if (!compiler.keep_temp)
 			delete_file(bat_path);
 		print("Build succeeded\n");
 	}
 
-	if (!context.keep_temp)
+	if (!compiler.keep_temp)
 		delete_file(asm_path);
 }
 
 DECLARE_TARGET_INFORMATION_GETTER {
-	context.stack_word_size = 8;
-	context.register_size = 8;
-	context.general_purpose_register_count = 16;
+	compiler.stack_word_size = 8;
+	compiler.register_size = 8;
+	compiler.general_purpose_register_count = 16;
 }

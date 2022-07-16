@@ -46,23 +46,23 @@ inline static constexpr XRegister stdcall_float_registers[] {
 };
 
 inline static constexpr Register64 to_x86_register(Register r) {
-	using namespace Registers;
+	using enum Register;
 	using enum Register64;
-	switch (r.v) {
-		case 0: return rcx;
-		case 1: return rdx;
-		case 2: return r8;
-		case 3: return r9;
-		case 4: return r12;
-		case 5: return r13;
-		case 6: return r14;
-		case 7: return r15;
-		case 8: return rsi;
-		case 9: return rdi;
-		case Registers::rs.v: return rsp;
-		case Registers::rb.v: return rbp;
+	switch (r) {
+		case (Register)0: return rcx;
+		case (Register)1: return rdx;
+		case (Register)2: return r8;
+		case (Register)3: return r9;
+		case (Register)4: return r12;
+		case (Register)5: return r13;
+		case (Register)6: return r14;
+		case (Register)7: return r15;
+		case (Register)8: return rsi;
+		case (Register)9: return rdi;
+		case rs: return rsp;
+		case rb: return rbp;
 	}
-	invalid_code_path("invalid register: {}", r.v);
+	invalid_code_path("invalid register: {}", r);
 	return {};
 }
 

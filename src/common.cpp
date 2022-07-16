@@ -1,223 +1,10 @@
 #include "common.h"
 #define NOMINMAX
 #include <Windows.h>
-CompilerContext context;
+Compiler compiler;
 
 SourceFileInfo *get_source_info(utf8 *location);
 
-
-u32 get_line_number(Span<String> lines, utf8 *from) {
-	// lines will be empty at lexing time.
-	// So if an error occurs at lexing time,
-	// slower algorithm is executed.
-	if (lines.count) {
-#if 1
-		// binary search
-		auto begin = lines.data;
-		auto end = lines.data + lines.count;
-		while (1) {
-			auto line = begin + (end - begin) / 2;
-			if (line->data <= from && from < line->data + line->count) {
-				return line - lines.data + 1;
-			}
-			if (from < line->data) {
-				end = line;
-			} else {
-				begin = line + 1;
-			}
-		}
-		invalid_code_path();
-#else
-		for (auto &line : lines) {
-			if (line.begin() <= from && from < line.end()) {
-				return &line - lines.data;
-			}
-		}
-		invalid_code_path();
-#endif
-	} else {
-		u32 result = 1;
-		while (*--from != 0)
-			result += (*from == '\n');
-		return result;
-	}
-}
-u32 get_line_number(utf8 *from) {
-	auto info = get_source_info(from);
-	return info ? get_line_number(info->lines, from) : 0;
-}
-
-u32 get_column_number(utf8 *from) {
-	u32 result = 0;
-	while (1) {
-		if (*from == '\n' || *from == '\0')
-			break;
-
-		if (*from == '\t')
-			result += 4;
-		else
-			result += 1;
-
-		from -= 1;
-	}
-	return result;
-}
-
-void print_replacing_tabs_with_4_spaces(Span<utf8> string) {
-	for (auto c : string) {
-		if (c == '\t') {
-			print("    ");
-		} else {
-			print(c);
-		}
-	}
-}
-ConsoleColor get_console_color(ReportKind kind) {
-	switch (kind) {
-		using enum ReportKind;
-		using enum ConsoleColor;
-		case info: return dark_gray;
-		case warning: return yellow;
-		case error: return red;
-	}
-	invalid_code_path();
-}
-
-void print_source_line(SourceFileInfo *info, ReportKind kind, Span<utf8> location) {
-
-	if (!location.data) {
-		// print("(null location)\n\n");
-		return;
-	}
-	if (!info) {
-		return;
-	}
-
-
-	auto error_line_begin = location.begin();
-	if (*error_line_begin != 0) {
-		while (1) {
-			error_line_begin--;
-			if (*error_line_begin == 0 || *error_line_begin == '\n') {
-				error_line_begin++;
-				break;
-			}
-		}
-	}
-
-	auto error_line_end = location.end();
-	while (1) {
-		if (*error_line_end == 0 || *error_line_end == '\n') {
-			break;
-		}
-		error_line_end++;
-	}
-
-
-	auto error_line = Span(error_line_begin, error_line_end);
-	auto error_line_number = get_line_number(info->lines, error_line_begin);
-
-	auto print_line = [&](auto line) {
-		return print("{} | ", Format{line, align_right(5, ' ')});
-	};
-
-	// I don't know if previous line is really useful
-#if 0
-	if (error_line.data[-1] != 0) {
-		auto prev_line_end = error_line.data - 1;
-		auto prev_line_begin = prev_line_end - 1;
-
-		while (1) {
-			if (*prev_line_begin == 0) {
-				prev_line_begin += 1;
-				break;
-			}
-
-			if (*prev_line_begin == '\n') {
-				++prev_line_begin;
-				break;
-			}
-
-			--prev_line_begin;
-		}
-		auto prev_line = Span(prev_line_begin, prev_line_end);
-		auto prev_line_number = get_line_number(prev_line_begin);
-
-		print_line(prev_line_number);
-		print_replacing_tabs_with_4_spaces(Print_info, prev_line);
-		print('\n');
-	}
-#endif
-
-	auto line_start = Span(error_line.begin(), location.begin());
-	auto line_end   = Span(location.end(), error_line.end());
-	auto offset = print_line(error_line_number);
-	print_replacing_tabs_with_4_spaces(line_start);
-	with(get_console_color(kind), print_replacing_tabs_with_4_spaces(location));
-	print_replacing_tabs_with_4_spaces(line_end);
-	print('\n');
-
-	for (u32 i = 0; i < offset; ++i) {
-		print(' ');
-	}
-	for (auto c : line_start) {
-		if (c == '\t') {
-			print("    ");
-		} else {
-			print(' ');
-		}
-	}
-	for (auto c : location) {
-		if (c == '\t') {
-			print("^^^^");
-		} else {
-			print('^');
-		}
-	}
-	print("\n");
-}
-
-SourceFileInfo *get_source_info(utf8 *location) {
-	for (auto &source : context.sources) {
-		if (source.source.begin() <= location && location < source.source.end()) {
-			return &source;
-		}
-	}
-	return 0;
-}
-
-HeapString where(SourceFileInfo *info, utf8 *location) {
-	if (location) {
-		if (info) {
-			return format<MyAllocator>(u8"{}:{}:{}", parse_path(info->path).name_and_extension(), get_line_number(info->lines, location), get_column_number(location));
-		}
-	}
-	return {};
-}
-HeapString where(utf8 *location) {
-	return where(get_source_info(location), location);
-}
-
-void print_report(Report r) {
-	auto source_info = r.location.data ? get_source_info(r.location.data) : 0;
-	if (r.location.data) {
-		if (source_info) {
-			print("{}: ", where(source_info, r.location.data));
-		}
-	} else {
-		print(" ================ ");
-	}
-	withs(get_console_color(r.kind),
-		switch (r.kind) {
-			case ReportKind::info:    print(strings.info   ); break;
-			case ReportKind::warning: print(strings.warning); break;
-			case ReportKind::error:	  print(strings.error  ); break;
-			default: invalid_code_path();
-		}
-	);
-	print(": {}\n", r.message);
-	print_source_line(source_info, r.kind, r.location);
-}
 
 struct AllocationBlock {
 	u8 *base   = 0;
@@ -373,7 +160,6 @@ Optional<HeapString> unescape_string(String string) {
 	return new_string;
 }
 
-Strings strings = {};
 const Strings strings_en = {
 	.usage = u8R"(Usage:
     {} <path> [options]
@@ -393,6 +179,7 @@ Option                             Description
 	.no_source_path_received = u8"No source path received.",
 	.error = u8"Error",
 	.warning = u8"Warning",
+
 	.info = u8"Info",
 };
 const Strings strings_ru = {
@@ -416,3 +203,19 @@ const Strings strings_ru = {
 	.warning = u8"Предупреждение",
 	.info = u8"Информация",
 };
+
+void init_strings() {
+	compiler.strings = strings_en;
+	{
+		utf16 buffer[256];
+		GetUserDefaultLocaleName((wchar *)buffer, sizeof(buffer));
+		if (as_span(buffer) == u"ru-RU"s) {
+			compiler.strings = strings_ru;
+		}
+		for (auto i = &compiler.strings._start_marker + 1; i != &compiler.strings._end_marker; ++i) {
+			if (*i == 0) {
+				*i = *(&strings_en._start_marker + (i - &compiler.strings._start_marker));
+			}
+		}
+	}
+}

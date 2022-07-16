@@ -350,24 +350,24 @@ struct AstLiteral : AstExpression, ExpressionPool<AstLiteral> {
 			s64 count;
 
 			String get() const {
-				return (String)Span(context.constant_section.buffer.subspan(offset, count).value());
+				return (String)Span(compiler.constant_section.buffer.subspan(offset, count).value());
 			}
 			void set(String string) {
 				count = string.count;
-				if (auto found = context.string_set.find(string)) {
+				if (auto found = compiler.string_set.find(string)) {
 					offset = found->value;
 				} else {
-					context.constant_section.buffer.ensure_capacity(string.count + 1);
+					compiler.constant_section.buffer.ensure_capacity(string.count + 1);
 
-					auto data = context.constant_section.buffer.last->end();
+					auto data = compiler.constant_section.buffer.last->end();
 
-					offset = context.constant_section.buffer.count;
+					offset = compiler.constant_section.buffer.count;
 					for (auto ch : string)
-						context.constant_section.w1(ch);
+						compiler.constant_section.w1(ch);
 
-					context.constant_section.w1(0);
+					compiler.constant_section.w1(0);
 
-					context.string_set.get_or_insert({(utf8 *)data, (u32)count}) = offset;
+					compiler.string_set.get_or_insert({(utf8 *)data, (u32)count}) = offset;
 				}
 			}
 
@@ -414,7 +414,7 @@ struct AstDefinition : AstStatement, StatementPool<AstDefinition> {
 
 	Expression<> expression = {};
 	Expression<> type = {};
-	Expression<> parent_lambda_or_struct = {};
+	AstNode *container_node = {};
 	Expression<AstIdentifier> poly_ident = {};
 
 	AstLiteral *evaluated = {};
@@ -530,11 +530,11 @@ struct AstLambda : AstExpression, ExpressionPool<AstLambda> {
 	bool is_member                  : 1 = false;
 	bool has_pack                   : 1 = false;
 	bool print_bytecode             : 1 = false;
+	bool is_evaluated_at_compile_time : 1 = false;
 
 	ExternLanguage extern_language = {};
 	String extern_library;
 
-	Instruction *first_instruction = 0;
 	s64 location_in_bytecode = -1;
 
 	CallingConvention convention = CallingConvention::none;
@@ -552,7 +552,7 @@ struct AstLambda : AstExpression, ExpressionPool<AstLambda> {
 	s64 max_stack_space_used_for_call = 0;
 
 	// s64 offset_accumulator = 0;
-	s64 parameters_size = -1; // Sum of (parameters' size ceiled to context.stack_word_size)
+	s64 parameters_size = -1; // Sum of (parameters' size ceiled to compiler.stack_word_size)
 	struct ReturnInfo {
 		Instruction *jmp;
 		s64 index;
@@ -590,20 +590,27 @@ enum class StructLayout {
 struct AstStruct : AstExpression, ExpressionPool<AstStruct> {
 	AstStruct() {
 		kind = Ast_Struct;
-		scope.node = this;
+		parameter_scope.node = this;
+		member_scope.node = this;
+
+		member_scope.parent = &parameter_scope;
 	}
 
 	Statement<AstDefinition> definition = {};
 	DefinitionList data_members; // TODO: redundant with scope
 
-	Scope scope;
+	Scope parameter_scope;
+	Scope member_scope;
+
+	DefinitionList parameters; // TODO: redundant with scope
 
 	s64 size = -1;
 	s64 alignment = -1;
 
 	StructLayout layout = StructLayout::none;
 
-	bool is_union : 1 = false;
+	bool is_union    : 1 = false;
+	bool is_template : 1 = false;
 };
 
 struct AstIf : AstStatement, StatementPool<AstIf> {

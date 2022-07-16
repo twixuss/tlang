@@ -51,6 +51,11 @@ u64 set_fe_u(Comparison c) {
 	return 0;
 }
 
+s64 saved_registers_size;
+s64 temporary_offset;
+s64 locals_offset;
+s64 parameters_size;
+
 auto fe(Register64 r) {
 	switch (r) {
 		using enum Register64;
@@ -76,9 +81,28 @@ auto fe(Register64 r) {
 auto fe(Register r) {
 	return fe(to_x86_register(r));
 }
-auto fe(::Address r) {
-	auto scale = lea_scales[r.r1_scale_index];
-	return FE_MEM(fe(r.base), scale, scale ? fe(r.r1) : 0, r.c);
+auto fe(::Address a) {
+	switch (a.base) {
+		using enum Register;
+		case locals:
+			a.base = rb;
+			a.c += locals_offset;
+			break;
+		case temporary:
+			a.base = rb;
+			a.c += temporary_offset;
+			break;
+		case parameters:
+			a.base = rb;
+			a.c = parameters_size - a.c + 8;
+			break;
+		case return_parameters:
+			a.base = rb;
+			a.c += parameters_size + 16;
+			break;
+	}
+	auto scale = lea_scales[a.r1_scale_index];
+	return FE_MEM(fe(a.base), scale, scale ? fe(a.r1) : 0, a.c);
 }
 
 DECLARE_OUTPUT_BUILDER {
@@ -92,13 +116,13 @@ DECLARE_OUTPUT_BUILDER {
 
 	auto msvc_directory = locate_msvc();
 	if (!msvc_directory.data) {
-		print(Print_error, "Couldn't locate msvc");
+		with(ConsoleColor::red, print("Couldn't locate msvc"));
 		return;
 	}
 
 	auto wkits_directory = locate_wkits();
 	if (!wkits_directory.data) {
-		print(Print_error, "Couldn't locate windows kits");
+		with(ConsoleColor::red, print("Couldn't locate windows kits"));
 		return;
 	}
 
@@ -138,422 +162,6 @@ DECLARE_OUTPUT_BUILDER {
 
 		List<coff::Writer::Relocation *> text_relocations, rodata_relocations;
 		HashMap<String, List<coff::Writer::Relocation *>> external_relocations;
-
-		// This struct is just for local function overloading.....
-		struct Opcoder {
-			StringBuilder &text_builder;
-			coff::Writer::Section &text_section;
-			Bytecode &bytecode;
-			HashMap<String, List<coff::Writer::Relocation *>> relocations;
-
-			void w1(u8  v) { append(text_builder, value_as_bytes(v)); }
-			void w2(u16 v) { append(text_builder, value_as_bytes(v)); }
-			void w4(u32 v) { append(text_builder, value_as_bytes(v)); }
-			void w8(u64 v) { append(text_builder, value_as_bytes(v)); }
-
-			void w1(ModRM v) { append(text_builder, value_as_bytes(v)); }
-
-			inline constexpr bool is_sign_extendable(s64 s) {
-				return (s&0xffff'ffff'8000'0000) == 0xffff'ffff'8000'0000 || (s&0xffff'ffff'8000'0000) == 0;
-			}
-
-			u8 rid(Register64 r) {
-				assert((u8)r < 8);
-				return (u8)r;
-			}
-			u8 ridw(Register64 r) {
-				return (u8)r & 7;
-			}
-			void mov(Register64 r, u32 i) {
-				u8 b[5];
-				b[0] = 0xb8 + rid(r);
-				b[1] = (i >>  0) & 0xff;
-				b[2] = (i >>  8) & 0xff;
-				b[3] = (i >> 16) & 0xff;
-				b[4] = (i >> 24) & 0xff;
-				append(text_builder, array_as_span(b));
-			}
-			void call(u32 i) {
-				u8 b[5];
-				b[0] = 0xe8;
-				b[1] = (i >>  0) & 0xff;
-				b[2] = (i >>  8) & 0xff;
-				b[3] = (i >> 16) & 0xff;
-				b[4] = (i >> 24) & 0xff;
-				append(text_builder, array_as_span(b));
-			}
-			void push_c(s64 i) {
-				if (is_sign_extendable(i)) {
-					w1(0x68);
-					w4(i);
-				} else {
-					sub_rc(rsp, 8);
-					mov4_mc(rsp, i);
-					mov4_mc(rsp+4, i>>32);
-				}
-			}
-			void push(Register64 r) {
-				if ((u8)r >= 8)
-					append(text_builder, value_as_bytes(rex_b));
-				append(text_builder, value_as_bytes((u8)(0x50 + ridw(r))));
-			}
-			void pop(Register64 r) {
-				if ((u8)r >= 8)
-					append(text_builder, value_as_bytes(rex_b));
-				append(text_builder, value_as_bytes((u8)(0x58 + ridw(r))));
-			}
-			void _and(Register64 r, s8 i) {
-				append(text_builder, value_as_bytes(rex_w));
-				append(text_builder, value_as_bytes((u8)0x83));
-				ModRM m = {};
-				m.mod = 3;
-				m.reg = 4;
-				m.rm = rid(r);
-				append(text_builder, value_as_bytes(m));
-				append(text_builder, value_as_bytes(i));
-			}
-			void cld() {
-				append(text_builder, value_as_bytes((u8)0xfc));
-			}
-			void add_rc(Register64 d, s64 s) {
-				assert((s&0xffff'ffff'8000'0000) == 0xffff'ffff'8000'0000 || (s&0xffff'ffff'8000'0000) == 0);
-
-				u8 prefix = rex_w;
-				if (is_gpr(d)) prefix |= rex_b;
-				w1(prefix);
-				w1(0x81);
-				w1(0xc0 + ridw(d));
-				w4(s);
-			}
-			void add_mc(xAddress d, s64 s) {
-				assert((s&0xffff'ffff'8000'0000) == 0xffff'ffff'8000'0000 || (s&0xffff'ffff'8000'0000) == 0);
-
-				u8 prefix = rex_w;
-				if (is_gpr(d.base)) prefix |= rex_b;
-				w1(prefix);
-				w1(0x81);
-				w1(0x00 + ridw(d.base));
-				w4(s);
-			}
-			void sub_rc(Register64 d, s64 s) {
-				assert((s&0xffff'ffff'8000'0000) == 0xffff'ffff'8000'0000 || (s&0xffff'ffff'8000'0000) == 0);
-
-				u8 prefix = rex_w;
-				if (is_gpr(d)) prefix |= rex_b;
-				w1(prefix);
-				w1(0x81);
-				w1(0xe8 + ridw(d));
-				w4(s);
-			}
-			void mov_rc(Register64 d, s64 s) {
-				auto write_prefix = [&] {
-					u8 prefix = rex_w;
-					if (is_gpr(d)) prefix |= rex_b;
-					w1(prefix);
-				};
-
-				if ((s & 0xffff'ffff'8000'0000) == 0xffff'ffff'8000'0000) {
-					// sign extendable
-					write_prefix();
-					w1(0xc7);
-					w1(0xc0 + ridw(d));
-					w4(s);
-				} else if ((s & 0xffff'ffff'0000'0000) == 0) {
-					// zero extendable
-					if (is_gpr(d)) {
-						w1(0x41); // prefix
-					}
-					w1(0xb8 + ridw(d));
-					w4(s);
-				} else {
-					write_prefix();
-					w1(0xb8 + ridw(d));
-					w8(s);
-				}
-			}
-			void mov4_mc(xAddress d, s32 s) {
-				assert(d.r1_scale_index == 0);
-				assert(d.r2_scale == 0);
-
-				if (is_gpr(d.base)) {
-					w1(rex_b);
-				}
-
-				w1(0xc7);
-
-				w1(0x80+ridw(d.base));
-
-				if (ridw(d.base) == 4)
-					w1(0x24);
-
-				w4(d.c);
-				w4(s);
-			}
-			void mov8_mr(xAddress d, Register64 s) {
-				assert(d.r1_scale_index == 0);
-				assert(d.r2_scale == 0);
-
-				u8 prefix = rex_w;
-				if (is_gpr(d.base)) prefix |= rex_b;
-				if (is_gpr(s))      prefix |= rex_r;
-				w1(prefix);
-
-				w1(0x89);
-
-				ModRM m = {};
-				if (d.c || ridw(d.base) == 5)
-					m.mod |= 1;
-				m.reg = ridw(s);
-				m.rm  = ridw(d.base);
-				w1(m);
-
-				if (ridw(d.base) == 4)
-					append(text_builder, value_as_bytes((u8)0x24));
-
-				if (d.c || ridw(d.base) == 5)
-					append(text_builder, value_as_bytes((u8)d.c));
-			}
-			void mov8_rm(Register64 d, xAddress s) {
-				assert(s.r1_scale_index == 0);
-				assert(s.r2_scale == 0);
-
-				u8 prefix = rex_w;
-				if (is_gpr(s.base)) prefix |= rex_b;
-				if (is_gpr(d))      prefix |= rex_r;
-				w1(prefix);
-
-				w1(0x8b);
-
-				ModRM m = {};
-				if (s.c || ridw(s.base) == 5)
-					m.mod |= 1;
-				m.reg = ridw(d);
-				m.rm  = ridw(s.base);
-				w1(m);
-
-				if (ridw(s.base) == 4)
-					append(text_builder, value_as_bytes((u8)0x24));
-
-				if (s.c || ridw(s.base) == 5)
-					append(text_builder, value_as_bytes((u8)s.c));
-			}
-			void lea(Register64 d, xAddress s) {
-				// TODO: use versions with smaller immediates
-				// REX.W + 8D /r		LEA r64,m		Store effective address for m in register r64.
-				u8 prefix = rex_w;
-				if (is_gpr(s.base)) prefix |= rex_b;
-				if (is_gpr(d     )) prefix |= rex_r;
-				append(text_builder, value_as_bytes(prefix));
-
-				append(text_builder, value_as_bytes((u8)0x8d));
-
-				assert(s.r1_scale_index == 0);
-				assert(s.r2_scale == 0);
-
-				ModRM m = {};
-				m.mod = 2;
-				m.rm  = ridw(s.base);
-				m.reg = ridw(d);
-				append(text_builder, value_as_bytes(m));
-
-				append(text_builder, value_as_bytes(s.c));
-			}
-			void rep_stosb() {
-				w1(0xf3);
-				w1(0xaa);
-			}
-			void rep_movsb() {
-				w1(0xf3);
-				w1(0xa4);
-			}
-			void xchg8_m(xAddress a, Register64 b) {
-				if (a.c == 0) {
-					u8 prefix = rex_w;
-					if (is_gpr(a.base)) prefix |= rex_b;
-					if (is_gpr(b))      prefix |= rex_r;
-					w1(prefix);
-
-					w1(0x87);
-
-					w1(ridw(a.base) | (ridw(b) << 3));
-				} else {
-					not_implemented();
-				}
-			}
-			void convert() {
-				xchg8_m(rax, rax);
-				xchg8_m(rcx, rax);
-				xchg8_m(rdx, rax);
-				xchg8_m(rbx, rax);
-				xchg8_m(rsp, rax);
-				xchg8_m(rbp, rax);
-				xchg8_m(rsi, rax);
-				xchg8_m(rdi, rax);
-				xchg8_m(r8 , rax);
-				xchg8_m(r9 , rax);
-				xchg8_m(r10, rax);
-				xchg8_m(r11, rax);
-				xchg8_m(r12, rax);
-				xchg8_m(r13, rax);
-				xchg8_m(r14, rax);
-				xchg8_m(r15, rax);
-
-				_and(rsp, -16);
-				push_c((s8)0);
-				push_c((s8)0);
-				cld();
-				call((u32)10);
-				u32 *main_call = (u32 *)text_builder.last->end() - 1;
-
-				mov8_rm(rcx, rsp);
-
-
-				call((u32)0);
-				relocations.get_or_insert("ExitProcess"str).add(&text_section.relocations.add({.offset=(u32)text_builder.count()-4,.type=IMAGE_REL_AMD64_REL32}));
-
-
-				for (auto i : bytecode.instructions) {
-					switch (i.kind) {
-						using enum InstructionKind;
-						case jmp_label: break;
-						case push_used_registers: {
-							REDECLARE_REF(i, i.push_used_registers);
-							for (u64 bit = 0; bit < sizeof(i.mask) * 8; ++bit) {
-								if ((i.mask >> bit) & 1) {
-									push(to_x86_register((Register)bit));
-								}
-							}
-							// keep the stack 16-byte aligned
-							if (count_bits(i.mask) & 1)
-								this->sub_rc(rsp, 8);
-							break;
-						}
-						case pop_used_registers: {
-							REDECLARE_REF(i, i.pop_used_registers);
-							// keep the stack 16-byte aligned
-							if (count_bits(i.mask) & 1)
-								this->add_rc(rsp, 8);
-							for (u64 bit = 0; bit < sizeof(i.mask) * 8; ++bit) {
-								if ((i.mask >> bit) & 1) {
-									pop(to_x86_register((Register)bit));
-								}
-							}
-							break;
-						}
-						case push_c: {
-							REDECLARE_REF(i, i.push_c);
-							this->push_c((s32)i.s);
-							break;
-						}
-						case push_r: {
-							REDECLARE_REF(i, i.push_r);
-							push(to_x86_register(i.s));
-							break;
-						}
-						case pop_r: {
-							REDECLARE_REF(i, i.pop_r);
-							pop(to_x86_register(i.d));
-							break;
-						}
-						case mov_rr: {
-							REDECLARE_REF(i, i.mov_rr);
-							// REX.W + 89 /r		MOV r/m64,r64		Move r64 to r/m64.
-							append(text_builder, value_as_bytes(rex_w));
-							append(text_builder, value_as_bytes((u8)0x89));
-							ModRM m = {};
-							m.mod = 3;
-							m.reg = rid(to_x86_register(i.s));
-							m.rm  = rid(to_x86_register(i.d));
-							append(text_builder, value_as_bytes(m));
-							break;
-						}
-						case mov_re: {
-							REDECLARE_REF(i, i.mov_re);
-							auto d = to_x86_register(i.d);
-							u8 prefix = rex_w;
-							if (is_gpr(d)) prefix |= rex_b;
-							w1(prefix);
-							w1(0xb8 + ridw(d));
-							w8(0);
-							relocations.get_or_insert(i.s).add(&text_section.relocations.add({.offset=(u32)text_builder.count()-8,.type=IMAGE_REL_AMD64_ADDR64}));
-							break;
-						}
-						case mov8_mr: {
-							REDECLARE_REF(i, i.mov8_mr);
-							this->mov8_mr(i.d, to_x86_register(i.s));
-							break;
-						}
-						case mov8_rm: {
-							REDECLARE_REF(i, i.mov8_rm);
-							this->mov8_rm(to_x86_register(i.d), i.s);
-							break;
-						}
-						case lea: {
-							REDECLARE_REF(i, i.lea);
-							this->lea(to_x86_register(i.d), i.s);
-							break;
-						}
-						case ret: {
-							w1(0xc3);
-							break;
-						}
-						case add_rc: {
-							REDECLARE_REF(i, i.add_rc);
-							this->add_rc(to_x86_register(i.d), i.s);
-							break;
-						}
-						case add_mc: {
-							REDECLARE_REF(i, i.add_mc);
-							this->add_mc(i.d, i.s);
-							break;
-						}
-						case sub_rc: {
-							REDECLARE_REF(i, i.sub_rc);
-							this->add_rc(to_x86_register(i.d), i.s);
-							break;
-						}
-						case call_r: {
-							REDECLARE_REF(i, i.call_r);
-							auto s = to_x86_register(i.s);
-							if (is_gpr(s))
-								w1(rex_b);
-							w1(0xff);
-							w1(0xd0 + ridw(s));
-							break;
-						}
-						case setf_mcc: {
-							REDECLARE_REF(i, i.setf_mcc);
-							this->lea(rdi, i.d);
-							this->mov_rc(rax, i.s);
-							this->mov_rc(rcx, i.size);
-							rep_stosb();
-							break;
-						}
-						case copyf_mmc: {
-							REDECLARE_REF(i, i.copyf_mmc);
-							this->lea(rsi, i.s);
-							this->lea(rdi, i.d);
-							this->mov_rc(rcx, i.size);
-							rep_movsb();
-							break;
-						}
-						case noop:
-							break;
-						case xchg8_m: {
-							REDECLARE_REF(i, i.xchg8_m);
-
-							auto a = to_x86_register(i.a.base);
-							auto b = to_x86_register(i.b);
-
-
-							break;
-						}
-						default:
-							invalid_code_path();
-					}
-				}
-			}
-		};
 		// Opcoder o{text_builder, text_section, bytecode};
 		// o.convert();
 
@@ -622,52 +230,6 @@ DECLARE_OUTPUT_BUILDER {
 					break;
 				case noop:
 					break;
-				case push_used_registers: {
-					REDECLARE_REF(i, i.push_used_registers);
-					if (i.mask == -1) {
-						e(FE_PUSHr, FE_BX);
-						e(FE_PUSHr, FE_SI);
-						e(FE_PUSHr, FE_DI);
-						e(FE_PUSHr, FE_R12);
-						e(FE_PUSHr, FE_R13);
-						e(FE_PUSHr, FE_R14);
-						e(FE_PUSHr, FE_R15);
-						e(FE_SUB64ri, FE_SP, 8);
-						break;
-					}
-					for (u64 bit = 0; bit < sizeof(i.mask) * 8; ++bit) {
-						if ((i.mask >> bit) & 1) {
-							e(FE_PUSHr, fe((Register)bit));
-						}
-					}
-					// keep the stack 16-byte aligned
-					if (count_bits(i.mask) & 1)
-						e(FE_SUB64ri, FE_SP, 8);
-					break;
-				}
-				case pop_used_registers: {
-					REDECLARE_REF(i, i.pop_used_registers);
-					if (i.mask == -1) {
-						e(FE_ADD64ri, FE_SP, 8);
-						e(FE_POPr, FE_R15);
-						e(FE_POPr, FE_R14);
-						e(FE_POPr, FE_R13);
-						e(FE_POPr, FE_R12);
-						e(FE_POPr, FE_DI);
-						e(FE_POPr, FE_SI);
-						e(FE_POPr, FE_BX);
-						break;
-					}
-					// keep the stack 16-byte aligned
-					if (count_bits(i.mask) & 1)
-						e(FE_ADD64ri, FE_SP, 8);
-					for (u64 bit = 0; bit < sizeof(i.mask) * 8; ++bit) {
-						if ((i.mask >> bit) & 1) {
-							e(FE_POPr, fe((Register)bit));
-						}
-					}
-					break;
-				}
 				case push_c: {
 					REDECLARE_REF(i, i.push_c);
 					if (min_value<s32> <= i.s && i.s <= max_value<s32>) {
@@ -681,13 +243,6 @@ DECLARE_OUTPUT_BUILDER {
 				}
 				case push_r: e(FE_PUSHr, fe(i.push_r.s)); break;
 				case push_m: e(FE_PUSHm, fe(i.push_m.s)); break;
-				case push_a:
-					e(FE_MOV64ri, FE_AX, 0xaaaaaaaaaaaaaaaa);
-					((u64 *)cur)[-1] = i.push_a.s;
-					rodata_relocations.add(&text_section.relocations.add({.offset=size()-8,.type=IMAGE_REL_AMD64_ADDR64}));
-
-					e(FE_PUSHr, FE_AX);
-					break;
 				case pop_r: e(FE_POPr, fe(i.pop_r.d)); break;
 
 				case mov_rc: e(FE_MOV64ri, fe(i.mov_rc.d), i.mov_rc.s); break;
@@ -696,11 +251,6 @@ DECLARE_OUTPUT_BUILDER {
 					e(FE_MOV64ri, fe(i.mov_re.d), 0xaaaaaaaaaaaaaaaa);
 					((u64 *)cur)[-1] = 0;
 					external_relocations.get_or_insert(i.mov_re.s).add(&text_section.relocations.add({.offset=size()-8,.type=IMAGE_REL_AMD64_ADDR64}));
-					break;
-				case mov_rt:
-					e(FE_MOV64ri, fe(i.mov_rt.d), 0xaaaaaaaaaaaaaaaa);
-					((u64 *)cur)[-1] = i.mov_rt.s;
-					text_relocations.add(&text_section.relocations.add({.offset=size()-8,.type=IMAGE_REL_AMD64_ADDR64}));
 					break;
 
 				case mov1_rm: e(FE_MOV8rm , fe(i.mov1_rm.d), fe(i.mov1_rm.s)); break;
@@ -713,7 +263,7 @@ DECLARE_OUTPUT_BUILDER {
 				case mov4_mr: e(FE_MOV32mr, fe(i.mov4_mr.d), fe(i.mov4_mr.s)); break;
 				case mov8_mr: e(FE_MOV64mr, fe(i.mov8_mr.d), fe(i.mov8_mr.s)); break;
 
-				case xchg8_m: e(FE_XCHG64mr, fe(i.xchg8_m.a), fe(i.xchg8_m.b)); break;
+				case xchg8_mr: e(FE_XCHG64mr, fe(i.xchg8_mr.a), fe(i.xchg8_mr.b)); break;
 
 				case lea: e(FE_LEA64rm, fe(i.lea.d), fe(i.lea.s)); break;
 
@@ -827,6 +377,81 @@ DECLARE_OUTPUT_BUILDER {
 				case cmpu4: { REDECLARE_REF(i, i.cmpu4); e(FE_XOR64rr, fe(i.d), fe(i.d)); e(FE_CMP32rr, fe(i.a), fe(i.b)); e(set_fe_u(i.c), fe(i.d)); break; }
 				case cmpu8: { REDECLARE_REF(i, i.cmpu8); e(FE_XOR64rr, fe(i.d), fe(i.d)); e(FE_CMP64rr, fe(i.a), fe(i.b)); e(set_fe_u(i.c), fe(i.d)); break; }
 
+				case begin_lambda: {
+					REDECLARE_REF(i, i.begin_lambda);
+
+					auto lambda = i.lambda;
+
+					switch (lambda->convention) {
+						case CallingConvention::tlang: {
+							e(FE_PUSHr, FE_BP);
+							e(FE_MOV64rr, FE_BP, FE_SP);
+
+							saved_registers_size = 0;
+
+							for_each(lambda->used_registers, [&](umm bit) {
+								e(FE_PUSHr, fe((Register)bit));
+								saved_registers_size += 8;
+							});
+
+							// keep the stack 16-byte aligned
+							if (lambda->used_registers.count() & 1) {
+								e(FE_SUB64ri, FE_SP, 8);
+								saved_registers_size += 8;
+							}
+
+
+							auto used_bytes = lambda->locals_size + lambda->temporary_size + lambda->max_stack_space_used_for_call;
+							if (used_bytes >= 4096) {
+								e(FE_MOV64ri, FE_AX, used_bytes);
+								e(FE_CALL, (s64)cur+5);
+								// local_relocations.get_or_insert(cur-4) = index_of(bytecode.instructions, );
+								invalid_code_path("call ._ps");
+							}
+
+							if (used_bytes) {
+								e(FE_SUB64ri, FE_SP, used_bytes);
+							}
+
+							temporary_offset = -(saved_registers_size + lambda->temporary_size);
+							locals_offset    = -(saved_registers_size + lambda->temporary_size + lambda->locals_size);
+							parameters_size  = lambda->parameters_size;
+
+							//not_implemented();
+							break;
+						}
+						case CallingConvention::stdcall: not_implemented();
+					}
+					break;
+				}
+				case end_lambda: {
+					REDECLARE_REF(i, i.end_lambda);
+					auto lambda = i.lambda;
+					switch (lambda->convention) {
+						case CallingConvention::tlang: {
+
+							auto used_bytes = lambda->locals_size + lambda->temporary_size + lambda->max_stack_space_used_for_call;
+
+							// keep the stack 16-byte aligned
+							if (lambda->used_registers.count() & 1) {
+								used_bytes += 8;
+							}
+							if (used_bytes)
+								e(FE_ADD64ri, FE_SP, used_bytes);
+
+							for_each(lambda->used_registers, [&](umm bit) {
+								e(FE_POPr, fe((Register)bit));
+							});
+
+							e(FE_MOV64rr, FE_SP, FE_BP);
+							e(FE_POPr, FE_BP);
+							e(FE_RET);
+							break;
+						}
+						case CallingConvention::stdcall: not_implemented();
+					}
+					break;
+				}
 				default:
 					invalid_code_path();
 			}
@@ -938,7 +563,7 @@ DECLARE_OUTPUT_BUILDER {
 
 		auto process = start_process(bat_path);
 		if (!process.handle) {
-			print(Print_error, "Cannot execute file '{}'\n", bat_path);
+			with(ConsoleColor::red, print("Cannot execute file '{}'\n", bat_path));
 			return;
 		}
 
@@ -963,7 +588,7 @@ DECLARE_OUTPUT_BUILDER {
 		wait(process);
 		auto exit_code = get_exit_code(process);
 		if (exit_code != 0) {
-			print(Print_error, "Build command failed\n");
+			with(ConsoleColor::red, print("Build command failed\n"));
 			return;
 		}
 #endif

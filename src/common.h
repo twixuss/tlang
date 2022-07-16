@@ -223,46 +223,75 @@ struct Section {
 
 // first 4 registers are scratch and are used for expression evaluation
 // rs is a stack pointer, and it must be aligned to 16 bytes before executing a call instruction
-struct Register {
-	u8 v;
-
-	inline static constexpr u32 count = 1 << (sizeof(v) * 8);
-
-	inline explicit operator u8 () { return v; }
-	inline explicit operator u16() { return v; }
-	inline explicit operator u32() { return v; }
-	inline explicit operator u64() { return v; }
-	inline explicit operator s8 () { return v; }
-	inline explicit operator s16() { return v; }
-	inline explicit operator s32() { return v; }
-	inline explicit operator s64() { return v; }
-
-	inline constexpr auto operator<=>(Register const &) const = default;
+enum class Register : u8 {
+	r0 = 0,
+	r1 = 1,
+	r2 = 2,
+	rs = 255,
+	rb = 254,
+	parameters        = 253,
+	return_parameters = 252,
+	locals            = 251,
+	temporary         = 250,
+	constants         = 249,
+	rwdata            = 248,
+	zeros             = 247,
+	instructions      = 246,
 };
 
-namespace Registers {
+constexpr umm allocatable_register_start = 3;
+constexpr umm allocatable_register_end   = 247;
+constexpr umm register_count = 256;
 
-inline static constexpr Register r0 = {0};
-inline static constexpr Register r1 = {1};
-inline static constexpr Register r2 = {2};
-inline static constexpr Register rs = {255};
-inline static constexpr Register rb = {254};
-inline static constexpr Register parameters        = {253};
-inline static constexpr Register return_parameters = {252};
-inline static constexpr Register locals            = {251};
-inline static constexpr Register temporary         = {250};
-inline static constexpr Register constants         = {249};
-inline static constexpr Register rwdata            = {248};
-inline static constexpr Register zeros             = {247};
-inline static constexpr Register instructions      = {246};
-inline static constexpr u32 allocatable_register_start = 3;
-inline static constexpr u32 allocatable_register_end   = 247;
+using RegisterSet = BitSet<register_count>;
 
+struct Strings {
+	utf8 const *_start_marker = (utf8 *)-1;
+
+	utf8 const *usage = 0;
+	utf8 const *no_source_path_received = 0;
+	utf8 const *error = 0;
+	utf8 const *warning = 0;
+	utf8 const *info = 0;
+
+	utf8 const *_end_marker = (utf8 *)-1;
+};
+
+enum class Comparison : u8 {
+	e,
+	ne,
+	l,
+	le,
+	g,
+	ge,
+};
+
+
+enum class ReportKind {
+	info,
+	warning,
+	error,
+};
+
+struct Report {
+	String location;
+	String message;
+	ReportKind kind;
+};
+
+template <class Char>
+concept CChar = is_char<Char>;
+
+template <class ...Args, CChar Char>
+inline Report make_report(ReportKind kind, String location, Char const *format_string, Args const &...args) {
+	Report r;
+	r.location = location;
+	r.kind = kind;
+	r.message = (String)format(format_string, args...);
+	return r;
 }
 
-using RegisterSet = BitSet<Register::count>;
-
-struct CompilerContext {
+struct Compiler {
 	String source_path;
 	String source_path_without_extension;
 	String output_path;
@@ -299,47 +328,249 @@ struct CompilerContext {
 	s64 zero_section_size = 0;
 
 	HashMap<String, s64> string_set;
+
+	Strings strings;
+
+	SourceFileInfo *get_source_info(utf8 *location) {
+		for (auto &source : sources) {
+			if (source.source.begin() <= location && location < source.source.end()) {
+				return &source;
+			}
+		}
+		return 0;
+	}
+
+	u32 get_line_number(Span<String> lines, utf8 *from) {
+		// lines will be empty at lexing time.
+		// So if an error occurs at lexing time,
+		// slower algorithm is executed.
+		if (lines.count) {
+	#if 1
+			// binary search
+			auto begin = lines.data;
+			auto end = lines.data + lines.count;
+			while (1) {
+				auto line = begin + (end - begin) / 2;
+				if (line->data <= from && from < line->data + line->count) {
+					return line - lines.data + 1;
+				}
+				if (from < line->data) {
+					end = line;
+				} else {
+					begin = line + 1;
+				}
+			}
+			invalid_code_path();
+	#else
+			for (auto &line : lines) {
+				if (line.begin() <= from && from < line.end()) {
+					return &line - lines.data;
+				}
+			}
+			invalid_code_path();
+	#endif
+		} else {
+			u32 result = 1;
+			while (*--from != 0)
+				result += (*from == '\n');
+			return result;
+		}
+	}
+	u32 get_line_number(utf8 *from) {
+		auto info = get_source_info(from);
+		return info ? get_line_number(info->lines, from) : 0;
+	}
+
+	u32 get_column_number(utf8 *from) {
+		u32 result = 0;
+		while (1) {
+			if (*from == '\n' || *from == '\0')
+				break;
+
+			if (*from == '\t')
+				result += 4;
+			else
+				result += 1;
+
+			from -= 1;
+		}
+		return result;
+	}
+
+	void print_replacing_tabs_with_4_spaces(Span<utf8> string) {
+		for (auto c : string) {
+			if (c == '\t') {
+				print("    ");
+			} else {
+				print(c);
+			}
+		}
+	}
+	ConsoleColor get_console_color(ReportKind kind) {
+		switch (kind) {
+			using enum ReportKind;
+			using enum ConsoleColor;
+			case info: return dark_gray;
+			case warning: return yellow;
+			case error: return red;
+		}
+		invalid_code_path();
+	}
+
+	void print_source_line(SourceFileInfo *info, ReportKind kind, Span<utf8> location) {
+
+		if (!location.data) {
+			// print("(null location)\n\n");
+			return;
+		}
+		if (!info) {
+			return;
+		}
+
+
+		auto error_line_begin = location.begin();
+		if (*error_line_begin != 0) {
+			while (1) {
+				error_line_begin--;
+				if (*error_line_begin == 0 || *error_line_begin == '\n') {
+					error_line_begin++;
+					break;
+				}
+			}
+		}
+
+		auto error_line_end = location.end();
+		while (1) {
+			if (*error_line_end == 0 || *error_line_end == '\n') {
+				break;
+			}
+			error_line_end++;
+		}
+
+
+		auto error_line = Span(error_line_begin, error_line_end);
+		auto error_line_number = get_line_number(info->lines, error_line_begin);
+
+		auto print_line = [&](auto line) {
+			return print("{} | ", Format{line, align_right(5, ' ')});
+		};
+
+		// I don't know if previous line is really useful
+	#if 0
+		if (error_line.data[-1] != 0) {
+			auto prev_line_end = error_line.data - 1;
+			auto prev_line_begin = prev_line_end - 1;
+
+			while (1) {
+				if (*prev_line_begin == 0) {
+					prev_line_begin += 1;
+					break;
+				}
+
+				if (*prev_line_begin == '\n') {
+					++prev_line_begin;
+					break;
+				}
+
+				--prev_line_begin;
+			}
+			auto prev_line = Span(prev_line_begin, prev_line_end);
+			auto prev_line_number = get_line_number(prev_line_begin);
+
+			print_line(prev_line_number);
+			print_replacing_tabs_with_4_spaces(Print_info, prev_line);
+			print('\n');
+		}
+	#endif
+
+		auto line_start = Span(error_line.begin(), location.begin());
+		auto line_end   = Span(location.end(), error_line.end());
+		auto offset = print_line(error_line_number);
+		print_replacing_tabs_with_4_spaces(line_start);
+		with(get_console_color(kind), print_replacing_tabs_with_4_spaces(location));
+		print_replacing_tabs_with_4_spaces(line_end);
+		print('\n');
+
+		for (u32 i = 0; i < offset; ++i) {
+			print(' ');
+		}
+		for (auto c : line_start) {
+			if (c == '\t') {
+				print("    ");
+			} else {
+				print(' ');
+			}
+		}
+		for (auto c : location) {
+			if (c == '\t') {
+				print("^^^^");
+			} else {
+				print('^');
+			}
+		}
+		print("\n");
+	}
+
+	List<utf8> where(SourceFileInfo *info, utf8 *location) {
+		if (location) {
+			if (info) {
+				return format(u8"{}:{}:{}", parse_path(info->path).name_and_extension(), get_line_number(info->lines, location), get_column_number(location));
+			}
+		}
+		return {};
+	}
+	List<utf8> where(utf8 *location) {
+		return where(get_source_info(location), location);
+	}
+
+	void print_report(Report r) {
+		auto source_info = r.location.data ? get_source_info(r.location.data) : 0;
+		if (r.location.data) {
+			if (source_info) {
+				print("{}: ", where(source_info, r.location.data));
+			}
+		} else {
+			print(" ================ ");
+		}
+		withs(get_console_color(r.kind),
+			switch (r.kind) {
+				case ReportKind::info:    print(strings.info   ); break;
+				case ReportKind::warning: print(strings.warning); break;
+				case ReportKind::error:	  print(strings.error  ); break;
+				default: invalid_code_path();
+			}
+		);
+		print(": {}\n", r.message);
+		print_source_line(source_info, r.kind, r.location);
+	}
+
+	template <class ...Args, class Char>
+	void immediate_info(String location, Char const *format_string, Args const &...args) {
+		print_report(make_report(ReportKind::info, location, format_string, args...));
+	}
+	template <class ...Args, class Char>
+	void immediate_info(Char const *format_string, Args const &...args) {
+		immediate_info(String{}, format_string, args...);
+	}
+
+	template <class ...Args, class Char>
+	void immediate_error(String location, Char const *format_string, Args const &...args) {
+		print_report(make_report(ReportKind::error, location, format_string, args...));
+	}
+	template <class ...Args, class Char>
+	void immediate_error(Char const *format_string, Args const &...args) {
+		immediate_error(String{}, format_string, args...);
+	}
+
 };
-extern CompilerContext context;
+extern Compiler compiler;
 
 #define scoped_phase(message) \
 		/*sleep_milliseconds(1000);*/ \
-		timed_block(context.profiler, as_utf8(as_span(message))); \
-        context.phase_timers.add(create_precise_timer()); \
-		++context.tabs; \
-        defer { if(!context.do_profile) return; --context.tabs; for (int i = 0; i < context.tabs;++i) print("  "); print("{} done in {} ms.\n", message, get_time(context.phase_timers.pop().value()) * 1000); }
-
-enum class Comparison : u8 {
-	e,
-	ne,
-	l,
-	le,
-	g,
-	ge,
-};
-
-
-enum class ReportKind {
-	info,
-	warning,
-	error,
-};
-
-struct Report {
-	String location;
-	HeapString message;
-	ReportKind kind;
-};
-
-u32 get_line_number(Span<String> lines, utf8 *from);
-u32 get_line_number(utf8 *from);
-
-u32 get_column_number(utf8 *from);
-
-HeapString where(SourceFileInfo *info, utf8 *location);
-HeapString where(utf8 *location);
-
-void print_report(Report r);
+		timed_block(compiler.profiler, as_utf8(as_span(message))); \
+        compiler.phase_timers.add(create_precise_timer()); \
+		++compiler.tabs; \
+        defer { if(!compiler.do_profile) return; --compiler.tabs; for (int i = 0; i < compiler.tabs;++i) print("  "); print("{} done in {} ms.\n", message, get_time(compiler.phase_timers.pop().value()) * 1000); }
 
 template <>
 inline umm get_hash(std::source_location const &l) {
@@ -350,54 +581,8 @@ inline bool operator==(String a, char const *b) {
 	return as_chars(a) == as_span(b);
 }
 
-template <class Char>
-concept CChar = is_char<Char>;
-
-template <class ...Args, CChar Char>
-Report make_report(ReportKind kind, String location, Char const *format_string, Args const &...args) {
-	Report r;
-	r.location = location;
-	r.kind = kind;
-	r.message = (HeapString)format<MyAllocator>(format_string, args...);
-	return r;
-}
-
-template <class ...Args, class Char>
-void immediate_info(String location, Char const *format_string, Args const &...args) {
-	print_report(make_report(ReportKind::info, location, format_string, args...));
-}
-template <class ...Args, class Char>
-void immediate_info(Char const *format_string, Args const &...args) {
-	immediate_info(String{}, format_string, args...);
-}
-
-template <class ...Args, class Char>
-void immediate_error(String location, Char const *format_string, Args const &...args) {
-	print_report(make_report(ReportKind::error, location, format_string, args...));
-}
-template <class ...Args, class Char>
-void immediate_error(Char const *format_string, Args const &...args) {
-	immediate_error(String{}, format_string, args...);
-}
-
 HeapString escape_string(String string);
 Optional<HeapString> unescape_string(String string);
-
-struct Strings {
-	utf8 const *_start_marker = (utf8 *)-1;
-
-	utf8 const *usage = 0;
-	utf8 const *no_source_path_received = 0;
-	utf8 const *error = 0;
-	utf8 const *warning = 0;
-	utf8 const *info = 0;
-
-	utf8 const *_end_marker = (utf8 *)-1;
-};
-
-extern Strings strings;
-extern const Strings strings_en;
-extern const Strings strings_ru;
 
 inline void tlang_assertion_failed(char const *cause, char const *file, int line, char const *expression, char const *function) {
 	with(ConsoleColor::red, ::tl::print("Assertion failed: "));
@@ -406,4 +591,31 @@ inline void tlang_assertion_failed(char const *cause, char const *file, int line
 		debug_break();
 	else
 		exit(-1);
+}
+
+inline u32 get_line_number(utf8 *from) {
+	return compiler.get_line_number(from);
+}
+inline u32 get_column_number(utf8 *from) {
+	return compiler.get_column_number(from);
+}
+inline List<utf8> where(utf8 *location) { return compiler.where(location); }
+
+
+template <class ...Args, class Char>
+void immediate_info(String location, Char const *format_string, Args const &...args) {
+	compiler.immediate_info(location, format_string, args...);
+}
+template <class ...Args, class Char>
+void immediate_info(Char const *format_string, Args const &...args) {
+	compiler.immediate_info(String{}, format_string, args...);
+}
+
+template <class ...Args, class Char>
+void immediate_error(String location, Char const *format_string, Args const &...args) {
+	compiler.immediate_error(location, format_string, args...);
+}
+template <class ...Args, class Char>
+void immediate_error(Char const *format_string, Args const &...args) {
+	compiler.immediate_error(String{}, format_string, args...);
 }

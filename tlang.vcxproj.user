@@ -25,10 +25,10 @@
     <RemoteDebuggerCommandArguments>--stats --target nasm_x86_64_windows --keep-temp --profile a.tl</RemoteDebuggerCommandArguments>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
-    <LocalDebuggerCommandArguments>--stats --target nasm_x86_64_windows --keep-temp --profile a.tl performance_test.tl</LocalDebuggerCommandArguments>
+    <LocalDebuggerCommandArguments>--stats --target interpret --keep-temp --profile a.tl</LocalDebuggerCommandArguments>
     <DebuggerFlavor>WindowsLocalDebugger</DebuggerFlavor>
     <LocalDebuggerWorkingDirectory>$(ProjectDir)devtest</LocalDebuggerWorkingDirectory>
-    <RemoteDebuggerCommandArguments>--stats --target nasm_x86_64_windows --keep-temp --profile a.tl performance_test.tl</RemoteDebuggerCommandArguments>
+    <RemoteDebuggerCommandArguments>--stats --target interpret --keep-temp --profile a.tl</RemoteDebuggerCommandArguments>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='UltraSpeed|x64'">
     <LocalDebuggerCommandArguments>--stats --target nasm_x86_64_windows --keep-temp --profile performance_test.tl</LocalDebuggerCommandArguments>

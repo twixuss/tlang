@@ -27,6 +27,10 @@
       "Command": "--target none"
     },
     {
+      "Id": "10582bd5-b650-4b64-b64d-19de7f1c3dbd",
+      "Command": "--target interpret"
+    },
+    {
       "Id": "95f8981e-c7f3-4752-b466-c63af2094358",
       "Command": "--print-ast parse"
     },

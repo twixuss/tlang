@@ -3,8 +3,6 @@
 
 namespace x86_64 {
 
-inline List<AstLambda *> lambda_stack;
-inline AstLambda *current_lambda() { return lambda_stack.back(); }
 s64 saved_registers_size;
 s64 temporary_offset;
 s64 locals_offset;
@@ -61,8 +59,6 @@ static Span<utf8> as_string(Register8  r){using enum Register8 ;switch(r){C( al)
 
 #undef C
 
-inline auto instruction_address(s64 val) { return FormatInt<s64>{.value=val, .radix=62}; }
-
 }
 
 namespace tl {
@@ -74,31 +70,32 @@ inline umm append(StringBuilder&builder,x86_64::Register8  r){return append(buil
 
 inline umm append(StringBuilder &builder, Address a) {
 	using namespace x86_64;
+	using enum Register;
 	umm result = 0;
 	result += append(builder, '[');
-	switch (a.base.v) {
-		case Registers::locals.v:
-			a.base = Registers::rb;
+	switch (a.base) {
+		case locals:
+			a.base = rb;
 			a.c += locals_offset;
 			break;
-		case Registers::temporary.v:
-			a.base = Registers::rb;
+		case temporary:
+			a.base = rb;
 			a.c += temporary_offset;
 			break;
-		case Registers::parameters.v:
-			a.base = Registers::rb;
+		case parameters:
+			a.base = rb;
 			a.c = parameters_size - a.c + 8;
 			break;
-		case Registers::return_parameters.v:
-			a.base = Registers::rb;
+		case return_parameters:
+			a.base = rb;
 			a.c += parameters_size + 16;
 			break;
 	}
-	switch (a.base.v) {
-		case Registers::constants   .v: result += append(builder, "rel constants"); break;
-		case Registers::rwdata      .v: result += append(builder, "rel rwdata"); break;
-		case Registers::zeros       .v: result += append(builder, "rel zeros"); break;
-		case Registers::instructions.v: return append_format(builder, "rel .{}]", instruction_address(a.c));
+	switch (a.base) {
+		case constants   : result += append(builder, "rel constants"); break;
+		case rwdata      : result += append(builder, "rel rwdata"); break;
+		case zeros       : result += append(builder, "rel zeros"); break;
+		case instructions: return append_format(builder, "rel i{}]", a.c);
 		default: result += append(builder, to_x86_register(a.base)); break;
 	}
 	if (a.r1_scale_index) {
@@ -323,22 +320,22 @@ inline umm append_instruction(StringBuilder &builder, s64 idx, Instruction i) {
 		case cmpu4: return append_format(builder, "xor {}, {}\ncmp {}, {}\nset{} {}", i.cmpu4.d, i.cmpu4.d, part4b(i.cmpu4.a), part4b(i.cmpu4.b), cmpu_string(i.cmpu4.c), part1b(i.cmpu4.d));
 		case cmpu8: return append_format(builder, "xor {}, {}\ncmp {}, {}\nset{} {}", i.cmpu8.d, i.cmpu8.d, part8b(i.cmpu8.a), part8b(i.cmpu8.b), cmpu_string(i.cmpu8.c), part1b(i.cmpu8.d));
 
-		case jz_cr:  { auto reg = part1b(i.jz_cr.reg); return append_format(builder, "test {}, {}\njz .{}", reg, reg, instruction_address(idx + i.jz_cr.offset)); }
-		case jnz_cr: { auto reg = part1b(i.jnz_cr.reg); return append_format(builder, "test {}, {}\njnz .{}", reg, reg, instruction_address(idx + i.jnz_cr.offset)); }
+		case jz_cr:  { auto reg = part1b(i.jz_cr.reg); return append_format(builder, "test {}, {}\njz i{}", reg, reg, idx + i.jz_cr.offset); }
+		case jnz_cr: { auto reg = part1b(i.jnz_cr.reg); return append_format(builder, "test {}, {}\njnz i{}", reg, reg, idx + i.jnz_cr.offset); }
 
 		case cmpf1: return append_format(builder, "cmp {}, {}", part1b(i.cmpf1.a), part1b(i.cmpf1.b));
 		case cmpf2: return append_format(builder, "cmp {}, {}", part2b(i.cmpf2.a), part2b(i.cmpf2.b));
 		case cmpf4: return append_format(builder, "cmp {}, {}", part4b(i.cmpf4.a), part4b(i.cmpf4.b));
 		case cmpf8: return append_format(builder, "cmp {}, {}", part8b(i.cmpf8.a), part8b(i.cmpf8.b));
 
-		case jef_c:  { return append_format(builder, "je .{}",  instruction_address(idx + i.jef_c .offset)); }
-		case jnef_c: { return append_format(builder, "jne .{}", instruction_address(idx + i.jnef_c.offset)); }
-		case jlf_c:  { return append_format(builder, "jl .{}",  instruction_address(idx + i.jlf_c .offset)); }
-		case jgf_c:  { return append_format(builder, "jg .{}",  instruction_address(idx + i.jgf_c .offset)); }
-		case jlef_c: { return append_format(builder, "jle .{}", instruction_address(idx + i.jlef_c.offset)); }
-		case jgef_c: { return append_format(builder, "jge .{}", instruction_address(idx + i.jgef_c.offset)); }
+		case jef_c:  { return append_format(builder, "je i{}",  idx + i.jef_c .offset); }
+		case jnef_c: { return append_format(builder, "jne i{}", idx + i.jnef_c.offset); }
+		case jlf_c:  { return append_format(builder, "jl i{}",  idx + i.jlf_c .offset); }
+		case jgf_c:  { return append_format(builder, "jg i{}",  idx + i.jgf_c .offset); }
+		case jlef_c: { return append_format(builder, "jle i{}", idx + i.jlef_c.offset); }
+		case jgef_c: { return append_format(builder, "jge i{}", idx + i.jgef_c.offset); }
 
-		case jmp: return append_format(builder, "jmp .{}", instruction_address(idx + i.jmp.offset));
+		case jmp: return append_format(builder, "jmp i{}", idx + i.jmp.offset);
 
 			// Here move into rcx must be last, because it can be source for rdi or rsi
 		case copyf_mmc:
@@ -389,8 +386,7 @@ inline umm append_instruction(StringBuilder &builder, s64 idx, Instruction i) {
 				i.copyb_mmr.d,
 				i.copyb_mmr.size
 			);
-		case setf_mcc: return append_format(builder, "lea rdi, {}\nmov al, {}\nmov rcx, {}\nrep stosb", i.setf_mcc.d, i.setf_mcc.s, i.setf_mcc.size);
-		case setb_mcc: return append_format(builder, "lea rdi, {}\nmov al, {}\nmov rcx, {}\nadd rdi, {}\nstd\nrep stosb\ncld", i.setb_mcc.d, i.setb_mcc.s, i.setb_mcc.size, i.setb_mcc.size-1);
+		case set_mcc: return append_format(builder, "lea rdi, {}\nmov al, {}\nmov rcx, {}\nrep stosb", i.set_mcc.d, i.set_mcc.s, i.set_mcc.size);
 
 		case cmpstr:
 			return append_format(builder,
@@ -504,7 +500,7 @@ inline umm append_instruction(StringBuilder &builder, s64 idx, Instruction i) {
 		case call_c: {
 			REDECLARE_REF(i, i.call_c);
 			assert(i.lambda->convention == CallingConvention::tlang);
-			return append_format(builder, "call .{}", instruction_address(i.constant));
+			return append_format(builder, "call i{}", i.constant);
 			break;
 #if 0
 			auto lambda = i.call_c.lambda;
@@ -592,7 +588,7 @@ inline umm append_instruction(StringBuilder &builder, s64 idx, Instruction i) {
 			REDECLARE_REF(i, i.call_r);
 			switch (i.lambda->convention) {
 				case CallingConvention::tlang: return append_format(builder, "call {}", i.s);
-				case CallingConvention::stdcall: return append_format(builder, "mov rax, {}\nmov rbx, {}\ncall ._stdcall", i.s, i.lambda->parameters_size);
+				case CallingConvention::stdcall: return append_format(builder, "mov rax, {}\nmov rbx, {}\ncall _stdcall", i.s, i.lambda->parameters_size);
 				default: invalid_code_path();
 			}
 			break;
@@ -601,7 +597,7 @@ inline umm append_instruction(StringBuilder &builder, s64 idx, Instruction i) {
 			REDECLARE_REF(i, i.call_m);
 			switch (i.lambda->convention) {
 				case CallingConvention::tlang:  return append_format(builder, "call qword {}", i.s);
-				case CallingConvention::stdcall: return append_format(builder, "mov rax, {}\nmov rbx, {}\ncall ._stdcall", i.s, i.lambda->parameters_size);
+				case CallingConvention::stdcall: return append_format(builder, "mov rax, {}\nmov rbx, {}\ncall _stdcall", i.s, i.lambda->parameters_size);
 				default: invalid_code_path();
 			}
 			break;
@@ -797,7 +793,7 @@ inline umm append_instruction(StringBuilder &builder, s64 idx, Instruction i) {
 
 					auto used_bytes = lambda->locals_size + lambda->temporary_size + lambda->max_stack_space_used_for_call;
 					if (used_bytes >= 4096) {
-						append_format(builder, "mov rax, {}\ncall ._ps\n", used_bytes);
+						append_format(builder, "mov rax, {}\ncall _ps\n", used_bytes);
 					}
 
 					if (used_bytes)
