@@ -1,7 +1,9 @@
 import "std.tl"
 
-main :: fn () {
-    print(#file);     print_char('\n');
-    print(#line);     print_char('\n');
-    print(#location); print_char('\n');
+main :: (): Int {
+    println(#file);
+    println(#line);
+    println(#location);
+    println(#function);
+    return 42;
 }

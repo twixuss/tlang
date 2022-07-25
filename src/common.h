@@ -59,9 +59,6 @@ inline void print() {
 #include <tl/fly_string.h>
 using namespace tl;
 
-#define REDECLARE_VAL(name, expr) auto _##name = expr; auto name = _##name;
-#define REDECLARE_REF(name, expr) auto &_##name = expr; auto &name = _##name;
-
 struct MyAllocator : AllocatorBase<MyAllocator> {
 	inline static MyAllocator current() { return {}; }
 
@@ -240,7 +237,7 @@ enum class Register : u8 {
 };
 
 constexpr umm allocatable_register_start = 3;
-constexpr umm allocatable_register_end   = 247;
+constexpr umm allocatable_register_end   = 246;
 constexpr umm register_count = 256;
 
 using RegisterSet = BitSet<register_count>;
@@ -317,6 +314,7 @@ struct Compiler {
 	bool debug_poly = false;
 	bool print_lowered = false;
 	bool optimize = false;
+	bool print_stats = false;
 
 	u8 optimization_pass_count = 4;
 
@@ -525,23 +523,34 @@ struct Compiler {
 
 	void print_report(Report r) {
 		auto source_info = r.location.data ? get_source_info(r.location.data) : 0;
-		if (r.location.data) {
-			if (source_info) {
+		if (source_info) {
+			if (r.location.data) {
 				print("{}: ", where(source_info, r.location.data));
+			} else {
+				print(" ================ ");
 			}
+			withs(get_console_color(r.kind),
+				switch (r.kind) {
+					case ReportKind::info:    print(strings.info   ); break;
+					case ReportKind::warning: print(strings.warning); break;
+					case ReportKind::error:	  print(strings.error  ); break;
+					default: invalid_code_path();
+				}
+			);
+			print(": {}\n", r.message);
+			print_source_line(source_info, r.kind, r.location);
 		} else {
 			print(" ================ ");
+			withs(get_console_color(r.kind),
+				switch (r.kind) {
+					case ReportKind::info:    print(strings.info   ); break;
+					case ReportKind::warning: print(strings.warning); break;
+					case ReportKind::error:	  print(strings.error  ); break;
+					default: invalid_code_path();
+				}
+			);
+			print(": {}\n", r.message);
 		}
-		withs(get_console_color(r.kind),
-			switch (r.kind) {
-				case ReportKind::info:    print(strings.info   ); break;
-				case ReportKind::warning: print(strings.warning); break;
-				case ReportKind::error:	  print(strings.error  ); break;
-				default: invalid_code_path();
-			}
-		);
-		print(": {}\n", r.message);
-		print_source_line(source_info, r.kind, r.location);
 	}
 
 	template <class ...Args, class Char>

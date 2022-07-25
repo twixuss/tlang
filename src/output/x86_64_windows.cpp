@@ -594,7 +594,6 @@ DECLARE_OUTPUT_BUILDER {
 #endif
 		if (!context.keep_temp)
 			delete_file(bat_path);
-		print("Build succeeded\n");
 	}
 
 	if (!context.keep_temp)

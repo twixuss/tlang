@@ -76,6 +76,30 @@ struct RegisterOrAddress {
 	}
 };
 
+#define DEFINE_ENUM_MEMBER(name) name,
+#define APPEND_ENUM_MEMBER(name) case name: return append(builder, #name);
+
+#define MAKE_ENUM(iterator, name) \
+	enum class name { \
+		iterator(DEFINE_ENUM_MEMBER) \
+	}; \
+	inline umm append(StringBuilder &builder, name v) { \
+		switch (v) { \
+			using enum name; \
+			iterator(APPEND_ENUM_MEMBER) \
+			default: return append(builder, "(unknown " #name ")"); \
+		} \
+	}
+
+
+#define ROUNDING_MODE_ENUM(e) \
+e(to_negative_infinity) \
+e(to_positive_infinity) \
+e(to_zero) \
+e(to_closest_integer) \
+
+MAKE_ENUM(ROUNDING_MODE_ENUM, RoundingMode);
+
 /*
 
 Naming convention:
@@ -176,16 +200,26 @@ e(mul, rr             , m(Register, d) m(Register, s)) \
 e(mul, rm             , m(Register, d) m(Address, s)) \
 e(mul, mc             , m(Address, d) m(s64, s)) \
 e(mul, mr             , m(Address, d) m(Register, s)) \
-e(div, rc             , m(Register, d) m(s64, s)) \
-e(div, rr             , m(Register, d) m(Register, s)) \
-e(div, rm             , m(Register, d) m(Address, s)) \
-e(div, mc             , m(Address, d) m(s64, s)) \
-e(div, mr             , m(Address, d) m(Register, s)) \
-e(mod, rc             , m(Register, d) m(s64, s)) \
-e(mod, rr             , m(Register, d) m(Register, s)) \
-e(mod, rm             , m(Register, d) m(Address, s)) \
-e(mod, mc             , m(Address, d) m(s64, s)) \
-e(mod, mr             , m(Address, d) m(Register, s)) \
+e(divs, rc             , m(Register, d) m(s64, s)) \
+e(divs, rr             , m(Register, d) m(Register, s)) \
+e(divs, rm             , m(Register, d) m(Address, s)) \
+e(divs, mc             , m(Address, d) m(s64, s)) \
+e(divs, mr             , m(Address, d) m(Register, s)) \
+e(mods, rc             , m(Register, d) m(s64, s)) \
+e(mods, rr             , m(Register, d) m(Register, s)) \
+e(mods, rm             , m(Register, d) m(Address, s)) \
+e(mods, mc             , m(Address, d) m(s64, s)) \
+e(mods, mr             , m(Address, d) m(Register, s)) \
+e(divu, rc             , m(Register, d) m(s64, s)) \
+e(divu, rr             , m(Register, d) m(Register, s)) \
+e(divu, rm             , m(Register, d) m(Address, s)) \
+e(divu, mc             , m(Address, d) m(s64, s)) \
+e(divu, mr             , m(Address, d) m(Register, s)) \
+e(modu, rc             , m(Register, d) m(s64, s)) \
+e(modu, rr             , m(Register, d) m(Register, s)) \
+e(modu, rm             , m(Register, d) m(Address, s)) \
+e(modu, mc             , m(Address, d) m(s64, s)) \
+e(modu, mr             , m(Address, d) m(Register, s)) \
 e(rotl, rc            , m(Register, d) m(s64, s)) \
 e(rotr, rc            , m(Register, d) m(s64, s)) \
 e(not, r              , m(Register, d)) \
@@ -206,30 +240,38 @@ e(and, mr             , m(Address, d) m(Register, s)) \
 e(xor, rc             , m(Register, d) m(s64, s)) \
 e(xor, rr             , m(Register, d) m(Register, s)) \
 e(xor, rm             , m(Register, d) m(Address, s)) \
-e(xor, mc             , m(Address, d) m(s64, s)) \
 e(xor, mr             , m(Address, d) m(Register, s)) \
+e(xor1, mc            , m(Address, d) m(s64, s)) \
+e(xor2, mc            , m(Address, d) m(s64, s)) \
+e(xor4, mc            , m(Address, d) m(s64, s)) \
+e(xor8, mc            , m(Address, d) m(s64, s)) \
 e(negi, r             , m(Register, d)) \
 e(negi8, m            , m(Address, d)) \
 e(negi16, m           , m(Address, d)) \
 e(negi32, m           , m(Address, d)) \
 e(negi64, m           , m(Address, d)) \
 /* Comparison with destination */ \
+/* Unsigned integers */ \
 w(cmpu1              , m(Register, d) m(Register, a) m(Register, b) m(Comparison, c)) \
 w(cmpu2              , m(Register, d) m(Register, a) m(Register, b) m(Comparison, c)) \
 w(cmpu4              , m(Register, d) m(Register, a) m(Register, b) m(Comparison, c)) \
 w(cmpu8              , m(Register, d) m(Register, a) m(Register, b) m(Comparison, c)) \
+/* Signed integers */ \
 w(cmps1              , m(Register, d) m(Register, a) m(Register, b) m(Comparison, c)) \
 w(cmps2              , m(Register, d) m(Register, a) m(Register, b) m(Comparison, c)) \
 w(cmps4              , m(Register, d) m(Register, a) m(Register, b) m(Comparison, c)) \
 w(cmps8              , m(Register, d) m(Register, a) m(Register, b) m(Comparison, c)) \
+/* Floats */ \
+w(cmpf4              , m(Register, d) m(Register, a) m(Register, b) m(Comparison, c)) \
+w(cmpf8              , m(Register, d) m(Register, a) m(Register, b) m(Comparison, c)) \
 w(cmpstr             , m(Register, d) m(Address, a) m(Address, b)) /* d is count */ \
 e(jz, cr              , m(s64, offset) m(Register, reg)) \
 e(jnz, cr             , m(s64, offset) m(Register, reg)) \
 /* Comparison without destination (uses flags) */ \
-w(cmpf1               , m(Register, a) m(Register, b)) \
-w(cmpf2               , m(Register, a) m(Register, b)) \
-w(cmpf4               , m(Register, a) m(Register, b)) \
-w(cmpf8               , m(Register, a) m(Register, b)) \
+w(cmpflag1              , m(Register, a) m(Register, b)) \
+w(cmpflag2              , m(Register, a) m(Register, b)) \
+w(cmpflag4              , m(Register, a) m(Register, b)) \
+w(cmpflag8              , m(Register, a) m(Register, b)) \
 e(jef, c              , m(s64, offset)) \
 e(jnef, c             , m(s64, offset)) \
 e(jlf, c              , m(s64, offset)) \
@@ -251,17 +293,25 @@ w(cvt_f32_s32         , m(Register, d)) \
 w(cvt_s32_f32         , m(Register, d)) \
 w(cvt_f64_s64         , m(Register, d)) \
 w(cvt_s64_f64         , m(Register, d)) \
+w(cvt_f32_f64         , m(Register, d)) \
+w(cvt_f64_f32         , m(Register, d)) \
 e(mov, fr             , m(XRegister, d) m(Register, s)) \
 e(mov, rf             , m(Register, d) m(XRegister, s)) \
 e(mov1, xm            , m(XRegister, d) m(Address, s)) \
 e(mov2, xm            , m(XRegister, d) m(Address, s)) \
 e(mov4, xm            , m(XRegister, d) m(Address, s)) \
 e(mov8, xm            , m(XRegister, d) m(Address, s)) \
-e(add, ff             , m(Register, d) m(Register, s)) \
-e(mul, ff             , m(Register, d) m(Register, s)) \
-e(sub, ff             , m(Register, d) m(Register, s)) \
-e(div, ff             , m(Register, d) m(Register, s)) \
+e(add4, ff            , m(Register, d) m(Register, s)) \
+e(mul4, ff            , m(Register, d) m(Register, s)) \
+e(sub4, ff            , m(Register, d) m(Register, s)) \
+e(div4, ff            , m(Register, d) m(Register, s)) \
+e(add8, ff            , m(Register, d) m(Register, s)) \
+e(mul8, ff            , m(Register, d) m(Register, s)) \
+e(sub8, ff            , m(Register, d) m(Register, s)) \
+e(div8, ff            , m(Register, d) m(Register, s)) \
 e(xor, ff             , m(XRegister, d) m(XRegister, s)) \
+e(round4, f           , m(Register, d) m(RoundingMode, mode)) \
+e(round8, f           , m(Register, d) m(RoundingMode, mode)) \
 e(tobool, r           , m(Register, d)) \
 e(toboolnot, r        , m(Register, d)) \
 w(jmp_label           , ) \
@@ -270,6 +320,7 @@ w(prepare_stack       , m(s64, byte_count)) \
 w(debug_break         , ) \
 w(debug_line          , m(u32, line)) \
 w(debug_start_lambda  , m(AstLambda *, lambda)) \
+w(debug_print_int     , m(Register, r)) \
 
 
 
@@ -375,8 +426,6 @@ struct Bytecode {
 
 Bytecode build_bytecode();
 
-void print_bytecode(InstructionList &instructions);
-
 inline umm append(StringBuilder &builder, Comparison c) {
 	switch (c) {
 		case Comparison::e:	 return append(builder, "==");
@@ -410,6 +459,32 @@ ENUMERATE_INSTRUCTIONS
 #undef e
 
 		default: return print("unknown {}", (u64)i.kind);
+	}
+}
+
+template <class T = void>
+inline void print_bytecode(Span<Instruction> instructions, u64 idx_offset = 0) {
+	u64 idx = idx_offset;
+	for (auto i : instructions) {
+		defer { idx++; };
+
+#if BYTECODE_DEBUG
+		if (i.comment.data) {
+			with(ConsoleColor::dark_cyan,
+				split(i.comment, u8'\n', [&](auto part) {
+					auto str = tformat("// {}\n", part);
+					print(str);
+				})
+			);
+		}
+#endif
+
+		print("{} ", Format(idx, align_left(4, ' ')));
+
+		print_instruction(i);
+#if BYTECODE_DEBUG
+		with(ConsoleColor::gray, print(" // bytecode.cpp:{}\n", i.line));
+#endif
 	}
 }
 

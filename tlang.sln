@@ -79,6 +79,20 @@ Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "x86_64_windows", "x86_64_wi
 EndProject
 Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "interpret", "interpret.vcxproj", "{9B9D13DD-3E2B-419B-9FBB-BF91C04A3AB3}"
 EndProject
+Project("{911E67C6-3D85-4FCE-B560-20A9C3E3FF48}") = "hello_world", "tests\hello_world.exe", "{3A0BF787-E956-4DB0-8D3B-992D64C83A11}"
+	ProjectSection(DebuggerProjectSystem) = preProject
+		PortSupplier = 00000000-0000-0000-0000-000000000000
+		Executable = F:\tlang\tests\hello_world.exe
+		RemoteMachine = DESKTOP-2HA4U8E
+		StartingDirectory = F:\tlang\tests
+		Environment = По умолчанию
+		LaunchingEngine = 00000000-0000-0000-0000-000000000000
+		UseLegacyDebugEngines = No
+		LaunchSQLEngine = No
+		AttachLaunchAction = No
+		IORedirection = Auto
+	EndProjectSection
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|x64 = Debug|x64
@@ -197,6 +211,12 @@ Global
 		{9B9D13DD-3E2B-419B-9FBB-BF91C04A3AB3}.UltraSpeed|x64.Build.0 = UltraSpeed|x64
 		{9B9D13DD-3E2B-419B-9FBB-BF91C04A3AB3}.UltraSpeed|x86.ActiveCfg = UltraSpeed|Win32
 		{9B9D13DD-3E2B-419B-9FBB-BF91C04A3AB3}.UltraSpeed|x86.Build.0 = UltraSpeed|Win32
+		{3A0BF787-E956-4DB0-8D3B-992D64C83A11}.Debug|x64.ActiveCfg = Release|x64
+		{3A0BF787-E956-4DB0-8D3B-992D64C83A11}.Debug|x86.ActiveCfg = Release|x64
+		{3A0BF787-E956-4DB0-8D3B-992D64C83A11}.Release|x64.ActiveCfg = Release|x64
+		{3A0BF787-E956-4DB0-8D3B-992D64C83A11}.Release|x86.ActiveCfg = Release|x64
+		{3A0BF787-E956-4DB0-8D3B-992D64C83A11}.UltraSpeed|x64.ActiveCfg = Release|x64
+		{3A0BF787-E956-4DB0-8D3B-992D64C83A11}.UltraSpeed|x86.ActiveCfg = Release|x64
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

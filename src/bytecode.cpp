@@ -164,7 +164,7 @@ struct Converter {
 	void append(AstLoopControl         *);
 	void append(AstMatch               *);
 
-	void append(Scope &scope);
+	void append(Scope *scope);
 
 	void load_address_of(AstExpression *expression, RegisterOrAddress destination);
 	void load_address_of(AstDefinition *definition, RegisterOrAddress destination);
@@ -441,8 +441,6 @@ void Converter::copy(RegisterOrAddress dst, RegisterOrAddress src, s64 size, boo
 		}
 	}
 }
-
-void print_bytecode(InstructionList &instructions);
 
 Instruction *Converter::add_instruction(Instruction next) {
 #if BYTECODE_DEBUG
@@ -1064,7 +1062,7 @@ void Converter::append(AstStatement *statement) {
 		case Ast_Defer: {
 			// defer is appended later, after appending a block.
 			auto Defer = (AstDefer *)statement;
-			Defer->scope.parent->bytecode_defers.add(Defer);
+			Defer->scope->parent->bytecode_defers.add(Defer);
 			return;
 		}
 		case Ast_Assert:
@@ -1182,14 +1180,17 @@ Address get_known_address_of(AstDefinition *definition) {
 	} else {
 		// Global
 		auto offset = definition->offset;
-		if (definition->is_constant) {
+
+		if (definition->expression && is_lambda(definition->expression))
+			return instructions + offset;
+
+		if (definition->is_constant)
 			return constants + offset;
+
+		if (definition->expression) {
+			return rwdata + offset;
 		} else {
-			if (definition->expression) {
-				return rwdata + offset;
-			} else {
-				return zeros + offset;
-			}
+			return zeros + offset;
 		}
 	}
 }
@@ -1381,8 +1382,8 @@ void Converter::load_address_of(AstExpression *expression, RegisterOrAddress des
 				mov_rm(string, Address(string));
 
 				switch (compiler.stack_word_size) {
-					case 4: I(cmpf4, index, count); break;
-					case 8: I(cmpf8, index, count); break;
+					case 4: I(cmpflag4, index, count); break;
+					case 8: I(cmpflag8, index, count); break;
 					default: invalid_code_path();
 				}
 				I(jlf_c, 2);
@@ -1479,8 +1480,6 @@ void Converter::load_address_of(AstExpression *expression, RegisterOrAddress des
 
 DefinitionAddress Converter::get_address_of(AstDefinition *definition) {
 	push_comment(format("load address of {} (definition_location={})"str, definition->name, definition->definition_location));
-
-	assert(definition->offset != -1);
 
 	if (definition->container_node && !definition->is_constant) {
 		switch (definition->container_node->kind) {
@@ -1589,8 +1588,8 @@ void Converter::append_struct_initializer(AstStruct *Struct, SmallList<AstExpres
 	}
 }
 
-void Converter::append(Scope &scope) {
-	scoped_replace(ls->current_scope, &scope);
+void Converter::append(Scope *scope) {
+	scoped_replace(ls->current_scope, scope);
 
 	ls->lambda->temporary_size = max(ls->lambda->temporary_size, ls->temporary_cursor);
 	auto start_temporary_cursor = ls->temporary_cursor;
@@ -1599,7 +1598,7 @@ void Converter::append(Scope &scope) {
 		ls->temporary_cursor = start_temporary_cursor;
 	};
 
-	for (auto statement : scope.statements) {
+	for (auto statement : scope->statements) {
 		// if (statement->uid() == 1826)
 		// 	debug_break();
 		//if (statement->location == "glGenBuffers = @ wglGetProcAddress(\"glGenBuffers\\0\".data)")
@@ -1613,8 +1612,8 @@ void Converter::append(Scope &scope) {
 		append(statement);
 		assert(ls->available_registers == ls->initial_available_registers);
 	}
-	scope.defers_start_index = count_of(ls->body_builder);
-	for (auto Defer : reverse_iterate(scope.bytecode_defers)) {
+	scope->defers_start_index = count_of(ls->body_builder);
+	for (auto Defer : reverse_iterate(scope->bytecode_defers)) {
 		append(Defer->scope);
 	}
 }
@@ -1693,7 +1692,7 @@ void Converter::append(AstDefinition *definition) {
 	if (definition->expression) {
 		if (definition->expression->kind == Ast_Struct) {
 			auto Struct = (AstStruct *)definition->expression;
-			for_each (Struct->scope.definitions, [&](auto, auto members) {
+			for_each (Struct->scope->definitions, [&](auto, auto members) {
 				for (auto member : members) {
 					if (member->is_constant && member->expression && member->expression->kind == Ast_Lambda) {
 						append(member);
@@ -1803,10 +1802,10 @@ void Converter::append(AstIf *If) {
 #else
 	if (If->is_constant) {
 		// NOTE: constant if's scope is not merged into it's parent.
-		auto scope = If->true_branch_was_taken ? &If->true_scope : &If->false_scope;
+		auto scope = If->true_branch_was_taken ? If->true_scope : If->false_scope;
 		if (ls) {
 			// if we are in a lambda, append statements with all checks and defers etc.
-			append(*scope);
+			append(scope);
 		} else {
 			for (auto statement : scope->statements) {
 				append(statement);
@@ -2054,21 +2053,30 @@ void Converter::append(AstBinaryOperator *bin, RegisterOrAddress destination) {
 
 				if (lt == builtin_f32.Struct) {
 					switch (bin->operation) {
-						case add:  I(add_ff, destination.reg, rr); break;
-						case sub:  I(sub_ff, destination.reg, rr); break;
-						case mul:  I(mul_ff, destination.reg, rr); break;
-						case div:  I(div_ff, destination.reg, rr); break;
+						case add:  I(add4_ff, destination.reg, rr); break;
+						case sub:  I(sub4_ff, destination.reg, rr); break;
+						case mul:  I(mul4_ff, destination.reg, rr); break;
+						case div:  I(div4_ff, destination.reg, rr); break;
 						default: invalid_code_path();
 					}
 				} else if (lt == builtin_f64.Struct) {
-					not_implemented();
-				} else {
+					switch (bin->operation) {
+						case add:  I(add8_ff, destination.reg, rr); break;
+						case sub:  I(sub8_ff, destination.reg, rr); break;
+						case mul:  I(mul8_ff, destination.reg, rr); break;
+						case div:  I(div8_ff, destination.reg, rr); break;
+						default: invalid_code_path();
+					}
+				} else if (::is_integer_or_pointer(lt)) {
+					if (auto pointer = as_pointer(lt)) {
+						I(mul_rc, rr, get_size(pointer->expression));
+					}
 					switch (bin->operation) {
 						case add:  I(add_rr, destination.reg, rr); break;
 						case sub:  I(sub_rr, destination.reg, rr); break;
 						case mul:  I(mul_rr, destination.reg, rr); break;
-						case div:  I(div_rr, destination.reg, rr); break;
-						case mod:  I(mod_rr, destination.reg, rr); break;
+						case div:  if (::is_signed(lt)) I(divs_rr, destination.reg, rr); else I(divu_rr, destination.reg, rr); break;
+						case mod:  if (::is_signed(lt)) I(mods_rr, destination.reg, rr); else I(modu_rr, destination.reg, rr); break;
 						case bor:  I( or_rr, destination.reg, rr); break;
 						case band: I(and_rr, destination.reg, rr); break;
 						case bxor: I(xor_rr, destination.reg, rr); break;
@@ -2076,8 +2084,9 @@ void Converter::append(AstBinaryOperator *bin, RegisterOrAddress destination) {
 						case bsl:  I(shl_rr, destination.reg, rr); break;
 						default: invalid_code_path();
 					}
+				} else {
+					invalid_code_path();
 				}
-
 			} else {
 				assert(get_size(left ->type) <= compiler.stack_word_size);
 				assert(get_size(right->type) <= compiler.stack_word_size);
@@ -2104,21 +2113,30 @@ void Converter::append(AstBinaryOperator *bin, RegisterOrAddress destination) {
 
 				if (lt == builtin_f32.Struct) {
 					switch (bin->operation) {
-						case add:  I(add_ff, l, r); break;
-						case sub:  I(sub_ff, l, r); break;
-						case mul:  I(mul_ff, l, r); break;
-						case div:  I(div_ff, l, r); break;
+						case add:  I(add4_ff, l, r); break;
+						case sub:  I(sub4_ff, l, r); break;
+						case mul:  I(mul4_ff, l, r); break;
+						case div:  I(div4_ff, l, r); break;
 						default: invalid_code_path();
 					}
 				} else if (lt == builtin_f64.Struct) {
-					not_implemented();
-				} else {
+					switch (bin->operation) {
+						case add:  I(add8_ff, l, r); break;
+						case sub:  I(sub8_ff, l, r); break;
+						case mul:  I(mul8_ff, l, r); break;
+						case div:  I(div8_ff, l, r); break;
+						default: invalid_code_path();
+					}
+				} else if (::is_integer_or_pointer(lt)) {
+					if (auto pointer = as_pointer(lt)) {
+						I(mul_rc, r, get_size(pointer->expression));
+					}
 					switch (bin->operation) {
 						case add:  I(add_rr, l, r); break;
 						case sub:  I(sub_rr, l, r); break;
 						case mul:  I(mul_rr, l, r); break;
-						case div:  I(div_rr, l, r); break;
-						case mod:  I(mod_rr, l, r); break;
+						case div:  if (::is_signed(lt)) I(divs_rr, l, r); else I(divu_rr, l, r); break;
+						case mod:  if (::is_signed(lt)) I(mods_rr, l, r); else I(modu_rr, l, r); break;
 						case bor:  I( or_rr, l, r); break;
 						case band: I(and_rr, l, r); break;
 						case bxor: I(xor_rr, l, r); break;
@@ -2126,6 +2144,8 @@ void Converter::append(AstBinaryOperator *bin, RegisterOrAddress destination) {
 						case bsl:  I(shl_rr, l, r); break;
 						default: invalid_code_path();
 					}
+				} else {
+					invalid_code_path();
 				}
 
 				mov_mr(get_size(lt), destination.address, l);
@@ -2170,6 +2190,21 @@ void Converter::append(AstBinaryOperator *bin, RegisterOrAddress destination) {
 					I(mov1_mr, destination.address, r2);
 				}
 				I(jmp_label);
+				switch (bin->operation) {
+					case eq: {
+						break;
+					}
+					case ne: {
+						if (destination.is_in_register) {
+							I(toboolnot_r, destination.reg);
+						} else {
+							I(mov1_rm, r0, destination.address);
+							I(toboolnot_r, r0);
+							I(mov1_mr, destination.address, r0);
+						}
+						break;
+					}
+				}
 				return;
 			}
 
@@ -2197,42 +2232,62 @@ void Converter::append(AstBinaryOperator *bin, RegisterOrAddress destination) {
 			auto comparison = comparison_from_binary_operation(bin->operation);
 
 			if (destination.is_in_register) {
-				if (::is_signed(left->type)) {
+				if (::is_integer_internally(left->type)) {
+					if (::is_signed(left->type)) {
+						switch (get_size(left->type)) {
+							case 1: I(cmps1, .d=destination.reg, .a=rl, .b=rr, .c = comparison); break;
+							case 2: I(cmps2, .d=destination.reg, .a=rl, .b=rr, .c = comparison); break;
+							case 4: I(cmps4, .d=destination.reg, .a=rl, .b=rr, .c = comparison); break;
+							case 8: I(cmps8, .d=destination.reg, .a=rl, .b=rr, .c = comparison); break;
+							default: invalid_code_path();
+						}
+					} else {
+						switch (get_size(left->type)) {
+							case 1: I(cmpu1, .d=destination.reg, .a=rl, .b=rr, .c = comparison); break;
+							case 2: I(cmpu2, .d=destination.reg, .a=rl, .b=rr, .c = comparison); break;
+							case 4: I(cmpu4, .d=destination.reg, .a=rl, .b=rr, .c = comparison); break;
+							case 8: I(cmpu8, .d=destination.reg, .a=rl, .b=rr, .c = comparison); break;
+							default: invalid_code_path();
+						}
+					}
+				} else if (::is_float(left->type)) {
 					switch (get_size(left->type)) {
-						case 1: I(cmps1, .d=destination.reg, .a=rl, .b=rr, .c = comparison); break;
-						case 2: I(cmps2, .d=destination.reg, .a=rl, .b=rr, .c = comparison); break;
-						case 4: I(cmps4, .d=destination.reg, .a=rl, .b=rr, .c = comparison); break;
-						case 8: I(cmps8, .d=destination.reg, .a=rl, .b=rr, .c = comparison); break;
+						case 4: I(cmpf4, .d=destination.reg, .a=rl, .b=rr, .c = comparison); break;
+						case 8: I(cmpf8, .d=destination.reg, .a=rl, .b=rr, .c = comparison); break;
 						default: invalid_code_path();
 					}
 				} else {
-					switch (get_size(left->type)) {
-						case 1: I(cmpu1, .d=destination.reg, .a=rl, .b=rr, .c = comparison); break;
-						case 2: I(cmpu2, .d=destination.reg, .a=rl, .b=rr, .c = comparison); break;
-						case 4: I(cmpu4, .d=destination.reg, .a=rl, .b=rr, .c = comparison); break;
-						case 8: I(cmpu8, .d=destination.reg, .a=rl, .b=rr, .c = comparison); break;
-						default: invalid_code_path();
-					}
+					not_implemented();
 				}
 			} else {
-				if (::is_signed(left->type)) {
+				if (::is_integer_internally(left->type)) {
+					if (::is_signed(left->type)) {
+						switch (get_size(left->type)) {
+							case 1: I(cmps1, .d=r2, .a=rl, .b=rr, .c = comparison); break;
+							case 2: I(cmps2, .d=r2, .a=rl, .b=rr, .c = comparison); break;
+							case 4: I(cmps4, .d=r2, .a=rl, .b=rr, .c = comparison); break;
+							case 8: I(cmps8, .d=r2, .a=rl, .b=rr, .c = comparison); break;
+							default: invalid_code_path();
+						}
+					} else {
+						switch (get_size(left->type)) {
+							case 1: I(cmpu1, .d=r2, .a=rl, .b=rr, .c = comparison); break;
+							case 2: I(cmpu2, .d=r2, .a=rl, .b=rr, .c = comparison); break;
+							case 4: I(cmpu4, .d=r2, .a=rl, .b=rr, .c = comparison); break;
+							case 8: I(cmpu8, .d=r2, .a=rl, .b=rr, .c = comparison); break;
+							default: invalid_code_path();
+						}
+					}
+					I(mov1_mr, destination.address, r2);
+				} else if (::is_float(left->type)) {
 					switch (get_size(left->type)) {
-						case 1: I(cmps1, .d=r2, .a=rl, .b=rr, .c = comparison); break;
-						case 2: I(cmps2, .d=r2, .a=rl, .b=rr, .c = comparison); break;
-						case 4: I(cmps4, .d=r2, .a=rl, .b=rr, .c = comparison); break;
-						case 8: I(cmps8, .d=r2, .a=rl, .b=rr, .c = comparison); break;
+						case 4: I(cmpf4, .d=r2, .a=rl, .b=rr, .c = comparison); break;
+						case 8: I(cmpf8, .d=r2, .a=rl, .b=rr, .c = comparison); break;
 						default: invalid_code_path();
 					}
 				} else {
-					switch (get_size(left->type)) {
-						case 1: I(cmpu1, .d=r2, .a=rl, .b=rr, .c = comparison); break;
-						case 2: I(cmpu2, .d=r2, .a=rl, .b=rr, .c = comparison); break;
-						case 4: I(cmpu4, .d=r2, .a=rl, .b=rr, .c = comparison); break;
-						case 8: I(cmpu8, .d=r2, .a=rl, .b=rr, .c = comparison); break;
-						default: invalid_code_path();
-					}
+					not_implemented();
 				}
-				I(mov1_mr, destination.address, r2);
 			}
 			break;
 		}
@@ -2303,22 +2358,75 @@ void Converter::append(AstBinaryOperator *bin, RegisterOrAddress destination) {
 		case bxorass:
 		case bslass:
 		case bsrass: {
-			LOAD_ADDRESS_INTO_REGISTER(dst, bin->left, r0);
+			assert(get_size(bin->right->type) <= compiler.stack_word_size);
 
-			APPEND_INTO_REGISTER(src, bin->right, r1);
+			auto _left = load_address_of(bin->left);
+			auto _right = append(bin->right);
+			defer {
+				if (_left.is_in_register)  free_register(_left.reg);
+				if (_right.is_in_register) free_register(_right.reg);
+			};
 
-			switch (bin->operation) {
-				case addass:  I(add_mr, Address(dst), src); break;
-				case subass:  I(sub_mr, Address(dst), src); break;
-				case mulass:  I(mul_mr, Address(dst), src); break;
-				case divass:  I(div_mr, Address(dst), src); break;
-				case modass:  I(mod_mr, Address(dst), src); break;
-				case borass:  I( or_mr, Address(dst), src); break;
-				case bandass: I(and_mr, Address(dst), src); break;
-				case bxorass: I(xor_mr, Address(dst), src); break;
-				case bslass:  I(shl_mr, Address(dst), src); break;
-				case bsrass:  I(shr_mr, Address(dst), src); break;
-				default: invalid_code_path();
+			Register dst = r0;
+			Register src = r1;
+
+			if (_left.is_in_register) {
+				dst = _left.reg;
+			} else {
+				mov_rm(dst, _left.address);
+			}
+
+			if (_right.is_in_register) {
+				src = _right.reg;
+			} else {
+				mov_rm(get_size(bin->right->type), src, _right.address);
+			}
+
+			if (::is_integer_or_pointer(bin->type)) {
+				if (auto pointer = as_pointer(bin->left->type)) {
+					I(mul_rc, src, get_size(pointer->expression));
+				}
+				switch (bin->operation) {
+					case addass:  I(add_mr, Address(dst), src); break;
+					case subass:  I(sub_mr, Address(dst), src); break;
+					case mulass:  I(mul_mr, Address(dst), src); break;
+					case divass:  if (::is_signed(bin->left->type)) I(divs_mr, Address(dst), src); else I(divu_mr, Address(dst), src); break;
+					case modass:  if (::is_signed(bin->left->type)) I(mods_mr, Address(dst), src); else I(modu_mr, Address(dst), src); break;
+					case borass:  I( or_mr, Address(dst), src); break;
+					case bandass: I(and_mr, Address(dst), src); break;
+					case bxorass: I(xor_mr, Address(dst), src); break;
+					case bslass:  I(shl_mr, Address(dst), src); break;
+					case bsrass:  I(shr_mr, Address(dst), src); break;
+					default: invalid_code_path();
+				}
+			} else if (::is_float(bin->type)) {
+				auto size = get_size(bin->type);
+				mov_rm(size, r2, Address(dst));
+
+				switch (size) {
+					case 4:
+						switch (bin->operation) {
+							case addass:  I(add4_ff, r2, src); break;
+							case subass:  I(sub4_ff, r2, src); break;
+							case mulass:  I(mul4_ff, r2, src); break;
+							case divass:  I(div4_ff, r2, src); break;
+							default: invalid_code_path();
+						}
+						break;
+					case 8:
+						switch (bin->operation) {
+							case addass:  I(add8_ff, r2, src); break;
+							case subass:  I(sub8_ff, r2, src); break;
+							case mulass:  I(mul8_ff, r2, src); break;
+							case divass:  I(div8_ff, r2, src); break;
+							default: invalid_code_path();
+						}
+						break;
+					default: invalid_code_path();
+				}
+				mov_mr(size, Address(dst), r2);
+			} else {
+				invalid_code_path();
 			}
 
 			break;
@@ -2463,6 +2571,7 @@ void Converter::append(AstBinaryOperator *bin, RegisterOrAddress destination) {
 				return;
 			}
 			if (::is_integer(from) && ::is_float(to)) {
+				// FIXME: cast->left may be bigger than destination!!!
 				append(cast->left, destination);
 
 				if (destination.is_in_register) {
@@ -2470,6 +2579,13 @@ void Converter::append(AstBinaryOperator *bin, RegisterOrAddress destination) {
 					} else if (from == builtin_s32.Struct) {
 						if (false) {}
 						else if (to == builtin_f32.Struct) { I(cvt_s32_f32, destination.reg); }
+						else { invalid_code_path(); }
+					} else if (from == builtin_s64.Struct) {
+						if (false) {}
+						else if (to == builtin_f64.Struct) { I(cvt_s64_f64, destination.reg); }
+						else { invalid_code_path(); }
+					} else {
+						invalid_code_path();
 					}
 				} else {
 					if (false) {
@@ -2477,12 +2593,86 @@ void Converter::append(AstBinaryOperator *bin, RegisterOrAddress destination) {
 						I(mov4_rm, r0, destination.address);
 						if (false) {}
 						else if (to == builtin_f32.Struct) { I(cvt_s32_f32, r0); }
+						else { invalid_code_path(); }
 						I(mov4_mr, destination.address, r0);
+					} else if (from == builtin_s64.Struct) {
+						I(mov8_rm, r0, destination.address);
+						if (false) {}
+						else if (to == builtin_f64.Struct) { I(cvt_s64_f64, r0); }
+						else { invalid_code_path(); }
+						I(mov8_mr, destination.address, r0);
+					} else {
+						invalid_code_path();
 					}
 				}
 				return;
 			}
 
+			if (::is_integer(to) && ::is_float(from)) {
+				// FIXME: cast->left may be bigger than destination!!!
+				append(cast->left, destination);
+
+				if (destination.is_in_register) {
+					if (false) {
+					} else if (from == builtin_f64.Struct) {
+						if (false) {}
+						else if (to == builtin_s64.Struct) { I(cvt_f64_s64, destination.reg); }
+						else { invalid_code_path(); }
+					} else {
+						invalid_code_path();
+					}
+				} else {
+					if (false) {
+					} else if (from == builtin_f64.Struct) {
+						I(mov8_rm, r0, destination.address);
+						if (false) {}
+						else if (to == builtin_s64.Struct) { I(cvt_f64_s64, r0); }
+						else { invalid_code_path(); }
+						I(mov8_mr, destination.address, r0);
+					} else {
+						invalid_code_path();
+					}
+				}
+				return;
+			}
+
+			if (::is_float(to) && ::is_float(from)) {
+				// FIXME: cast->left may be bigger than destination!!!
+				append(cast->left, destination);
+
+				if (destination.is_in_register) {
+					if (false) {
+					} else if (from == builtin_f64.Struct) {
+						if (false) {}
+						else if (to == builtin_f32.Struct) { I(cvt_f64_f32, destination.reg); }
+						else { invalid_code_path(); }
+					} else if (from == builtin_f32.Struct) {
+						if (false) {}
+						else if (to == builtin_f64.Struct) { I(cvt_f32_f64, destination.reg); }
+						else { invalid_code_path(); }
+					} else {
+						invalid_code_path();
+					}
+				} else {
+					if (false) {
+					} else if (from == builtin_f64.Struct) {
+						I(mov8_rm, r0, destination.address);
+						if (false) {}
+						else if (to == builtin_f32.Struct) { I(cvt_f64_f32, r0); }
+						else { invalid_code_path(); }
+						I(mov4_mr, destination.address, r0);
+					} else if (from == builtin_f32.Struct) {
+						I(mov4_rm, r0, destination.address);
+						if (false) {}
+						else if (to == builtin_f64.Struct) { I(cvt_f32_f64, r0); }
+						else { invalid_code_path(); }
+						I(mov8_mr, destination.address, r0);
+					} else {
+						invalid_code_path();
+					}
+				}
+				return;
+			}
 
 			if (auto option = as_option(from)) {
 				if (to == builtin_bool.Struct) {
@@ -2559,7 +2749,7 @@ void Converter::append(AstBinaryOperator *bin, RegisterOrAddress destination) {
 				append(bin->left, destination);
 				I(mov1_rm, r0, destination.address);
 
-				auto jump = I(jz_cr, 0, destination.reg);
+				auto jump = I(jz_cr, 0, r0);
 				auto skip_start = ls->body_builder.count;
 
 				append(bin->right, destination);
@@ -3157,14 +3347,23 @@ void Converter::append(AstIdentifier *identifier, RegisterOrAddress destination)
 
 	auto definition = identifier->definition();
 
-	if (definition->expression && definition->expression->kind == Ast_Lambda) {
-		auto lambda = (AstLambda *)definition->expression;
-		if (!lambda->has_body) {
-			if (destination.is_in_register) {
-				I(mov_re, destination.reg, definition->name);
+	if (definition->is_constant && definition->expression) {
+		if (auto lambda = get_lambda(definition->expression)) {
+			if (lambda->has_body) {
+				assert(definition->offset != -1);
+				if (destination.is_in_register) {
+					I(lea, destination.reg, instructions + definition->offset);
+				} else {
+					I(lea, r0, instructions + definition->offset);
+					mov_mr(destination.address, r0);
+				}
 			} else {
-				I(mov_re, r0, definition->name);
-				mov_mr(destination.address, r0);
+				if (destination.is_in_register) {
+					I(mov_re, destination.reg, definition->name);
+				} else {
+					I(mov_re, r0, definition->name);
+					mov_mr(destination.address, r0);
+				}
 			}
 			return;
 		}
@@ -3239,10 +3438,6 @@ void Converter::append(AstCall *call, RegisterOrAddress destination) {
 			// 	push_address_of(bin->left);
 			// }
 
-			for (auto param : lambda->parameters)
-				assert(!param->is_constant); // not implemented: need to erase constants from call->sorted_arguments first
-
-
 
 			// We need to first append all the arguments into temporary space, then put them on the stack, because
 			// nested function calls can overwrite the arguments.
@@ -3286,11 +3481,12 @@ void Converter::append(AstCall *call, RegisterOrAddress destination) {
 		};
 
 		if (lambda->is_intrinsic) {
+			append_arguments();
+
 			auto name = lambda->definition->name;
 			if (name == "debug_break") {
 				I(debug_break);
 			} else if (name == "memcpy") {
-				append_arguments();
 				auto rdst = r0;
 				auto rsrc = r1;
 				auto rsize = r2;
@@ -3298,8 +3494,17 @@ void Converter::append(AstCall *call, RegisterOrAddress destination) {
 				I(mov8_rm, rsrc, rs + 8);
 				I(mov8_rm, rdst, rs + 16);
 				I(copyf_mmr, Address(rdst), Address(rsrc), rsize);
+			} else if (name == "debug_print_int") {
+				I(mov8_rm, r0, Address(rs));
+				I(debug_print_int, r0);
+			} else if (name == "round") {
+				assert(types_match(call->sorted_arguments[0]->type, builtin_f64));
+				I(mov8_rm, r1, rs + 0);
+				I(mov8_rm, r0, rs + 8);
+				I(round8_f, r0, (RoundingMode)get_constant_integer(call->sorted_arguments[1]).value());
 			} else {
-				invalid_code_path("Unknown intrinsic");
+				compiler.immediate_error(call->location, "Unknown intrinsic");
+				exit(1);
 			}
 			return;
 		}
@@ -3491,8 +3696,7 @@ void Converter::append(AstLiteral *literal, RegisterOrAddress destination) {
 				} else if (dtype == builtin_f64.Struct) {
 					auto f = (f64)(s64)literal->integer;
 					I(mov_rc, destination.reg, *(s64 *)&f);
-				}
-				else if (literal->type->kind == Ast_UnaryOperator && ((AstUnaryOperator *)literal->type)->operation == UnaryOperation::pointer)
+				} else if (::is_pointer(literal->type) || direct_as<AstEnum>(literal->type))
 					I(mov_rc, destination.reg, (s64)literal->integer);
 				else invalid_code_path();
 			} else {
@@ -3510,8 +3714,7 @@ void Converter::append(AstLiteral *literal, RegisterOrAddress destination) {
 				} else if (dtype == builtin_f64.Struct) {
 					auto f = (f64)(s64)literal->integer;
 					I(mov8_mc, destination.address, *(s64 *)&f);
-				}
-				else if (literal->type->kind == Ast_UnaryOperator && ((AstUnaryOperator *)literal->type)->operation == UnaryOperation::pointer)
+				} else if (::is_pointer(literal->type) || direct_as<AstEnum>(literal->type))
 					mov_mc(destination.address, (s64)literal->integer);
 				else invalid_code_path();
 			}
@@ -3572,26 +3775,11 @@ void Converter::append(AstUnaryOperator *unop, RegisterOrAddress destination) {
 						default: invalid_code_path();
 					}
 				} else if (::is_float(unop->type)) {
-					not_implemented();
-#if 0
 					switch (size) {
-						case 4:
-							I(mov_fm, x0, destination.address);
-							I(mov_rc, r0, (s64)0x8000'0000);
-							I(mov_fr, x1, r0);
-							I(xor_ff, x0, x1);
-							I(push_f, x0);
-							break;
-						case 8:
-							I(mov_fm, x0, destination.address);
-							I(mov_rc, r0, (s64)0x8000'0000'0000'0000);
-							I(mov_fr, x1, r0);
-							I(xor_ff, x0, x1);
-							I(push_f, x0);
-							break;
+						case 4: I(xor4_mc, destination.address, (s64)0x8000'0000); break;
+						case 8: I(xor8_mc, destination.address, (s64)0x8000'0000'0000'0000); break;
 						default: invalid_code_path();
 					}
-#endif
 				} else {
 					invalid_code_path();
 				}
@@ -3815,7 +4003,7 @@ void Converter::append(AstLambda *lambda, bool load_address, RegisterOrAddress d
 			// ls.stack_state.init(get_size(lambda->return_parameter->type));
 
 			new_ls.lambda = lambda;
-			new_ls.current_scope = &lambda->body_scope;
+			new_ls.current_scope = lambda->body_scope;
 
 			auto old_ls = ls;
 			ls = &new_ls;
@@ -3849,6 +4037,8 @@ void Converter::append(AstLambda *lambda, bool load_address, RegisterOrAddress d
 	(&builder.add(MI(_kind, __VA_ARGS__)))
 
 			lambda->location_in_bytecode = count_of(builder);
+			if (lambda->definition)
+				lambda->definition->offset = lambda->location_in_bytecode;
 
 			BII(jmp_label);
 
@@ -3857,7 +4047,8 @@ void Converter::append(AstLambda *lambda, bool load_address, RegisterOrAddress d
 		// 	BI(debug_start_lambda, lambda);
 
 			if (lambda->convention == CallingConvention::stdcall) {
-				not_implemented();
+				compiler.immediate_error(lambda->location, "stdcall convention on lambdas with body is not implemented.");
+				exit(-1);
 #if 0
 				assert(compiler.stack_word_size == 8);
 				using namespace x86_64;
@@ -3938,7 +4129,7 @@ void Converter::append(AstLambda *lambda, bool load_address, RegisterOrAddress d
 			}
 
 			if (lambda->print_bytecode) {
-				print_bytecode(ls->body_builder);
+				print_bytecode(with(temporary_allocator, to_list(ls->body_builder)));
 			}
 
 
@@ -4017,10 +4208,11 @@ void Converter::append(AstPack *pack, RegisterOrAddress destination) {
 }
 
 void Converter::optimize(InstructionList &instructions) {
-	propagate_known_addresses(instructions);
+	//propagate_known_addresses(instructions);
 	//remove_redundant_instructions(instructions);
 	//propagate_known_values(instructions);
 }
+#if 0
 void Converter::propagate_known_addresses(InstructionList &instructions) {
 	// Example transformation:
 	//
@@ -4189,7 +4381,10 @@ case and_mr             :
 case xor_rc             :
 case xor_rr             :
 case xor_rm             :
-case xor_mc             :
+case xor1_mc             :
+case xor2_mc             :
+case xor4_mc             :
+case xor8_mc             :
 case xor_mr             :
 case negi_r             :
 case negi8_m            :
@@ -4358,7 +4553,10 @@ void Converter::remove_redundant_instructions(InstructionList &instructions) {
 			case xor_rc:                  use(i.xor_rc.d); break;
 			case xor_rr: use(i.xor_rr.s); use(i.xor_rr.d); break;
 			case xor_rm: use(i.xor_rm.s); use(i.xor_rm.d); break;
-			case xor_mc:                  use(i.xor_mc.d); break;
+			case xor1_mc:                 use(i.xor1_mc.d); break;
+			case xor2_mc:                 use(i.xor2_mc.d); break;
+			case xor4_mc:                 use(i.xor4_mc.d); break;
+			case xor8_mc:                 use(i.xor8_mc.d); break;
 			case xor_mr: use(i.xor_mr.s); use(i.xor_mr.d); break;
 			case and_rc:                  use(i.and_rc.d); break;
 			case and_rr: use(i.and_rr.s); use(i.and_rr.d); break;
@@ -5119,33 +5317,7 @@ void Converter::propagate_known_values(InstructionList &instructions) {
 		}
 	}
 }
-
-void print_bytecode(InstructionList &instructions) {
-	auto replacer = Scoped(ConsoleColor::white);
-
-	u64 idx = 0;
-	for (auto i : instructions) {
-		defer { idx++; };
-
-#if BYTECODE_DEBUG
-		if (i.comment.data) {
-			with(ConsoleColor::dark_cyan,
-				split(i.comment, u8'\n', [&](auto part) {
-					auto str = tformat("// {}\n", part);
-					print(str);
-				})
-			);
-		}
 #endif
-
-		print("{} ", Format(idx, align_left(4, ' ')));
-
-		print_instruction(i);
-#if BYTECODE_DEBUG
-		with(ConsoleColor::gray, print(" // bytecode.cpp:{}\n", i.line));
-#endif
-	}
-}
 
 Bytecode build_bytecode() {
 	timed_function(compiler.profiler);

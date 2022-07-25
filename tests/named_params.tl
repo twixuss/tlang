@@ -1,7 +1,5 @@
 
-test :: (a: int, b: int, c: int): int =>
+test :: (a: Int, b: Int, c: Int): Int =>
     a * b + c;
 
-main ::() {
-   assert test(c=3, 2, 4) == 11;
-}
+main :: () => test(c=3, 2, 4); // 11

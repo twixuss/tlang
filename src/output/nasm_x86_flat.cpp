@@ -428,7 +428,6 @@ DECLARE_OUTPUT_BUILDER {
 			with(ConsoleColor::red, print("Build command failed\n"));
 			return;
 		}
-		print("Build succeeded\n");
 	}
 
 }

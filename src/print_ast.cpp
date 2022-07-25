@@ -42,16 +42,13 @@ void print_ast(AstNode *node) {
 	}
 }
 
-void print_ast(Scope &scope) {
-	for (auto statement : scope.statements) {
+void print_ast(Scope *scope) {
+	for (auto statement : scope->statements) {
 		print_ast(statement);
 	}
 }
 
 void print_ast(AstDefinition *node) {
-	if (node->built_in)
-		return;
-
 	print_tabbed("definition - name: {}, type: {}, uid: {}\n", node->name, type_to_string(node->type, true), node->uid());
 	if (node->expression) {
 		tab_count += 1;
@@ -75,7 +72,7 @@ void print_ast(AstLambda *node) {
 		tab_count -= 1;
 		print_tabbed("statements:\n");
 		tab_count += 1;
-		for (auto statement : node->body_scope.statements) {
+		for (auto statement : node->body_scope->statements) {
 			print_ast(statement);
 		}
 		tab_count -= 1;
@@ -185,7 +182,7 @@ void print_ast(AstStruct *node) {
 	else
 		print_tabbed("struct - unnamed, uid: {}\n", node->uid());
 	tab_count += 1;
-	for_each(node->member_scope.definitions, [&](auto, auto member) {
+	for_each(node->member_scope->definitions, [&](auto, auto member) {
 		print_ast(member[0]);
 	});
 	tab_count -= 1;
@@ -199,13 +196,13 @@ void print_ast(AstIf *node) {
 	tab_count -= 1;
 	print_label("true statements:\n");
 	tab_count += 1;
-	for (auto statement : node->true_scope.statements) {
+	for (auto statement : node->true_scope->statements) {
 		print_ast(statement);
 	}
 	tab_count -= 1;
 	print_label("false statements:\n");
 	tab_count += 1;
-	for (auto statement : node->false_scope.statements) {
+	for (auto statement : node->false_scope->statements) {
 		print_ast(statement);
 	}
 	tab_count -= 1;
@@ -449,7 +446,7 @@ void print_lowered(AstLambda *node) {
 	if (node->has_body) {
 		print(" {\n");
 		++tab_count;
-		for (auto statement : node->body_scope.statements) {
+		for (auto statement : node->body_scope->statements) {
 			print_lowered(statement);
 		}
 		--tab_count;
@@ -567,10 +564,10 @@ void print_lowered(AstReturn *node) {
 	}
 }
 void print_lowered(AstStruct *node) {
-	if (node->member_scope.statements.count) {
+	if (node->member_scope->statements.count) {
 		print("struct {\n");
 		++tab_count;
-		for (auto statement : node->member_scope.statements) {
+		for (auto statement : node->member_scope->statements) {
 			print_lowered(statement);
 		}
 		--tab_count;
@@ -584,13 +581,13 @@ void print_lowered(AstIf *If) {
 	print_lowered(If->condition);
 	print(" {\n");
 	++tab_count;
-	for (auto statement : If->true_scope.statements) {
+	for (auto statement : If->true_scope->statements) {
 		print_lowered(statement);
 	}
 	--tab_count;
 	print_tabbed("} else {\n");
 	++tab_count;
-	for (auto statement : If->false_scope.statements) {
+	for (auto statement : If->false_scope->statements) {
 		print_lowered(statement);
 	}
 	--tab_count;
@@ -630,7 +627,7 @@ void print_lowered(AstWhile *While) {
 	print_lowered(While->condition);
 	print(" {\n");
 	++tab_count;
-	for (auto statement : While->scope.statements) {
+	for (auto statement : While->scope->statements) {
 		print_lowered(statement);
 	}
 	--tab_count;
@@ -658,7 +655,7 @@ void print_lowered(AstParse* parse) {
 void print_lowered(AstDefer *Defer) {
 	print("defer {\n");
 	++tab_count;
-	for (auto statement : Defer->scope.statements) {
+	for (auto statement : Defer->scope->statements) {
 		print_lowered(statement);
 	}
 	--tab_count;
@@ -667,7 +664,7 @@ void print_lowered(AstDefer *Defer) {
 void print_lowered(AstBlock *Block) {
 	print("{\n");
 	++tab_count;
-	for (auto statement : Block->scope.statements) {
+	for (auto statement : Block->scope->statements) {
 		print_lowered(statement);
 	}
 	--tab_count;

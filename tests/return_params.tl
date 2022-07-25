@@ -1,14 +1,12 @@
 
-foo :: fn (): result: int {
+foo :: (): result: Int {
 	result = 64;
 	result = 32;
 	return;
 }
 
 
-main :: fn (): int {
+main :: (): Int {
 	a := foo();
 	return a;
 }
-
-// This should return 32

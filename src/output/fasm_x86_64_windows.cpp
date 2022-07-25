@@ -211,8 +211,6 @@ section '.idata' import data readable writeable
 		with(ConsoleColor::red, print("Build command failed\n"));
 		return;
 	}
-
-	print("Build succeeded\n");
 }
 
 DECLARE_TARGET_INFORMATION_GETTER {

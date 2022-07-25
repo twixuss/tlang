@@ -280,10 +280,11 @@ struct AstEmptyStatement : AstStatement, StatementPool<AstEmptyStatement> {
 struct AstBlock : AstStatement, StatementPool<AstBlock> {
 	AstBlock() {
 		kind = Ast_Block;
-		scope.node = this;
+		scope = Scope::create();
+		scope->node = this;
 	}
 
-	Scope scope;
+	Scope *scope;
 };
 
 struct AstExpressionStatement : AstStatement, StatementPool<AstExpressionStatement> {
@@ -428,7 +429,7 @@ struct AstDefinition : AstStatement, StatementPool<AstDefinition> {
 	s32 offset = -1;
 
 	bool is_constant         : 1 = false;
-	bool built_in            : 1 = false;
+	bool typechecked         : 1 = false;
 	bool is_poly             : 1 = false;
 	bool depends_on_poly     : 1 = false;
 	bool is_pack             : 1 = false;
@@ -482,12 +483,17 @@ struct AstLambdaType : AstExpression, ExpressionPool<AstLambdaType> {
 struct AstLambda : AstExpression, ExpressionPool<AstLambda> {
 	AstLambda() {
 		kind = Ast_Lambda;
-		type_scope.node = this;
-		parameter_scope.node = this;
-		body_scope.node = this;
 
-		body_scope.parent = &parameter_scope;
-		parameter_scope.parent = &type_scope;
+		type_scope      = Scope::create();
+		parameter_scope = Scope::create();
+		body_scope      = Scope::create();
+
+		type_scope->node      = this;
+		parameter_scope->node = this;
+		body_scope->node      = this;
+
+		body_scope->parent = parameter_scope;
+		parameter_scope->parent = type_scope;
 	}
 
 	Statement<AstDefinition> definition = {}; // not null if lambda is named
@@ -497,10 +503,10 @@ struct AstLambda : AstExpression, ExpressionPool<AstLambda> {
 
 	Statement<AstReturn> return_statement_type_deduced_from = {};
 
-	Scope type_scope;
-	Scope parameter_scope;
-	Scope body_scope;
-	Scope *outer_scope() { return &type_scope; }
+	Scope *type_scope;
+	Scope *parameter_scope;
+	Scope *body_scope;
+	Scope *outer_scope() { return type_scope; }
 
 	DefinitionList parameters;
 
@@ -575,6 +581,7 @@ struct AstCall : AstExpression, ExpressionPool<AstCall> {
 	AstCall() { kind = Ast_Call; }
 
 	Expression<> callable = {};
+	Expression<> resolved = {};
 	SmallList<NamedArgument> unsorted_arguments = {};
 	SmallList<AstExpression *> sorted_arguments = {};
 
@@ -590,19 +597,25 @@ enum class StructLayout {
 struct AstStruct : AstExpression, ExpressionPool<AstStruct> {
 	AstStruct() {
 		kind = Ast_Struct;
-		parameter_scope.node = this;
-		member_scope.node = this;
 
-		member_scope.parent = &parameter_scope;
+		parameter_scope = Scope::create();
+		member_scope = Scope::create();
+
+		parameter_scope->node = this;
+		member_scope->node = this;
+
+		member_scope->parent = parameter_scope;
 	}
 
 	Statement<AstDefinition> definition = {};
 	DefinitionList data_members; // TODO: redundant with scope
 
-	Scope parameter_scope;
-	Scope member_scope;
+	Scope *parameter_scope;
+	Scope *member_scope;
 
 	DefinitionList parameters; // TODO: redundant with scope
+
+	Expression<AstStruct> instantiated_from = {};
 
 	s64 size = -1;
 	s64 alignment = -1;
@@ -616,14 +629,18 @@ struct AstStruct : AstExpression, ExpressionPool<AstStruct> {
 struct AstIf : AstStatement, StatementPool<AstIf> {
 	AstIf() {
 		kind = Ast_If;
-		true_scope.node = this;
-		false_scope.node = this;
+
+		true_scope = Scope::create();
+		false_scope = Scope::create();
+
+		true_scope->node = this;
+		false_scope->node = this;
 	}
 
 	Expression<> condition = {};
 
-	Scope true_scope;
-	Scope false_scope;
+	Scope *true_scope;
+	Scope *false_scope;
 
 	bool is_constant : 1 = false;
 	bool true_branch_was_taken : 1 = false;
@@ -632,23 +649,26 @@ struct AstIf : AstStatement, StatementPool<AstIf> {
 struct AstWhile : AstStatement, StatementPool<AstWhile> {
 	AstWhile() {
 		kind = Ast_While;
-		scope.node = this;
+		scope = Scope::create();
+		scope->node = this;
 	}
 
 	Expression<> condition = {};
 
-	Scope scope;
+	Scope *scope;
 };
 
 struct AstFor : AstStatement, StatementPool<AstFor> {
 	AstFor() {
 		kind = Ast_For;
-		scope.node = this;
+		scope = Scope::create();
+		scope->node = this;
 	}
 
-	Expression<> condition = {};
+	KeyString iterator_name = {};
+	Expression<> range = {};
 
-	Scope scope;
+	Scope *scope;
 };
 
 //#define e(name, token)
@@ -863,10 +883,11 @@ struct AstSpan : AstExpression, ExpressionPool<AstSpan> {
 struct AstTest : AstExpression, ExpressionPool<AstTest> {
 	AstTest() {
 		kind = Ast_Test;
-		scope.node = this;
+		scope = Scope::create();
+		scope->node = this;
 	}
 
-	Scope scope;
+	Scope *scope;
 };
 
 struct AstIfx : AstExpression, ExpressionPool<AstIfx> {
@@ -915,10 +936,11 @@ struct AstImport : AstExpression, ExpressionPool<AstImport> {
 struct AstDefer : AstStatement, StatementPool<AstDefer> {
 	AstDefer() {
 		kind = Ast_Defer;
-		scope.node = this;
+		scope = Scope::create();
+		scope->node = this;
 	}
 
-	Scope scope;
+	Scope *scope;
 };
 
 struct AstOperatorDefinition : AstStatement, StatementPool<AstOperatorDefinition> {
@@ -938,12 +960,13 @@ struct AstPack : AstExpression, ExpressionPool<AstPack> {
 struct AstEnum : AstExpression, ExpressionPool<AstEnum> {
 	AstEnum() {
 		kind = Ast_Enum;
-		scope.node = this;
+		scope = Scope::create();
+		scope->node = this;
 	}
 
 	Statement<AstDefinition> definition = {};
 
-	Scope scope;
+	Scope *scope;
 
 	Expression<> underlying_type = {};
 };
@@ -963,7 +986,7 @@ struct AstLoopControl : AstStatement, StatementPool<AstLoopControl> {
 
 struct MatchCase {
 	AstExpression *expression = 0; // will be null for default case
-	Scope scope;
+	Scope *scope = Scope::create();
 };
 
 struct AstMatch : AstStatement, StatementPool<AstMatch> {
@@ -1025,6 +1048,7 @@ extern BuiltinStruct builtin_struct_member;
 extern BuiltinStruct builtin_typeinfo;
 extern BuiltinStruct builtin_any;
 extern BuiltinStruct builtin_range;
+extern BuiltinStruct builtin_enum_member;
 
 extern BuiltinEnum builtin_type_kind;
 
@@ -1154,6 +1178,14 @@ direct(identifier myint2) returns struct s64
 AstExpression *direct(AstExpression *type);
 
 template <class T>
+T *as(AstExpression *expression) {
+	if (expression->kind == kind_of<T>) {
+		return (T *)expression;
+	}
+	return 0;
+}
+
+template <class T>
 T *direct_as(AstExpression *expression) {
 	auto directed = direct(expression);
 	if (!directed)
@@ -1167,6 +1199,9 @@ T *direct_as(AstExpression *expression) {
 inline bool is_struct     (AstExpression *type) { return direct_as<AstStruct    >(type) != 0; }
 inline bool is_lambda_type(AstExpression *type) { return direct_as<AstLambdaType>(type) != 0; }
 inline bool is_lambda     (AstExpression *expression) { return direct_as<AstLambda>(expression) != 0; }
+
+bool is_integer_or_pointer(AstExpression *type);
+bool is_integer_internally(AstExpression *type);
 
 bool is_integer(AstExpression *type);
 bool is_signed(AstExpression *type);

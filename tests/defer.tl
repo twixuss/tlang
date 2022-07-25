@@ -1,8 +1,9 @@
 import "std.tl"
 
 main :: () {
-    defer print("A\n");
+    defer { print("A\n"); }
     defer print("B\n");
+
     {
         {
             defer print("C\n");
@@ -11,7 +12,8 @@ main :: () {
         return;
         defer print("E\n");
     }
+    
     defer print("F\n");
-    print("Hello World!\n");
+    print("G\n");
 }
 

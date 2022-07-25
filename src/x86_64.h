@@ -62,7 +62,7 @@ inline static constexpr Register64 to_x86_register(Register r) {
 		case rs: return rsp;
 		case rb: return rbp;
 	}
-	invalid_code_path("invalid register: {}", r);
+	invalid_code_path("invalid register: {}", (u32)r);
 	return {};
 }
 

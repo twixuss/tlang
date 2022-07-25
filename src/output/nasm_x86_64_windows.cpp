@@ -78,25 +78,17 @@ _stdcall:
 	cmp rcx, rbx
 	je ._stdcall_l1
 
-	lea	r8, [rsp + 8 + rcx]
-	lea	r9, [rsp + rbx]
-	sub r9, rcx
-
-	mov r10, [r8]
-	xchg [r9], r10
-	mov [r8], r10
+	push qword [rsp + 8 + rcx*2]
 
 	add rcx, 8
 	jmp ._stdcall_l0
 ._stdcall_l1:
-	lea r9, [rsp + 8 + rbx]
-	mov rcx, [r9 - 8];
-	mov rdx, [r9 - 16];
-	mov r8,  [r9 - 24];
-	mov r9,  [r9 - 32];
-	sub rsp, 32
+	mov rcx, [rsp + 0]
+	mov rdx, [rsp + 8]
+	mov r8,  [rsp + 16]
+	mov r9,  [rsp + 24]
 	call rax
-	add rsp, 32
+	add rsp, rbx
 	mov [rsp + 8 + rbx], rax
 	ret
 )"
@@ -264,7 +256,6 @@ DECLARE_OUTPUT_BUILDER {
 #endif
 		if (!compiler.keep_temp)
 			delete_file(bat_path);
-		print("Build succeeded\n");
 	}
 
 	if (!compiler.keep_temp)

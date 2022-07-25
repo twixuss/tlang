@@ -6,6 +6,7 @@ E(eof,      'eof') \
 E(as,       'as') \
 E(true,     'true') \
 E(if,       'if') \
+E(in,       'in') \
 E(then,     'then') \
 E(else,     'else') \
 E(null,     'null') \

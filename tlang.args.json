@@ -56,7 +56,7 @@
     },
     {
       "Id": "a73b5e5b-eb1d-49e9-b057-eae2254aca28",
-      "Command": "../tests/functions.tl"
+      "Command": "../tests/overload.exe"
     },
     {
       "Id": "cef8c758-7ca7-4d68-a146-e313ec47e1f3",

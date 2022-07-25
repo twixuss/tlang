@@ -115,6 +115,17 @@ value := if condition then 42 else 1337;
 while condition {
    do_stuff();
 }
+
+x := 1;
+match x {
+  0 => println("good");
+  1 => println("ok");
+  2 => println("bad");
+  else => println("???");
+}
+// Only constant integers are supported right now, including enums.
+// Matching an enum without default case is checked to cover all possible values.
+// Maybe I'll add a way to match with default case and the checks.
 ```
 # External functions
 ```java

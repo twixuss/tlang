@@ -220,15 +220,15 @@ inline umm append_instruction(StringBuilder &builder, s64 idx, Instruction i) {
 
 			//  DIV - Unsigned divide RDX:RAX by r/m64, with result stored in RAX - Quotient, RDX - Remainder.
 			// IDIV -   Signed divide RDX:RAX by r/m64, with result stored in RAX - Quotient, RDX - Remainder.
-		case div_mr:
-			if (to_x86_register(i.div_mr.s) == rdx) {
+		case divu_mr:
+			if (to_x86_register(i.divu_mr.s) == rdx) {
 				return append_format(builder,
 "mov rbx, rdx\n"
 "xor rdx, rdx\n"
 "mov rax, qword {}\n"
 "div rbx\n"
 "mov qword {}, rax\n"
-"mov rdx, rbx", i.div_mr.d, i.div_mr.d);
+"mov rdx, rbx", i.divu_mr.d, i.divu_mr.d);
 			} else {
 				return append_format(builder,
 "mov rbx, rdx\n"
@@ -236,18 +236,37 @@ inline umm append_instruction(StringBuilder &builder, s64 idx, Instruction i) {
 "mov rax, qword {}\n"
 "div {}\n"
 "mov qword {}, rax\n"
-"mov rdx, rbx", i.div_mr.d, i.div_mr.s, i.div_mr.d);
+"mov rdx, rbx", i.divu_mr.d, i.divu_mr.s, i.divu_mr.d);
 			}
 			break;
-		case mod_mr:
-			if (to_x86_register(i.div_mr.s) == rdx) {
+		case divs_mr:
+			if (to_x86_register(i.divs_mr.s) == rdx) {
+				return append_format(builder,
+"mov rbx, rdx\n"
+"mov rax, qword {}\n"
+"cqo\n"
+"div rbx\n"
+"mov qword {}, rax\n"
+"mov rdx, rbx", i.divs_mr.d, i.divs_mr.d);
+			} else {
+				return append_format(builder,
+"mov rbx, rdx\n"
+"mov rax, qword {}\n"
+"cqo\n"
+"div {}\n"
+"mov qword {}, rax\n"
+"mov rdx, rbx", i.divs_mr.d, i.divs_mr.s, i.divs_mr.d);
+			}
+			break;
+		case modu_mr:
+			if (to_x86_register(i.modu_mr.s) == rdx) {
 				return append_format(builder,
 "mov rbx, rdx\n"
 "xor rdx, rdx\n"
 "mov rax, qword {}\n"
 "div rbx\n"
 "mov qword {}, rdx\n"
-"mov rdx, rbx", i.div_mr.d, i.div_mr.d);
+"mov rdx, rbx", i.modu_mr.d, i.modu_mr.d);
 			} else {
 				return append_format(builder,
 "mov rbx, rdx\n"
@@ -255,29 +274,49 @@ inline umm append_instruction(StringBuilder &builder, s64 idx, Instruction i) {
 "mov rax, qword {}\n"
 "div {}\n"
 "mov qword {}, rdx\n"
-"mov rdx, rbx", i.div_mr.d, i.div_mr.s, i.div_mr.d);
+"mov rdx, rbx", i.modu_mr.d, i.modu_mr.s, i.modu_mr.d);
 			}
 			break;
 
 
-		case div_rr:
+		case divu_rr:
 			return append_format(builder,
 "push rdx\n"
 "xor rdx,rdx\n"
 "mov rax,{}\n"
 "div {}\n"
 "mov {},rax\n"
-"pop rdx", i.div_rr.d, i.div_rr.s, i.div_rr.d);
+"pop rdx", i.divu_rr.d, i.divu_rr.s, i.divu_rr.d);
 			break;
 
-		case mod_rr:
+		case divs_rr:
+			return append_format(builder,
+"push rdx\n"
+"mov rax,{}\n"
+"cqo\n"
+"div {}\n"
+"mov {},rax\n"
+"pop rdx", i.divs_rr.d, i.divs_rr.s, i.divs_rr.d);
+			break;
+
+		case modu_rr:
 			return append_format(builder,
 "push rdx\n"
 "xor rdx,rdx\n"
 "mov rax,{}\n"
 "div {}\n"
 "mov {},rdx\n"
-"pop rdx", i.mod_rr.d, i.mod_rr.s, i.mod_rr.d);
+"pop rdx", i.modu_rr.d, i.modu_rr.s, i.modu_rr.d);
+			break;
+
+		case mods_rr:
+			return append_format(builder,
+"push rdx\n"
+"mov rax,{}\n"
+"cqo\n"
+"div {}\n"
+"mov {},rdx\n"
+"pop rdx", i.mods_rr.d, i.mods_rr.s, i.mods_rr.d);
 			break;
 
 		case negi_r: return append_format(builder, "neg {}", i.negi_r.d);
@@ -292,41 +331,49 @@ inline umm append_instruction(StringBuilder &builder, s64 idx, Instruction i) {
 		case and_rc: return append_format(builder, "and {},{}", i.and_rc.d, i.and_rc.s);
 		case and_rr: return append_format(builder, "and {},{}", i.and_rr.d, i.and_rr.s);
 		case and_mc: {
-			if (~i.and_mc.s & 0xffffffff00000000) {
-				umm ch = 0;
-				auto l = (s32)i.and_mc.s;
-				auto h = (s32)((u64)i.and_mc.s >> 32);
-				ch += append_format(builder, "and dword {}, {}\n"  , i.and_mc.d, l);
-				auto addr = i.and_mc.d;
-				addr.c += 4;
-				ch += append_format(builder, "and dword {}, {}", addr, h);
-				return ch;
-			} else {
-				return append_format(builder, "and qword {}, {}", i.and_mc.d, (s32)i.and_mc.s);
-			}
-			break;
+			REDECLARE_REF(i, i.and_mc);
+			auto l = (s32)i.s;
+			auto h = (s32)((u64)i.s >> 32);
+			umm ch = 0;
+			if (l != ~0) ch += append_format(builder, "xor dword{},{}\n", i.d, l);
+			if (h != ~0) ch += append_format(builder, "xor dword{},{}", i.d + 4, h);
+			return ch;
 		}
 		case and_mr: return append_format(builder, "and qword {}, {}", i.and_mr.d, i.and_mr.s);
 
 		case xor_rr: return append_format(builder, "xor {}, {}"        , i.xor_rr.d, i.xor_rr.s);
 		case xor_mr: return append_format(builder, "xor qword {}, {}", i.xor_mr.d, i.xor_mr.s);
+		case xor1_mc: return append_format(builder, "xor byte{},{}\n", i.xor1_mc.d, i.xor1_mc.s);
+		case xor2_mc: return append_format(builder, "xor word{},{}\n", i.xor2_mc.d, i.xor2_mc.s);
+		case xor4_mc: return append_format(builder, "xor dword{},{}\n", i.xor4_mc.d, i.xor4_mc.s);
+		case xor8_mc: {
+			REDECLARE_REF(i, i.xor8_mc);
+			auto l = (s32)i.s;
+			auto h = (s32)((u64)i.s >> 32);
+			umm ch = 0;
+			if (l) ch += append_format(builder, "xor dword{},{}\n", i.d, l);
+			if (h) ch += append_format(builder, "xor dword{},{}", i.d + 4, h);
+			return ch;
+		}
 
-		case cmps1: return append_format(builder, "xor {}, {}\ncmp {}, {}\nset{} {}", i.cmps1.d, i.cmps1.d, part1b(i.cmps1.a), part1b(i.cmps1.b), cmps_string(i.cmps1.c), part1b(i.cmps1.d));
-		case cmps2: return append_format(builder, "xor {}, {}\ncmp {}, {}\nset{} {}", i.cmps2.d, i.cmps2.d, part2b(i.cmps2.a), part2b(i.cmps2.b), cmps_string(i.cmps2.c), part1b(i.cmps2.d));
-		case cmps4: return append_format(builder, "xor {}, {}\ncmp {}, {}\nset{} {}", i.cmps4.d, i.cmps4.d, part4b(i.cmps4.a), part4b(i.cmps4.b), cmps_string(i.cmps4.c), part1b(i.cmps4.d));
-		case cmps8: return append_format(builder, "xor {}, {}\ncmp {}, {}\nset{} {}", i.cmps8.d, i.cmps8.d, part8b(i.cmps8.a), part8b(i.cmps8.b), cmps_string(i.cmps8.c), part1b(i.cmps8.d));
-		case cmpu1: return append_format(builder, "xor {}, {}\ncmp {}, {}\nset{} {}", i.cmpu1.d, i.cmpu1.d, part1b(i.cmpu1.a), part1b(i.cmpu1.b), cmpu_string(i.cmpu1.c), part1b(i.cmpu1.d));
-		case cmpu2: return append_format(builder, "xor {}, {}\ncmp {}, {}\nset{} {}", i.cmpu2.d, i.cmpu2.d, part2b(i.cmpu2.a), part2b(i.cmpu2.b), cmpu_string(i.cmpu2.c), part1b(i.cmpu2.d));
-		case cmpu4: return append_format(builder, "xor {}, {}\ncmp {}, {}\nset{} {}", i.cmpu4.d, i.cmpu4.d, part4b(i.cmpu4.a), part4b(i.cmpu4.b), cmpu_string(i.cmpu4.c), part1b(i.cmpu4.d));
-		case cmpu8: return append_format(builder, "xor {}, {}\ncmp {}, {}\nset{} {}", i.cmpu8.d, i.cmpu8.d, part8b(i.cmpu8.a), part8b(i.cmpu8.b), cmpu_string(i.cmpu8.c), part1b(i.cmpu8.d));
+		case cmps1: return append_format(builder, "xor {},{}\ncmp {},{}\nset{} {}", i.cmps1.d, i.cmps1.d, part1b(i.cmps1.a), part1b(i.cmps1.b), cmps_string(i.cmps1.c), part1b(i.cmps1.d));
+		case cmps2: return append_format(builder, "xor {},{}\ncmp {},{}\nset{} {}", i.cmps2.d, i.cmps2.d, part2b(i.cmps2.a), part2b(i.cmps2.b), cmps_string(i.cmps2.c), part1b(i.cmps2.d));
+		case cmps4: return append_format(builder, "xor {},{}\ncmp {},{}\nset{} {}", i.cmps4.d, i.cmps4.d, part4b(i.cmps4.a), part4b(i.cmps4.b), cmps_string(i.cmps4.c), part1b(i.cmps4.d));
+		case cmps8: return append_format(builder, "xor {},{}\ncmp {},{}\nset{} {}", i.cmps8.d, i.cmps8.d, part8b(i.cmps8.a), part8b(i.cmps8.b), cmps_string(i.cmps8.c), part1b(i.cmps8.d));
+		case cmpu1: return append_format(builder, "xor {},{}\ncmp {},{}\nset{} {}", i.cmpu1.d, i.cmpu1.d, part1b(i.cmpu1.a), part1b(i.cmpu1.b), cmpu_string(i.cmpu1.c), part1b(i.cmpu1.d));
+		case cmpu2: return append_format(builder, "xor {},{}\ncmp {},{}\nset{} {}", i.cmpu2.d, i.cmpu2.d, part2b(i.cmpu2.a), part2b(i.cmpu2.b), cmpu_string(i.cmpu2.c), part1b(i.cmpu2.d));
+		case cmpu4: return append_format(builder, "xor {},{}\ncmp {},{}\nset{} {}", i.cmpu4.d, i.cmpu4.d, part4b(i.cmpu4.a), part4b(i.cmpu4.b), cmpu_string(i.cmpu4.c), part1b(i.cmpu4.d));
+		case cmpu8: return append_format(builder, "xor {},{}\ncmp {},{}\nset{} {}", i.cmpu8.d, i.cmpu8.d, part8b(i.cmpu8.a), part8b(i.cmpu8.b), cmpu_string(i.cmpu8.c), part1b(i.cmpu8.d));
+		case cmpf4: return append_format(builder, "xor {},{}\nmovd xmm6,{}\nmovd xmm7,{}\ncomiss xmm6,xmm7\nset{} {}", i.cmpf4.d, i.cmpf4.d, part8b(i.cmpf4.a), part8b(i.cmpf4.b), cmpu_string(i.cmpf4.c), part1b(i.cmpf4.d));
+		case cmpf8: return append_format(builder, "xor {},{}\nmovq xmm6,{}\nmovq xmm7,{}\ncomisd xmm6,xmm7\nset{} {}", i.cmpf8.d, i.cmpf8.d, part8b(i.cmpf8.a), part8b(i.cmpf8.b), cmpu_string(i.cmpf8.c), part1b(i.cmpf8.d));
 
 		case jz_cr:  { auto reg = part1b(i.jz_cr.reg); return append_format(builder, "test {}, {}\njz i{}", reg, reg, idx + i.jz_cr.offset); }
 		case jnz_cr: { auto reg = part1b(i.jnz_cr.reg); return append_format(builder, "test {}, {}\njnz i{}", reg, reg, idx + i.jnz_cr.offset); }
 
-		case cmpf1: return append_format(builder, "cmp {}, {}", part1b(i.cmpf1.a), part1b(i.cmpf1.b));
-		case cmpf2: return append_format(builder, "cmp {}, {}", part2b(i.cmpf2.a), part2b(i.cmpf2.b));
-		case cmpf4: return append_format(builder, "cmp {}, {}", part4b(i.cmpf4.a), part4b(i.cmpf4.b));
-		case cmpf8: return append_format(builder, "cmp {}, {}", part8b(i.cmpf8.a), part8b(i.cmpf8.b));
+		case cmpflag1: return append_format(builder, "cmp {}, {}", part1b(i.cmpflag1.a), part1b(i.cmpflag1.b));
+		case cmpflag2: return append_format(builder, "cmp {}, {}", part2b(i.cmpflag2.a), part2b(i.cmpflag2.b));
+		case cmpflag4: return append_format(builder, "cmp {}, {}", part4b(i.cmpflag4.a), part4b(i.cmpflag4.b));
+		case cmpflag8: return append_format(builder, "cmp {}, {}", part8b(i.cmpflag8.a), part8b(i.cmpflag8.b));
 
 		case jef_c:  { return append_format(builder, "je i{}",  idx + i.jef_c .offset); }
 		case jnef_c: { return append_format(builder, "jne i{}", idx + i.jnef_c.offset); }
@@ -619,6 +666,12 @@ inline umm append_instruction(StringBuilder &builder, s64 idx, Instruction i) {
 		case cvt_f32_s32: return append_format(builder, "movd xmm7, {}\ncvtss2si {}, xmm7", part4b(i.cvt_f32_s32.d), part4b(i.cvt_f32_s32.d));
 		case cvt_s32_f32: return append_format(builder, "cvtsi2ss xmm7, {}\nmovd {}, xmm7", part4b(i.cvt_s32_f32.d), part4b(i.cvt_s32_f32.d));
 
+		case cvt_f64_s64: return append_format(builder, "movq xmm7, {}\ncvttsd2si {}, xmm7", i.cvt_f64_s64.d, i.cvt_f64_s64.d);
+		case cvt_s64_f64: return append_format(builder, "cvtsi2sd xmm7, {}\nmovq {}, xmm7", i.cvt_s64_f64.d, i.cvt_s64_f64.d);
+
+		case cvt_f64_f32: return append_format(builder, "movq xmm7,{}\ncvtsd2ss xmm7,xmm7\nmovd {}, xmm7", i.cvt_f64_f32.d, part4b(i.cvt_f64_f32.d));
+		case cvt_f32_f64: return append_format(builder, "movd xmm7,{}\ncvtss2sd xmm7,xmm7\nmovq {}, xmm7", part4b(i.cvt_f32_f64.d), i.cvt_f32_f64.d);
+
 		case mov_fr: return append_format(builder, "movq {}, {}", i.mov_fr.d, i.mov_fr.s);
 	    case mov_rf: return append_format(builder, "movq {}, {}", i.mov_rf.d, i.mov_rf.s);
 
@@ -627,10 +680,15 @@ inline umm append_instruction(StringBuilder &builder, s64 idx, Instruction i) {
 		case mov4_xm: return append_format(builder, "movd {}, dword {}", i.mov4_xm.d, i.mov4_xm.s);
 		case mov8_xm: return append_format(builder, "movq {}, qword {}", i.mov8_xm.d, i.mov8_xm.s);
 
-	    case add_ff: return append_format(builder, "movd xmm6, {}\nmovd xmm7, {}\naddss xmm6, xmm7\nmovd {}, xmm6", part4b(i.add_ff.d), part4b(i.add_ff.s), part4b(i.add_ff.d));
-	    case sub_ff: return append_format(builder, "movd xmm6, {}\nmovd xmm7, {}\nsubss xmm6, xmm7\nmovd {}, xmm6", part4b(i.sub_ff.d), part4b(i.sub_ff.s), part4b(i.sub_ff.d));
-	    case mul_ff: return append_format(builder, "movd xmm6, {}\nmovd xmm7, {}\nmulss xmm6, xmm7\nmovd {}, xmm6", part4b(i.mul_ff.d), part4b(i.mul_ff.s), part4b(i.mul_ff.d));
-	    case div_ff: return append_format(builder, "movd xmm6, {}\nmovd xmm7, {}\ndivss xmm6, xmm7\nmovd {}, xmm6", part4b(i.div_ff.d), part4b(i.div_ff.s), part4b(i.div_ff.d));
+	    case add4_ff: return append_format(builder, "movd xmm6, {}\nmovd xmm7, {}\naddss xmm6, xmm7\nmovd {}, xmm6", part4b(i.add4_ff.d), part4b(i.add4_ff.s), part4b(i.add4_ff.d));
+	    case sub4_ff: return append_format(builder, "movd xmm6, {}\nmovd xmm7, {}\nsubss xmm6, xmm7\nmovd {}, xmm6", part4b(i.sub4_ff.d), part4b(i.sub4_ff.s), part4b(i.sub4_ff.d));
+	    case mul4_ff: return append_format(builder, "movd xmm6, {}\nmovd xmm7, {}\nmulss xmm6, xmm7\nmovd {}, xmm6", part4b(i.mul4_ff.d), part4b(i.mul4_ff.s), part4b(i.mul4_ff.d));
+	    case div4_ff: return append_format(builder, "movd xmm6, {}\nmovd xmm7, {}\ndivss xmm6, xmm7\nmovd {}, xmm6", part4b(i.div4_ff.d), part4b(i.div4_ff.s), part4b(i.div4_ff.d));
+
+	    case add8_ff: return append_format(builder, "movq xmm6, {}\nmovq xmm7, {}\naddsd xmm6, xmm7\nmovq {}, xmm6", i.add8_ff.d, i.add8_ff.s, i.add8_ff.d);
+	    case sub8_ff: return append_format(builder, "movq xmm6, {}\nmovq xmm7, {}\nsubsd xmm6, xmm7\nmovq {}, xmm6", i.sub8_ff.d, i.sub8_ff.s, i.sub8_ff.d);
+	    case mul8_ff: return append_format(builder, "movq xmm6, {}\nmovq xmm7, {}\nmulsd xmm6, xmm7\nmovq {}, xmm6", i.mul8_ff.d, i.mul8_ff.s, i.mul8_ff.d);
+	    case div8_ff: return append_format(builder, "movq xmm6, {}\nmovq xmm7, {}\ndivsd xmm6, xmm7\nmovq {}, xmm6", i.div8_ff.d, i.div8_ff.s, i.div8_ff.d);
 
 	    case xor_ff: return append_format(builder, "xorps {}, {}", i.xor_ff.d, i.xor_ff.s);
 

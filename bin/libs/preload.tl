@@ -44,4 +44,20 @@ any :: struct {
 */
 
 debug_break :: () #intrinsic;
-memcpy :: (dst: *Void, src: *Void, size: UInt): Void #intrinsic;
+memcpy :: (dst: *Void, src: *Void, size: UInt) #intrinsic;
+debug_print_int :: (value: Int) #intrinsic;
+mul128 :: (a: Int, b: Int): [2]Int #intrinsic;
+mul128 :: (a: UInt, b: UInt): [2]UInt #intrinsic;
+
+// RoundingMode :: enum {
+// 	to_negative_infinity;
+// 	to_positive_infinity;
+// 	to_zero;
+// 	to_closest_integer;
+// }
+// 
+// round :: (value: F64, mode: %RoundingMode): F64 #intrinsic;
+// fraction :: (value: F64, mode: %RoundingMode) => value - round(value, mode);
+
+// FIXME: default arguments
+// fraction :: (value: F64) => fraction(value, .to_negative_infinity);

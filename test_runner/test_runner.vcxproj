@@ -112,7 +112,7 @@
     <OutDir>$(SolutionDir)bin\</OutDir>
     <IntDir>$(SolutionDir)temp\$(ProjectName)\</IntDir>
     <IncludePath>$(SolutionDir)dep/tl/include/;$(IncludePath)</IncludePath>
-    <TargetName>tests</TargetName>
+    <TargetName>test</TargetName>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
     <LinkIncremental>false</LinkIncremental>
@@ -133,7 +133,7 @@
     <OutDir>$(SolutionDir)bin\</OutDir>
     <IntDir>$(SolutionDir)temp\$(ProjectName)\</IntDir>
     <IncludePath>$(SolutionDir)dep/tl/include/;$(IncludePath)</IncludePath>
-    <TargetName>tests</TargetName>
+    <TargetName>test</TargetName>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
     <LinkIncremental>false</LinkIncremental>

@@ -2,24 +2,26 @@
 import "std.tl"
 
 main :: () {
-	array: [3]int;
+	array: [3]Int;
 	array[0] = 11;
 	array[1] = 22;
 	array[2] = 33;
 	
-	println(array.data as int);
 	println(array.count);
 	
 	println(array[0]);
 	println(array[1]);
 	println(array[2]);
+
+	println(array);
 	
-	span := array as []int;
+	span := array as []Int;
 	
-	println(span.data as int);
 	println(span.count);
 	
 	println(span[0]);
 	println(span[1]);
 	println(span[2]);
+
+	println(span);
 }

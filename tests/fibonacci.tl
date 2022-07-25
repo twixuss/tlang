@@ -1,8 +1,8 @@
 import "std.tl"
 
-main :: fn () {
-    a : int = 0;
-    b : int = 1;
+main :: () {
+    a := 0;
+    b := 1;
     while a < 100 {
         print(a);
         print("\n");
@@ -10,4 +10,5 @@ main :: fn () {
         a = b;
         b = c;
 	}
+    return a;
 }

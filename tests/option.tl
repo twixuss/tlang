@@ -1,11 +1,11 @@
 import "std.tl"
 
 main ::() {
-    empty : ?string;
-    print(unwrap(empty));   print("\n");
-    print(unwrap("Hello")); print("\n");
+    e: ?String;
+    println(unwrap(e));   
+    println(unwrap("Hello")); 
 }
 
-unwrap :: (x: ?string) {
+unwrap :: (x: ?String) {
     return if x then *x else "empty";
 }

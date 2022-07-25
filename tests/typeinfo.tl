@@ -1,13 +1,18 @@
 import "std.tl"
-TYPEINFO :: struct {
-	kind: int;
-	name: string;
+
+MyStruct :: struct {
+	kind: Int;
+	name: String;
 }
-typeinfo_string :: TYPEINFO(name = "hello");
+my :: MyStruct(name = "hello", kind = 24);
 main :: () {
-	println(typeinfo_string.name);
-	println((#typeinfo typeinfo).name);
-	println((#typeinfo int).name);
-	println((#typeinfo string).name);
-	println((#typeinfo #typeof typeinfo_string).name);
+	info :: #typeinfo #typeof my;
+	println("name: {}", info.name);
+	println("kind: {}", info.kind);
+	println("size: {}", info.size);
+	println("members: {}", info.members.count);
+	for i in 0..info.members.count
+		println("{}: {}; offset = {}", info.members[i].name, info.members[i].type.name, info.members[i].offset);
 }
+
+# () => main();

@@ -22,6 +22,7 @@ BuiltinStruct builtin_f64;
 
 BuiltinStruct builtin_string;
 BuiltinStruct builtin_struct_member;
+BuiltinStruct builtin_enum_member;
 BuiltinStruct builtin_typeinfo;
 BuiltinStruct builtin_any;
 BuiltinStruct builtin_range;
@@ -224,6 +225,19 @@ void append_type(StringBuilder &builder, AstExpression *type, bool silent_error)
 			append(builder, Enum->definition->name);
 			break;
 		}
+		case Ast_Call: {
+			auto call = (AstCall *)type;
+			append_type(builder, call->callable, silent_error);
+
+			append(builder, '(');
+			for (auto &argument : call->unsorted_arguments) {
+				if (&argument != call->unsorted_arguments.data)
+					append(builder, ", ");
+				append_type(builder, argument.expression, silent_error);
+			}
+			append(builder, ')');
+			break;
+		}
 		default: {
 			ensure(false);
 		}
@@ -380,7 +394,7 @@ bool types_match(AstExpression *a, AstExpression *b) {
 	if (a == b)
 		return true;
 
-	// TODO: this is way too slow.
+	// TODO: direct() is way too slow.
 	a = a->directed ? (AstExpression *)a->directed : direct(a);
 	b = b->directed ? (AstExpression *)b->directed : direct(b);
 
@@ -390,6 +404,8 @@ bool types_match(AstExpression *a, AstExpression *b) {
 
 	switch (a->kind) {
 		case Ast_Struct:
+			return a == b;
+		case Ast_Enum:
 			return a == b;
 		case Ast_UnaryOperator: {
 			auto au = (AstUnaryOperator *)a;
@@ -506,6 +522,19 @@ bool is_integer(AstExpression *type) {
 		types_match(type, builtin_s16) ||
 		types_match(type, builtin_s32) ||
 		types_match(type, builtin_s64);
+}
+
+bool is_integer_or_pointer(AstExpression *type) {
+	return
+		::is_integer(type) ||
+		is_pointer(type);
+}
+
+bool is_integer_internally(AstExpression *type) {
+	return
+		::is_integer(type) ||
+		is_pointer(type) ||
+		direct_as<AstEnum>(type);
 }
 
 bool is_signed(AstExpression *type) {
