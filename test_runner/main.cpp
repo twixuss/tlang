@@ -137,13 +137,21 @@ s32 tl_main(Span<Span<utf8>> arguments) {
 		}
 	}
 
+	if (update && all) {
+		print("Really update all tests? (y to proceed)");
+		switch (_getch()) {
+			case 'y': break;
+			default: return 1;
+		}
+	}
+
 	u32 n_failed = 0;
 	u32 n_succeeded = 0;
 
 	for (auto test : tests) {
 		struct ExpectedOutput {
 			RanProcess compiler;
-			RanProcess test;
+			Optional<RanProcess> test;
 		};
 
 		auto separator = u8"\0\0\0\0"s;
@@ -157,17 +165,26 @@ s32 tl_main(Span<Span<utf8>> arguments) {
 			expected.compiler.exit_code = *(u32 *)remaining.data;
 			remaining.set_begin(remaining.data + sizeof u32);
 
-			expected.compiler.output = {
-				remaining.data,
-				find(remaining, separator)
-			};
+			auto found_separator = find(remaining, separator);
+			if (found_separator) {
+				expected.compiler.output = {
+					remaining.data,
+					found_separator
+				};
 
-			remaining.set_begin(expected.compiler.output.end() + separator.count);
+				remaining.set_begin(expected.compiler.output.end() + separator.count);
 
-			expected.test.exit_code = *(u32 *)remaining.data;
-			remaining.set_begin(remaining.data + sizeof u32);
+				assert(remaining.count);
 
-			expected.test.output = remaining;
+				RanProcess test;
+				test.exit_code = *(u32 *)remaining.data;
+				remaining.set_begin(remaining.data + sizeof u32);
+
+				test.output = remaining;
+				expected.test = test;
+			} else {
+				expected.compiler.output = remaining;
+			}
 		}
 
 		auto actual_compiler = run_process(format(u8"tlang.exe {}"s, test));
@@ -209,10 +226,17 @@ s32 tl_main(Span<Span<utf8>> arguments) {
 
 			if (!fail) {
 				if (actual_test) {
-					check(actual_test.value(), expected.test);
+					if (expected.test) {
+						check(actual_test.value(), expected.test.value());
+					} else {
+						fail = true;
+						with(ConsoleColor::red, print("Test executable was generated, but no expected output was found.\n"));
+					}
 				} else {
-					fail = true;
-					with(ConsoleColor::red, print("Compiler was expected to generate an executable, but it was not found.\n"));
+					if (expected.test) {
+						fail = true;
+						with(ConsoleColor::red, print("Compiler was expected to generate an executable, but it was not found.\n"));
+					}
 				}
 			}
 

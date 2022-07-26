@@ -185,15 +185,6 @@ bool lexer_function(Lexer *lexer) {
 		//	debug_break();
 	};
 
-	utf8 *line_start = current_p;
-	List<String> lines;
-	lines.reserve(lexer->source.count / 32); // Guess 32 bytes per line on average
-
-	auto push_line = [&] {
-		lines.add({line_start, current_p + 1});
-		line_start = current_p + 1;
-	};
-
 	auto skip_identifier_chars = [&] {
 		while (1) {
 			if (!next_char()) {
@@ -236,8 +227,6 @@ bool lexer_function(Lexer *lexer) {
 				}
 				goto nc;
 			case '\n':
-				push_line();
-				// NOTE: fall through
 			case '`':
 			case '[':
 			case ']':
@@ -368,19 +357,12 @@ bool lexer_function(Lexer *lexer) {
 										lexer->reporter->error(token.string, "Unclosed comment block (end of file).");
 										return false;
 									}
-								} else if (c == '\n') {
-									push_line();
 								}
 							} else if (c == '/') {
 								check_closed;
 								if (c == '*') {
 									deepness += 1;
-								} else if (c == '\n') {
-									push_line();
 								}
-							} else if (c == '\n') {
-								push_line();
-								check_closed;
 							} else {
 								check_closed;
 							}
@@ -649,8 +631,6 @@ lexer_success:
 	token.kind = 'eof';
 	push_token();
 
-	push_line();
-	lexer->source_info->lines = lines;
 	lexer->success = true;
 	return true;
 }
@@ -2589,6 +2569,22 @@ AstIf *parse_if_statement(Parser *parser, String token) {
 
 AstEmptyStatement *empty_statement;
 
+bool may_be_terminated_by_semicolon(AstStatement *statement) {
+	switch (statement->kind) {
+		case Ast_While:
+		case Ast_For:
+		case Ast_If:
+		case Ast_Defer:
+		case Ast_Block:
+		case Ast_EmptyStatement:
+		case Ast_Match:
+		case Ast_Test:
+			return false;
+		default:
+			return true;
+	}
+}
+
 void parse_statement(Parser *parser, AstStatement *&result) {
 	timed_function(compiler.profiler);
 
@@ -2619,7 +2615,15 @@ void parse_statement(Parser *parser, AstStatement *&result) {
 		return;
 	}
 	defer {
-		skip_newlines(parser);
+		// NOTE: semicolon right after statement is considered part of that statement, e.g. `x = 12;`
+		// A semicolon is considered an empty statement if no other statement immediately precedes it, e.g. `while true;` or it is put on a single line, e.g. `\n;\n`
+		if (result) {
+			if (may_be_terminated_by_semicolon(result)) {
+				if (parser->token->kind == ';')
+					parser->next();
+			}
+			skip_newlines(parser);
+		}
 	};
 
 	switch (parser->token->kind) {
@@ -3229,7 +3233,6 @@ SourceFileContext *parse_file(String path) {
 		*source.end() = 0;
 	}
 
-
 	compiler->lexer.source = source;
 
 	// compiler->scope->parent = &global_scope;
@@ -3239,6 +3242,23 @@ SourceFileContext *parse_file(String path) {
 	// compiler->parser.current_scope = &compiler->scope;
 
 	auto source_info = &::compiler.sources.add({path, source});
+
+	{
+		utf8 *line_start = source.data;
+		List<String> lines;
+		lines.reserve(source.count / 16); // Guess 16 bytes per line on average
+
+		for (auto c = source.begin(); c < source.end(); ++c) {
+			if (*c == '\n') {
+				lines.add({line_start, c});
+				line_start = c + 1;
+			}
+		}
+		lines.add({line_start, source.end()});
+
+
+		source_info->lines = lines;
+	}
 
 	compiler->lexer.source_info = source_info;
 

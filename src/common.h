@@ -348,6 +348,7 @@ struct Compiler {
 			auto begin = lines.data;
 			auto end = lines.data + lines.count;
 			while (1) {
+				assert(begin <= end);
 				auto line = begin + (end - begin) / 2;
 				if (line->data <= from && from < line->data + line->count) {
 					return line - lines.data + 1;
