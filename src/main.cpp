@@ -68,7 +68,7 @@ AstDefinition *parse_definition(String name, String location, Parser *parser);
 AstDefinition *parse_definition(Parser *parser);
 bool parse_block_or_single_statement(Parser *parser, Scope *scope);
 AstUnaryOperator *make_pointer_type(AstExpression *type);
-AstSpan *make_span_type(AstExpression *type);
+AstSpan *make_span(AstExpression *type);
 
 void print_help() {
     print(compiler.strings.usage, compiler.compiler_name);
@@ -237,12 +237,7 @@ bool lexer_function(Lexer *lexer) {
 				goto nc;
 			case '\n':
 				push_line();
-				token.string.data += 1;
-				if (!next_char()) {
-					goto lexer_success;
-				}
-				goto nc;
-
+				// NOTE: fall through
 			case '`':
 			case '[':
 			case ']':
@@ -686,6 +681,22 @@ struct Parser {
 
 		return true;
 	}
+	bool next_solid() {
+		assert(token->kind != 'eof');
+		while (1) {
+			++token;
+			switch (token->kind) {
+				case 'eof':
+					return false;
+				case '\n':
+					continue;
+				default:
+					return true;
+			}
+		}
+
+		return true;
+	}
 
 	bool expect(TokenKind expected_kind) {
 		if (token->kind != expected_kind) {
@@ -799,6 +810,15 @@ AstStatement *parse_statement(Parser *parser);
 AstExpression *parse_expression(Parser *parser, int right_precedence = 0);
 AstExpression *parse_expression_1(Parser *parser);
 AstDefinition *parse_definition(Parser *parser);
+
+bool skip_newlines(Parser *parser) {
+	while (parser->token->kind == '\n') {
+		if (!parser->next()) {
+			return false;
+		}
+	}
+	return true;
+}
 
 void push_scope_check(Scope *scope) {
 	assert(scope);
@@ -1006,19 +1026,18 @@ AstStruct *parse_struct(Parser *parser, String token) {
 	push_scope(Struct->member_scope);
 
 	while (parser->token->kind != '}') {
-		auto definition = parse_definition(parser);
-		if (!definition)
+		auto statement = parse_statement(parser);
+		if (!statement)
 			return 0;
 
-		if (!definition->expression || needs_semicolon(definition->expression)) {
-			if (!parser->expect(';')) {
+		switch (statement->kind) {
+			case Ast_EmptyStatement:
+			case Ast_Definition:
+				break;
+			default:
+				parser->reporter->error(statement->location, "Only definitions are allowed inside a struct");
 				return 0;
-			}
-			parser->next();
 		}
-
-		// Struct->members.add(definition);
-		// add_to_scope(definition, &Struct->scope);
 	}
 
 	Struct->layout = parser->current_struct_layout;
@@ -1051,7 +1070,7 @@ AstExpression *parse_lambda(Parser *parser) {
 	if (!parser->expect('('))
 		return 0;
 
-	parser->next();
+	parser->next_solid();
 
 	scoped_replace(parser->container_node, lambda);
 
@@ -1063,15 +1082,15 @@ AstExpression *parse_lambda(Parser *parser) {
 			if (parser->token->kind == 'this') {
 				lambda->is_member = true;
 
-				parser->next();
+				parser->next_solid();
 
 				if (parser->token->kind == ':') {
-					parser->next();
+					parser->next_solid();
 					if (parser->token->kind != ':') {
 						parser->reporter->error(parser->token->string, "Expected ':', but got '{}'", token_kind_to_string(parser->token->kind));
 						return 0;
 					}
-					parser->next();
+					parser->next_solid();
 
 					lambda->insert_into = parse_expression(parser);
 					if (!lambda->insert_into) {
@@ -1084,7 +1103,7 @@ AstExpression *parse_lambda(Parser *parser) {
 				}
 
 				if (parser->token->kind == ',') {
-					parser->next();
+					parser->next_solid();
 					continue;
 				}
 
@@ -1098,18 +1117,18 @@ AstExpression *parse_lambda(Parser *parser) {
 
 			auto name_location = parser->token->string;
 
-			parser->next();
+			parser->next_solid();
 
 			AstDefinition *definition = 0;
 			if (parser->token->kind == ':') {
-				parser->next();
+				parser->next_solid();
 
 				definition = create_definition_in_current_scope(parser, name, 0);
 
 				if (parser->token->kind == '%') {
 					definition->is_constant = true;
 					lambda->is_poly = true;
-					parser->next();
+					parser->next_solid();
 				}
 
 				parser->poly_identifier = 0;
@@ -1125,7 +1144,7 @@ AstExpression *parse_lambda(Parser *parser) {
 				lambda->is_poly |= definition->is_poly;
 				if (definition->type->kind == Ast_UnaryOperator && ((AstUnaryOperator *)definition->type)->operation == UnaryOperation::pack) {
 					definition->is_pack = true;
-					definition->type = make_span_type(((AstUnaryOperator *)definition->type)->expression);
+					definition->type = make_span(((AstUnaryOperator *)definition->type)->expression);
 					lambda->has_pack = true;
 				}
 			} else {
@@ -1147,6 +1166,8 @@ AstExpression *parse_lambda(Parser *parser) {
 
 			lambda->parameters.add(definition);
 
+			skip_newlines(parser);
+
 			if (parser->token->kind == ')') {
 				break;
 			}
@@ -1154,14 +1175,14 @@ AstExpression *parse_lambda(Parser *parser) {
 			if (!parser->expect(','))
 				return 0;
 
-			parser->next();
+			parser->next_solid();
 		}
 	}
 
 	parser->next();
 
 	if (parser->token->kind == ':') {
-		parser->next();
+		parser->next_solid();
 
 		auto first_retparam_token = parser->token;
 		if (parser->token->kind == Token_identifier) {
@@ -1202,7 +1223,7 @@ AstExpression *parse_lambda(Parser *parser) {
 		} else if (parser->token->string == "#type"str) {
 			lambda->is_type = true;
 		} else {
-			parser->reporter->error(parser->token->string, "Unknown directive.");
+			parser->reporter->error(parser->token->string, "Unknown lambda directive.");
 			return 0;
 		}
 		parser->next();
@@ -1215,8 +1236,8 @@ AstExpression *parse_lambda(Parser *parser) {
 	lambda->location = {lambda->location.begin(), parser->token[-1].string.end()};
 
 	if (!lambda->is_type) {
-		if (parser->token->kind != '{' && parser->token->kind != '=>' && parser->token->kind != ';') {
-			parser->reporter->error(parser->token->string, "Expected '{{' or '=>' or ';' or ':' instead of '{}'.", parser->token->string);
+		if (parser->token->kind != '{' && parser->token->kind != '=>' && parser->token->kind != ';' && parser->token->kind != '\n' && parser->token->kind != 'eof') {
+			parser->reporter->error(parser->token->string, "Expected {{ or => or ; or : or <new line> or <eof> instead of '{}'.", parser->token->string);
 			return 0;
 		}
 	}
@@ -1230,14 +1251,13 @@ AstExpression *parse_lambda(Parser *parser) {
 			return 0;
 		}
 	} else {
-
 		if (parser->token->kind == '{') {
 		} else if (parser->token->kind == '=>') {
 			is_short = true;
-		} else if (parser->token->kind == ';') {
+		} else if (parser->token->kind == ';' || parser->token->kind == '\n' || parser->token->kind == 'eof') {
 			lambda->has_body = false;
 		} else {
-			parser->reporter->error(parser->token->string, "Expected '{' or '=>' or ';' or return type instead of '{}'.", parser->token->string);
+			parser->reporter->error(parser->token->string, "Expected {{ or => or ; or newline or return type instead of '{}'.", parser->token->string);
 			return 0;
 		}
 	}
@@ -1247,15 +1267,12 @@ AstExpression *parse_lambda(Parser *parser) {
 	if (lambda->has_body) {
 		auto opening_token = parser->token;
 
-		parser->next();
+		parser->next_solid();
 
 		if (is_short) {
 
 			auto expression = parse_expression(parser);
 			if (!expression)
-				return 0;
-
-			if (!parser->expect(';'))
 				return 0;
 
 			auto ret = AstReturn::create();
@@ -1273,7 +1290,7 @@ AstExpression *parse_lambda(Parser *parser) {
 				// lambda->body_scope->statements.add(statement);
 			}
 		}
-		parser->next();
+		parser->next_solid();
 	} else {
 		if (!lambda->is_type && !lambda->is_intrinsic) {
 			// Extern functions
@@ -1315,7 +1332,23 @@ AstExpression *parse_lambda(Parser *parser) {
 }
 
 bool should_parse_lambda(Parser *parser) {
-	return parser->token[1].kind == ')' || parser->token[2].kind == ':';
+	assert(parser->token->kind == '(');
+	auto start_token = parser->token;
+	defer { parser->token = start_token; };
+
+	if (!parser->next_solid())
+		return false;
+
+	if (parser->token->kind == ')')
+		return true;
+
+	if (!parser->next_solid())
+		return false;
+
+	if (parser->token->kind == ':')
+		return true;
+
+	return false;
 }
 
 AstExpression *parse_expression_0(Parser *parser) {
@@ -1577,7 +1610,7 @@ AstExpression *parse_expression_0(Parser *parser) {
 			if (!parser->expect('{'))
 				return 0;
 
-			parser->next();
+			parser->next_solid();
 
 			push_scope(Enum->scope);
 
@@ -1589,11 +1622,11 @@ AstExpression *parse_expression_0(Parser *parser) {
 				if (!name.data)
 					return 0;
 
-				parser->next();
+				parser->next_solid();
 
 				if (parser->token->kind == ';') {
 
-					parser->next();
+					parser->next_solid();
 
 					auto definition = AstDefinition::create();
 					definition->name = name;
@@ -1612,12 +1645,6 @@ AstExpression *parse_expression_0(Parser *parser) {
 					if (!definition)
 						return 0;
 
-					if (!definition->expression || needs_semicolon(definition->expression)) {
-						if (!parser->expect(';')) {
-							return 0;
-						}
-						parser->next();
-					}
 				}
 			}
 
@@ -1822,12 +1849,7 @@ AstExpression *parse_expression_0(Parser *parser) {
 					return 0;
 				}
 			} else {
-				auto kind_string = token_kind_to_string(parser->token->kind);
-				if (kind_string == parser->token->string) {
-					parser->reporter->error(parser->token->string, "Unexpected token: {}", kind_string);
-				} else {
-					parser->reporter->error(parser->token->string, "Unexpected token: {} ({})", parser->token->string, kind_string);
-				}
+				parser->reporter->error(parser->token->string, "Unexpected token: {}", token_kind_to_string(parser->token->kind));
 				return 0;
 			}
 		}
@@ -2373,7 +2395,7 @@ AstExpression *parse_expression(Parser *parser, int right_precedence) {
 	// left binding power
 	Optional<BinaryOperation> operation;
 	while ((operation = as_binary_operation(parser->token->kind)) && right_precedence < get_precedence(operation.value())) {
-		parser->next();
+		parser->next_solid();
 
 		auto binop = AstBinaryOperator::create();
 		binop->left = left;
@@ -2470,6 +2492,10 @@ AstDefinition *parse_definition(String name, String location, Parser *parser) {
 	return definition;
 }
 AstDefinition *parse_definition(Parser *parser) {
+	if (!skip_newlines(parser)) {
+		parser->reporter->error(parser->token->string, "Expected a definition, but got end of file.");
+		return 0;
+	}
 	auto location = parser->token->string;
 	auto name = parse_identifier(parser);
 	if (!name.data)
@@ -2588,6 +2614,14 @@ void parse_statement(Parser *parser, AstStatement *&result) {
 		}
 	};
 
+	if (!skip_newlines(parser)) {
+		result = empty_statement;
+		return;
+	}
+	defer {
+		skip_newlines(parser);
+	};
+
 	switch (parser->token->kind) {
 		case Token_split_identifier:
 		case Token_identifier: {
@@ -2604,12 +2638,6 @@ void parse_statement(Parser *parser, AstStatement *&result) {
 
 				if (!definition) {
 					return;
-				}
-
-				if (!definition->expression || needs_semicolon(definition->expression)) {
-					if (!parser->expect(';'))
-						return;
-					parser->next();
 				}
 
 				result = definition;
@@ -2630,11 +2658,9 @@ void parse_statement(Parser *parser, AstStatement *&result) {
 
 			auto ret = AstReturn::create();
 
-			if (parser->token->kind != ';') {
+			if (parser->token->kind != '\n' && parser->token->kind != ';') {
 				auto expression = parse_expression(parser);
 				if (!expression)
-					return;
-				if (!parser->expect(';'))
 					return;
 				ret->expression = expression;
 			}
@@ -2722,9 +2748,6 @@ void parse_statement(Parser *parser, AstStatement *&result) {
 				if (!assert->condition) {
 					return;
 				}
-				if (!parser->expect(';'))
-					return;
-				parser->next();
 
 				result = assert;
 				return;
@@ -2733,9 +2756,6 @@ void parse_statement(Parser *parser, AstStatement *&result) {
 				print->location = parser->token->string;
 				parser->next();
 				print->expression = parse_expression(parser);
-				if (!parser->expect(';'))
-					return;
-				parser->next();
 
 				result = print;
 				return;
@@ -2744,9 +2764,6 @@ void parse_statement(Parser *parser, AstStatement *&result) {
 				parse->location = parser->token->string;
 				parser->next();
 				parse->expression = parse_expression(parser);
-				if (!parser->expect(';'))
-					return;
-				parser->next();
 
 				print_parsed_expression(parse->expression);
 				print('\n');
@@ -3001,11 +3018,6 @@ void parse_statement(Parser *parser, AstStatement *&result) {
 			if (!assert->condition)
 				return;
 
-			if (!parser->expect(';'))
-				return;
-
-			parser->next();
-
 			result = assert;
 			return;
 		}
@@ -3023,15 +3035,15 @@ void parse_statement(Parser *parser, AstStatement *&result) {
 
 			parser->next();
 
-			if (parser->token->kind == ';') {
+			if (parser->token->kind == ';' || parser->token->kind == '\n') {
 				parser->next();
 			} else {
+				not_implemented("labeled loop control statements are not implemented yet");
 				auto ident = parse_identifier(parser);
 				if (!ident.data)
 					return;
 				if (!parser->next_expect(';'))
 					return;
-				not_implemented("labeled loop control statements are not implemented yet");
 				// i->label = ident;
 			}
 
@@ -3041,15 +3053,17 @@ void parse_statement(Parser *parser, AstStatement *&result) {
 		case Token_match: {
 			auto Match = AstMatch::create();
 			Match->location = parser->token->string;
-			parser->next();
+			parser->next_solid();
 			Match->expression = parse_expression(parser);
 			if (!Match->expression) {
 				return;
 			}
 
+			skip_newlines(parser);
+
 			if (!parser->expect('{'))
 				return;
-			parser->next();
+			parser->next_solid();
 
 			while (parser->token->kind != '}') {
 				auto &Case = Match->cases.add();
@@ -3064,7 +3078,7 @@ void parse_statement(Parser *parser, AstStatement *&result) {
 					Match->default_case_location = parser->token->string;
 					Match->default_case = &Case;
 
-					parser->next();
+					parser->next_solid();
 				} else {
 					Case.expression = parse_expression(parser);
 					if (!Case.expression)
@@ -3072,13 +3086,14 @@ void parse_statement(Parser *parser, AstStatement *&result) {
 				}
 
 				if (parser->token->kind == '=>')
-					parser->next();
+					parser->next_solid();
 
 				if (!parse_block_or_single_statement(parser, Case.scope)) {
 					return;
 				}
+				skip_newlines(parser);
 			}
-			parser->next();
+			parser->next_solid();
 
 			result = Match;
 			return;
@@ -3086,15 +3101,11 @@ void parse_statement(Parser *parser, AstStatement *&result) {
 		case Token_using: {
 			auto Using = AstUsing::create();
 			Using->location = parser->token->string;
-			parser->next();
+			parser->next_solid();
 			Using->expression = parse_expression(parser);
 			if (!Using->expression) {
 				return;
 			}
-			if (!parser->expect(';'))
-				return;
-
-			parser->next();
 			result = Using;
 			return;
 		}
@@ -3103,20 +3114,19 @@ void parse_statement(Parser *parser, AstStatement *&result) {
 
 			push_scope(block->scope);
 
-			parser->next();
+			parser->next_solid();
 			while (parser->token->kind != '}') {
 				auto statement = parse_statement(parser);
 				if (!statement)
 					return;
 			}
-			parser->next();
+			parser->next_solid();
 
 			result = block;
 			return;
 		}
 		// no need to put this in the current scope
 		case ';': {
-			parser->reporter->warning(parser->token->string, "Redundant semicolon.");
 			result = empty_statement;
 			parser->next();
 			return;
@@ -3125,12 +3135,11 @@ void parse_statement(Parser *parser, AstStatement *&result) {
 
 	auto expression = parse_expression(parser);
 	if (expression) {
-		if (parser->token->kind == ';') {
+		if (parser->token->kind == '\n' || parser->token->kind == ';' || parser->token->kind == '}') {
 			if (!is_statement(expression)) {
 				parser->reporter->error(expression->location, "This expression is not a statement.");
 				return;
 			}
-			parser->next();
 			result = make_statement(expression);
 			return;
 		}
@@ -3189,9 +3198,6 @@ SourceFileContext *parse_file(String path) {
 		return compiler;
 	}
 
-	compiler->lexer.source_buffer.front() = '\0';
-	compiler->lexer.source_buffer.back() = '\0';
-
 	String source = String(compiler->lexer.source_buffer);
 	source.data += 1;
 	source.count -= 2;
@@ -3202,6 +3208,28 @@ SourceFileContext *parse_file(String path) {
 		source.data += 3;
 		source.count -= 3;
 	}
+
+
+	{
+		auto s = source.begin();
+		auto d = s;
+		while (s < source.end()) {
+			if (Span(s, 2) == "\r\n"str) {
+				*d++ = '\n';
+				s += 2;
+			} else if (*s == '\r') {
+				*d++ = '\n';
+				s++;
+			} else {
+				*d++ = *s++;
+			}
+		}
+		source.set_end(d);
+		source.data[-1] = 0;
+		*source.end() = 0;
+	}
+
+
 	compiler->lexer.source = source;
 
 	// compiler->scope->parent = &global_scope;
@@ -3254,6 +3282,10 @@ ParseResult parser_function(Parser *parser) {
 
 	parser->token = lexer->begin();
 	while (parser->token->kind != 'eof') {
+		if (!skip_newlines(parser)) {
+			break;
+		}
+
 		if (parser->token->kind == Token_directive) {
 			if (parser->token->string == "#extern_language"str) {
 				if (!parser->next_expect(Token_string_literal)) {
@@ -3785,7 +3817,7 @@ AstUnaryOperator *make_pointer_type(AstExpression *type) {
 	unop->operation = pointer;
 	return unop;
 }
-AstSpan *make_span_type(AstExpression *type) {
+AstSpan *make_span(AstExpression *type) {
 	auto span = AstSpan::create();
 	span->location = type->location;
 	span->expression = type;
@@ -4089,8 +4121,16 @@ AstUnaryOperator *get_typeinfo(TypecheckState *state, AstExpression *type, Strin
 
 					d = member_initializer;
 				}
-
 				set_member(typeinfo_initializer, "members", member_list);
+
+				auto param_list = AstPack::create();
+				param_list->expressions.resize(Struct->parameters.count);
+				for (umm i = 0; i < Struct->parameters.count; ++i) {
+					auto &d = param_list->expressions[i];
+					auto &s = Struct->parameters[i];
+					d = get_typeinfo(state, s->expression, location);
+				}
+				set_member(typeinfo_initializer, "parameters", param_list);
 			}
 		} else if (directed->kind == Ast_Enum) {
 			auto Enum = (AstEnum *)directed;
@@ -6250,7 +6290,21 @@ AstExpression *typecheck(TypecheckState *state, AstIdentifier *identifier) {
 							state->reporter.info(definition->location, "Definition:");
 						}
 					} else {
-						state->reporter.error(identifier->location, "Identifier {} was not declared.", identifier->name);
+						List<AstDefinition *> failed_definitions;
+						for (auto definition : definitions) {
+							if (!definition->type) {
+								failed_definitions.add(definition);
+							}
+						}
+						if (failed_definitions.count) {
+							state->reporter.error(identifier->location, "Unable to resolve identifier {}.", identifier->name);
+							state->reporter.info("Here is the list of definitions that failed typechecking:");
+							for (auto definition : failed_definitions) {
+								state->reporter.info(definition->location, "Here:");
+							}
+						} else {
+							state->reporter.error(identifier->location, "Identifier {} was not declared.", identifier->name);
+						}
 					}
 					// state->reporter.error(location, "Identifier was not declared or compiler failed to infer it's definition's type.");
 				}
@@ -6867,6 +6921,7 @@ AstExpression *typecheck(TypecheckState *state, AstCall *call) {
 			instantiated_struct->is_union = match->Struct->is_union;
 			instantiated_struct->layout = match->Struct->layout;
 			instantiated_struct->location = call->location;
+			instantiated_struct->parameter_scope->parent = match->Struct->parameter_scope->parent;
 			for (umm i = 0; i < call->sorted_arguments.count; ++i) {
 				auto &argument = call->sorted_arguments[i];
 				auto &template_parameter = match->Struct->parameters[i];
@@ -8997,19 +9052,22 @@ restart_main:
 		// NOTE: not every builtin struct requires this, but i'd rather
 		// not have to debug for an hour because i forgot to do this.
 		builtin.pointer = make_pointer_type(builtin.ident);
-		builtin.span = make_span_type(builtin.ident);
+		builtin.span = make_span(builtin.ident);
 	};
 	auto init_struct = [&](BuiltinStruct &type, String name, s64 size, s64 align) {
 		type.Struct = AstStruct::create();
 		type.Struct->size = size;
 		type.Struct->alignment = align;
 		type.Struct->location = name;
+		type.Struct->parameter_scope->parent = &global_scope;
+		type.Struct->layout = StructLayout::tlang;
 		init_builtin(type, type.Struct, name);
 
 	};
 	auto init_enum = [&](BuiltinEnum &type, String name) {
 		type.Enum = AstEnum::create();
 		type.Enum->location = name;
+		type.Enum->scope->parent = &global_scope;
 		init_builtin(type, type.Enum, name);
 	};
 
@@ -9177,6 +9235,7 @@ restart_main:
 	append_member(builtin_typeinfo, "pointee"str, builtin_typeinfo.pointer);
 	append_member(builtin_typeinfo, "array_count"str, type_int);
 	append_member(builtin_typeinfo, "enum_members"str, builtin_enum_member.span);
+	append_member(builtin_typeinfo, "parameters"str, make_span(builtin_typeinfo.pointer));
 
 	// any
 	append_member(builtin_any, "pointer"str, builtin_u8      .pointer);

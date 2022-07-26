@@ -1,4 +1,4 @@
-foo :: () => 42;
+foo :: () => 42
 main :: () {
-    return foo();
+    return foo()
 }

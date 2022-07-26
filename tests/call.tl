@@ -1,22 +1,22 @@
 import "windows.tl"
 main :: (): UInt {
-    foo := WriteFile;
-    bar :: (a: HANDLE, b: *U8, c: U32, d: *DWORD, e: *Void) => WriteFile(a, b, c, d, e);
-    foobar := bar;
+    foo := WriteFile
+    bar :: (a: HANDLE, b: *U8, c: U32, d: *DWORD, e: *Void) => WriteFile(a, b, c, d, e)
+    foobar := bar
 
-    handle := GetStdHandle(STD_OUTPUT_HANDLE);
-    data := "Hello\n".data;
-    count := "Hello\n".count as U32;
+    handle := GetStdHandle(STD_OUTPUT_HANDLE)
+    data := "Hello\n".data
+    count := "Hello\n".count as U32
     
-    WriteFile(handle, data, count, null, null);
-    (WriteFile)(handle, data, count, null, null);
-    foo(handle, data, count, null, null);
-    (foo)(handle, data, count, null, null);
-    (*&foo)(handle, data, count, null, null);
-    bar(handle, data, count, null, null);
-    (bar)(handle, data, count, null, null);
-    (*&bar)(handle, data, count, null, null);
-    foobar(handle, data, count, null, null);
-    (foobar)(handle, data, count, null, null);
-    (*&foobar)(handle, data, count, null, null);
+    WriteFile(handle, data, count, null, null)
+    (WriteFile)(handle, data, count, null, null)
+    foo(handle, data, count, null, null)
+    (foo)(handle, data, count, null, null)
+    (*&foo)(handle, data, count, null, null)
+    bar(handle, data, count, null, null)
+    (bar)(handle, data, count, null, null)
+    (*&bar)(handle, data, count, null, null)
+    foobar(handle, data, count, null, null)
+    (foobar)(handle, data, count, null, null)
+    (*&foobar)(handle, data, count, null, null)
 }

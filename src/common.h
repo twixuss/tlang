@@ -425,88 +425,146 @@ struct Compiler {
 			return;
 		}
 
+		if (location == "\n"str) {
+			auto error_line_begin = location.begin();
+			if (*error_line_begin != 0) {
+				while (1) {
+					error_line_begin--;
+					if (*error_line_begin == 0 || *error_line_begin == '\n') {
+						error_line_begin++;
+						break;
+					}
+				}
+			}
 
-		auto error_line_begin = location.begin();
-		if (*error_line_begin != 0) {
+			auto error_line_end = location.end();
 			while (1) {
-				error_line_begin--;
-				if (*error_line_begin == 0 || *error_line_begin == '\n') {
-					error_line_begin++;
+				if (*error_line_end == 0 || *error_line_end == '\n') {
 					break;
 				}
+				error_line_end++;
 			}
-		}
-
-		auto error_line_end = location.end();
-		while (1) {
-			if (*error_line_end == 0 || *error_line_end == '\n') {
-				break;
-			}
-			error_line_end++;
-		}
 
 
-		auto error_line = Span(error_line_begin, error_line_end);
-		auto error_line_number = get_line_number(info->lines, error_line_begin);
+			auto error_line = Span(error_line_begin, error_line_end);
+			auto error_line_number = get_line_number(info->lines, error_line_begin);
 
-		auto print_line = [&](auto line) {
-			return print("{} | ", Format{line, align_right(5, ' ')});
-		};
+			auto format_line = [&](auto line) {
+				return format("{} | ", Format{line, align_right(5, ' ')});
+			};
 
-		// I don't know if previous line is really useful
-	#if 0
-		if (error_line.data[-1] != 0) {
-			auto prev_line_end = error_line.data - 1;
-			auto prev_line_begin = prev_line_end - 1;
+			auto line_start = Span(error_line.begin(), location.begin());
+			auto line_end   = Span(location.end(), error_line.end());
+			auto line = format_line(error_line_number);
 
-			while (1) {
-				if (*prev_line_begin == 0) {
-					prev_line_begin += 1;
-					break;
-				}
-
-				if (*prev_line_begin == '\n') {
-					++prev_line_begin;
-					break;
-				}
-
-				--prev_line_begin;
-			}
-			auto prev_line = Span(prev_line_begin, prev_line_end);
-			auto prev_line_number = get_line_number(prev_line_begin);
-
-			print_line(prev_line_number);
-			print_replacing_tabs_with_4_spaces(Print_info, prev_line);
-			print('\n');
-		}
-	#endif
-
-		auto line_start = Span(error_line.begin(), location.begin());
-		auto line_end   = Span(location.end(), error_line.end());
-		auto offset = print_line(error_line_number);
-		print_replacing_tabs_with_4_spaces(line_start);
-		with(get_console_color(kind), print_replacing_tabs_with_4_spaces(location));
-		print_replacing_tabs_with_4_spaces(line_end);
-		print('\n');
-
-		for (u32 i = 0; i < offset; ++i) {
-			print(' ');
-		}
-		for (auto c : line_start) {
-			if (c == '\t') {
-				print("    ");
-			} else {
+			for (u32 i = 0; i < line.count; ++i) {
 				print(' ');
 			}
-		}
-		for (auto c : location) {
-			if (c == '\t') {
-				print("^^^^");
-			} else {
-				print('^');
+			for (auto c : line_start) {
+				if (c == '\t') {
+					print("    ");
+				} else {
+					print(' ');
+				}
 			}
+			for (auto c : location) {
+				if (c == '\t') {
+					print("VVVV");
+				} else {
+					print('V');
+				}
+			}
+			print('\n');
+			print(line);
+
+			print_replacing_tabs_with_4_spaces(line_start);
+			with(get_console_color(kind), print_replacing_tabs_with_4_spaces(location));
+			print_replacing_tabs_with_4_spaces(line_end);
+
+			print("\n");
+		} else {
+			auto error_line_begin = location.begin();
+			if (*error_line_begin != 0) {
+				while (1) {
+					error_line_begin--;
+					if (*error_line_begin == 0 || *error_line_begin == '\n') {
+						error_line_begin++;
+						break;
+					}
+				}
+			}
+
+			auto error_line_end = location.end();
+			while (1) {
+				if (*error_line_end == 0 || *error_line_end == '\n') {
+					break;
+				}
+				error_line_end++;
+			}
+
+
+			auto error_line = Span(error_line_begin, error_line_end);
+			auto error_line_number = get_line_number(info->lines, error_line_begin);
+
+			auto print_line = [&](auto line) {
+				return print("{} | ", Format{line, align_right(5, ' ')});
+			};
+
+			// I don't know if previous line is really useful
+		#if 0
+			if (error_line.data[-1] != 0) {
+				auto prev_line_end = error_line.data - 1;
+				auto prev_line_begin = prev_line_end - 1;
+
+				while (1) {
+					if (*prev_line_begin == 0) {
+						prev_line_begin += 1;
+						break;
+					}
+
+					if (*prev_line_begin == '\n') {
+						++prev_line_begin;
+						break;
+					}
+
+					--prev_line_begin;
+				}
+				auto prev_line = Span(prev_line_begin, prev_line_end);
+				auto prev_line_number = get_line_number(prev_line_begin);
+
+				print_line(prev_line_number);
+				print_replacing_tabs_with_4_spaces(Print_info, prev_line);
+				print('\n');
+			}
+		#endif
+
+			auto line_start = Span(error_line.begin(), location.begin());
+			auto line_end   = Span(location.end(), error_line.end());
+			auto offset = print_line(error_line_number);
+			print_replacing_tabs_with_4_spaces(line_start);
+			with(get_console_color(kind), print_replacing_tabs_with_4_spaces(location));
+			print_replacing_tabs_with_4_spaces(line_end);
+			print('\n');
+
+			for (u32 i = 0; i < offset; ++i) {
+				print(' ');
+			}
+			for (auto c : line_start) {
+				if (c == '\t') {
+					print("    ");
+				} else {
+					print(' ');
+				}
+			}
+			for (auto c : location) {
+				if (c == '\t') {
+					print("^^^^");
+				} else {
+					print('^');
+				}
+			}
+			print("\n");
 		}
-		print("\n");
 	}
 
 	List<utf8> where(SourceFileInfo *info, utf8 *location) {

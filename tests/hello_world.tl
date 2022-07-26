@@ -1,5 +1,5 @@
 import "std.tl"
 
 main :: () {
-    dprint("Hello World!\n");
+    dprint("Hello World!\n")
 }

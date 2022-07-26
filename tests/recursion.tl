@@ -1,9 +1,9 @@
 import "std.tl"
 
 fac :: (v: Int): Int {
-    return if v == 1 then 1 else v*fac(v-1);
+    return if v == 1 then 1 else v*fac(v-1)
 }
 
 main :: () {
-    print(fac(5));
+    print(fac(5))
 }

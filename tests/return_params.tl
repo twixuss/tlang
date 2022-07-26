@@ -1,12 +1,12 @@
 
 foo :: (): result: Int {
-	result = 64;
-	result = 32;
-	return;
+	result = 64
+	result = 32
+	return
 }
 
 
 main :: (): Int {
-	a := foo();
-	return a;
+	a := foo()
+	return a
 }

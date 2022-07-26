@@ -93,22 +93,6 @@ void unlock(Scope *scope) {
 
 // HashMap<String, AstDefinition *> names_not_available_for_globals;
 
-bool needs_semicolon(AstExpression *node) {
-	// if (node->kind == Ast_UnaryOperator)
-	// 	return needs_semicolon(((AstUnaryOperator *)node)->expression);
-
-	switch (node->kind) {
-		case Ast_Lambda: {
-			auto lambda = (AstLambda *)node;
-			return !lambda->has_body;
-		}
-		case Ast_Struct:
-		case Ast_Enum:
-			return false;
-	}
-	return true;
-}
-
 bool can_be_global(AstStatement *statement) {
 	switch (statement->kind) {
 		case Ast_ExpressionStatement: {

@@ -1,384 +1,384 @@
 #stdcall
 
-SHORT :: S16;
-INT   :: S32;
-LONG  :: S32;
+SHORT :: S16
+INT   :: S32
+LONG  :: S32
 
-USHORT :: U16;
-UINT   :: U32;
-ULONG  :: U32;
+USHORT :: U16
+UINT   :: U32
+ULONG  :: U32
 
-PUINT :: *U32;
+PUINT :: *U32
 
-BOOL :: S32;
+BOOL :: S32
 
-BYTE  :: U8;
-WORD  :: U16;
-DWORD :: U32;
-QWORD :: U64;
+BYTE  :: U8
+WORD  :: U16
+DWORD :: U32
+QWORD :: U64
 
-LPBYTE  :: *BYTE;
-LPWORD  :: *WORD;
-LPDWORD :: *DWORD;
-LPQWORD :: *QWORD;
+LPBYTE  :: *BYTE
+LPWORD  :: *WORD
+LPDWORD :: *DWORD
+LPQWORD :: *QWORD
 
-INT_PTR   :: Int;
-LONG_PTR  :: Int;
-UINT_PTR  :: UInt;
-ULONG_PTR :: UInt;
+INT_PTR   :: Int
+LONG_PTR  :: Int
+UINT_PTR  :: UInt
+ULONG_PTR :: UInt
 
-SIZE_T  :: ULONG_PTR;
-SSIZE_T :: LONG_PTR;
+SIZE_T  :: ULONG_PTR
+SSIZE_T :: LONG_PTR
 
-WPARAM  :: UINT_PTR;
-LPARAM  :: LONG_PTR;
-LRESULT :: LONG_PTR;
+WPARAM  :: UINT_PTR
+LPARAM  :: LONG_PTR
+LRESULT :: LONG_PTR
 
-ATOM :: U16;
+ATOM :: U16
 
-LPVOID  :: *Void;
-LPCVOID :: *Void;
+LPVOID  :: *Void
+LPCVOID :: *Void
 
-HANDLE    :: *Void;
-HMODULE   :: *Void;
-HWND      :: *Void;
-HICON     :: *Void;
-HBRUSH    :: *Void;
-HCURSOR   :: *Void;
-HINSTANCE :: *Void;
-HMENU     :: *Void;
-HDC       :: *Void;
-HRAWINPUT :: *Void;
+HANDLE    :: *Void
+HMODULE   :: *Void
+HWND      :: *Void
+HICON     :: *Void
+HBRUSH    :: *Void
+HCURSOR   :: *Void
+HINSTANCE :: *Void
+HMENU     :: *Void
+HDC       :: *Void
+HRAWINPUT :: *Void
 
-PSTR   :: *U8;
-PCSTR  :: PSTR;
-LPSTR  :: PSTR;
-LPCSTR :: PSTR;
+PSTR   :: *U8
+PCSTR  :: PSTR
+LPSTR  :: PSTR
+LPCSTR :: PSTR
 
-WNDPROC :: (hwnd : HWND, uMsg : UINT, wParam : WPARAM, lParam : LPARAM): LRESULT #type;
+WNDPROC :: (hwnd : HWND, uMsg : UINT, wParam : WPARAM, lParam : LPARAM): LRESULT #type
 
 #layout_c
 
 WNDCLASSEXA :: struct {
-	cbSize        : UINT;
-	style         : UINT;
-	lpfnWndProc   : WNDPROC;
-	cbClsExtra    : INT;
-	cbWndExtra    : INT;
-	hInstance     : HINSTANCE;
-	hIcon         : HICON;
-	hCursor       : HCURSOR;
-	hbrBackground : HBRUSH;
-	lpszMenuName  : LPCSTR;
-	lpszClassName : LPCSTR;
-	hIconSm       : HICON;
+	cbSize        : UINT
+	style         : UINT
+	lpfnWndProc   : WNDPROC
+	cbClsExtra    : INT
+	cbWndExtra    : INT
+	hInstance     : HINSTANCE
+	hIcon         : HICON
+	hCursor       : HCURSOR
+	hbrBackground : HBRUSH
+	lpszMenuName  : LPCSTR
+	lpszClassName : LPCSTR
+	hIconSm       : HICON
 }
 
 POINT :: struct {
-  x : LONG;
-  y : LONG;
+  x : LONG
+  y : LONG
 }
 
 MSG :: struct {
-  hwnd     : HWND;
-  message  : UINT;
-  wParam   : WPARAM;
-  lParam   : LPARAM;
-  time     : DWORD;
-  pt       : POINT;
-  lPrivate : DWORD;
+  hwnd     : HWND
+  message  : UINT
+  wParam   : WPARAM
+  lParam   : LPARAM
+  time     : DWORD
+  pt       : POINT
+  lPrivate : DWORD
 }
-LPMSG :: *MSG;
+LPMSG :: *MSG
 
 RAWINPUTDEVICE :: struct {
-    usUsagePage: USHORT; // Toplevel collection UsagePage
-    usUsage:     USHORT; // Toplevel collection Usage
-    dwFlags:     DWORD;
-    hwndTarget:  HWND;   // Target hwnd. NULL = follows keyboard focus
+    usUsagePage: USHORT // Toplevel collection UsagePage
+    usUsage:     USHORT // Toplevel collection Usage
+    dwFlags:     DWORD
+    hwndTarget:  HWND   // Target hwnd. NULL = follows keyboard focus
 }
-PCRAWINPUTDEVICE :: *RAWINPUTDEVICE;
+PCRAWINPUTDEVICE :: *RAWINPUTDEVICE
 
 /*
  * Struct pointed to by WM_GETMINMAXINFO lParam
  */
 MINMAXINFO :: struct {
-    ptReserved:     POINT;
-    ptMaxSize:      POINT;
-    ptMaxPosition:  POINT;
-    ptMinTrackSize: POINT;
-    ptMaxTrackSize: POINT;
+    ptReserved:     POINT
+    ptMaxSize:      POINT
+    ptMaxPosition:  POINT
+    ptMinTrackSize: POINT
+    ptMaxTrackSize: POINT
 }
-PMINMAXINFO  :: *MINMAXINFO;
-LPMINMAXINFO :: *MINMAXINFO;
+PMINMAXINFO  :: *MINMAXINFO
+LPMINMAXINFO :: *MINMAXINFO
 
 
 RAWINPUTHEADER :: struct {
-    dwType:  DWORD;
-    dwSize:  DWORD;
-    hDevice: HANDLE;
-    wParam:  WPARAM;
+    dwType:  DWORD
+    dwSize:  DWORD
+    hDevice: HANDLE
+    wParam:  WPARAM
 }
-PRAWINPUTHEADER  :: *RAWINPUTHEADER;
-LPRAWINPUTHEADER :: *RAWINPUTHEADER;
+PRAWINPUTHEADER  :: *RAWINPUTHEADER
+LPRAWINPUTHEADER :: *RAWINPUTHEADER
 
 
 RAWMOUSE :: struct {
-  usFlags: USHORT;
+  usFlags: USHORT
   u : union { // TODO: unnamed structs and unions
-    ulButtons: ULONG;
+    ulButtons: ULONG
     s : struct {
-      usButtonFlags: USHORT;
-      usButtonData: USHORT;
-    };
-  };
-  ulRawButtons:       ULONG;
-  lLastX:			  LONG;
-  lLastY:			  LONG;
-  ulExtraInformation: ULONG;
+      usButtonFlags: USHORT
+      usButtonData: USHORT
+    }
+  }
+  ulRawButtons:       ULONG
+  lLastX:			  LONG
+  lLastY:			  LONG
+  ulExtraInformation: ULONG
 }
-PRAWMOUSE  :: *RAWMOUSE;
-LPRAWMOUSE :: *RAWMOUSE;
+PRAWMOUSE  :: *RAWMOUSE
+LPRAWMOUSE :: *RAWMOUSE
 
 
 RAWHID :: struct {
-  dwSizeHid: DWORD;
-  dwCount: DWORD;
+  dwSizeHid: DWORD
+  dwCount: DWORD
 }
-PRAWHID  :: *RAWHID;
-LPRAWHID :: *RAWHID;
+PRAWHID  :: *RAWHID
+LPRAWHID :: *RAWHID
 
 
 RAWKEYBOARD :: struct {
-  MakeCode:         USHORT;
-  Flags:            USHORT;
-  Reserved:         USHORT;
-  VKey:             USHORT;
-  Message:          UINT;
-  ExtraInformation: ULONG;
+  MakeCode:         USHORT
+  Flags:            USHORT
+  Reserved:         USHORT
+  VKey:             USHORT
+  Message:          UINT
+  ExtraInformation: ULONG
 }
-PRAWKEYBOARD  :: *RAWKEYBOARD;
-LPRAWKEYBOARD :: *RAWKEYBOARD;
+PRAWKEYBOARD  :: *RAWKEYBOARD
+LPRAWKEYBOARD :: *RAWKEYBOARD
 
 
 RAWINPUT :: struct {
-	header: RAWINPUTHEADER;
+	header: RAWINPUTHEADER
 	data : union {
-		mouse:    RAWMOUSE;
-		keyboard: RAWKEYBOARD;
-		hid:      RAWHID;
-	};
+		mouse:    RAWMOUSE
+		keyboard: RAWKEYBOARD
+		hid:      RAWHID
+	}
 }
-PRAWINPUT  :: *RAWINPUT;
-LPRAWINPUT :: *RAWINPUT;
+PRAWINPUT  :: *RAWINPUT
+LPRAWINPUT :: *RAWINPUT
 
-STD_INPUT_HANDLE  :: -10 as U32; // The standard input device. Initially, this is the console input buffer, CONIN$.
-STD_OUTPUT_HANDLE :: -11 as U32; // The standard output device. Initially, this is the active console screen buffer, CONOUT$.
-STD_ERROR_HANDLE  :: -12 as U32; // The standard error device. Initially, this is the active console screen buffer, CONOUT$.
+STD_INPUT_HANDLE  :: -10 as U32 // The standard input device. Initially, this is the console input buffer, CONIN$.
+STD_OUTPUT_HANDLE :: -11 as U32 // The standard output device. Initially, this is the active console screen buffer, CONOUT$.
+STD_ERROR_HANDLE  :: -12 as U32 // The standard error device. Initially, this is the active console screen buffer, CONOUT$.
 
-SECURITY_ATTRIBUTES :: Void;
-OVERLAPPED :: Void;
+SECURITY_ATTRIBUTES :: Void
+OVERLAPPED :: Void
 
-GENERIC_READ    :: 0x80000000;
-GENERIC_WRITE   :: 0x40000000;
-GENERIC_EXECUTE :: 0x20000000;
-GENERIC_ALL     :: 0x10000000;
+GENERIC_READ    :: 0x80000000
+GENERIC_WRITE   :: 0x40000000
+GENERIC_EXECUTE :: 0x20000000
+GENERIC_ALL     :: 0x10000000
 
-FILE_SHARE_DELETE :: 0x00000004;
-FILE_SHARE_READ   :: 0x00000001;
-FILE_SHARE_WRITE  :: 0x00000002;
+FILE_SHARE_DELETE :: 0x00000004
+FILE_SHARE_READ   :: 0x00000001
+FILE_SHARE_WRITE  :: 0x00000002
 
-CREATE_ALWAYS     :: 2;
-CREATE_NEW        :: 1;
-OPEN_ALWAYS       :: 4;
-OPEN_EXISTING     :: 3;
-TRUNCATE_EXISTING :: 5;
+CREATE_ALWAYS     :: 2
+CREATE_NEW        :: 1
+OPEN_ALWAYS       :: 4
+OPEN_EXISTING     :: 3
+TRUNCATE_EXISTING :: 5
 
-FILE_ATTRIBUTE_READONLY      :: 0x00000001;
-FILE_ATTRIBUTE_HIDDEN        :: 0x00000002;
-FILE_ATTRIBUTE_SYSTEM        :: 0x00000004;
-FILE_ATTRIBUTE_ARCHIVE       :: 0x00000020;
-FILE_ATTRIBUTE_NORMAL        :: 0x00000080;
-FILE_ATTRIBUTE_TEMPORARY     :: 0x00000100;
-FILE_ATTRIBUTE_OFFLINE       :: 0x00001000;
-FILE_ATTRIBUTE_ENCRYPTED     :: 0x00004000;
-FILE_FLAG_BACKUP_SEMANTICS   :: 0x02000000;
-FILE_FLAG_DELETE_ON_CLOSE    :: 0x04000000;
-FILE_FLAG_NO_BUFFERING       :: 0x20000000;
-FILE_FLAG_OPEN_NO_RECALL     :: 0x00100000;
-FILE_FLAG_OPEN_REPARSE_POINT :: 0x00200000;
-FILE_FLAG_OVERLAPPED         :: 0x40000000;
-FILE_FLAG_POSIX_SEMANTICS    :: 0x01000000;
-FILE_FLAG_RANDOM_ACCESS      :: 0x10000000;
-FILE_FLAG_SESSION_AWARE      :: 0x00800000;
-FILE_FLAG_SEQUENTIAL_SCAN    :: 0x08000000;
-FILE_FLAG_WRITE_THROUGH      :: 0x80000000;
+FILE_ATTRIBUTE_READONLY      :: 0x00000001
+FILE_ATTRIBUTE_HIDDEN        :: 0x00000002
+FILE_ATTRIBUTE_SYSTEM        :: 0x00000004
+FILE_ATTRIBUTE_ARCHIVE       :: 0x00000020
+FILE_ATTRIBUTE_NORMAL        :: 0x00000080
+FILE_ATTRIBUTE_TEMPORARY     :: 0x00000100
+FILE_ATTRIBUTE_OFFLINE       :: 0x00001000
+FILE_ATTRIBUTE_ENCRYPTED     :: 0x00004000
+FILE_FLAG_BACKUP_SEMANTICS   :: 0x02000000
+FILE_FLAG_DELETE_ON_CLOSE    :: 0x04000000
+FILE_FLAG_NO_BUFFERING       :: 0x20000000
+FILE_FLAG_OPEN_NO_RECALL     :: 0x00100000
+FILE_FLAG_OPEN_REPARSE_POINT :: 0x00200000
+FILE_FLAG_OVERLAPPED         :: 0x40000000
+FILE_FLAG_POSIX_SEMANTICS    :: 0x01000000
+FILE_FLAG_RANDOM_ACCESS      :: 0x10000000
+FILE_FLAG_SESSION_AWARE      :: 0x00800000
+FILE_FLAG_SEQUENTIAL_SCAN    :: 0x08000000
+FILE_FLAG_WRITE_THROUGH      :: 0x80000000
 
-PAGE_NOACCESS                   :: 0x00000001;
-PAGE_READONLY                   :: 0x00000002;
-PAGE_READWRITE                  :: 0x00000004;
-PAGE_WRITECOPY                  :: 0x00000008;
-PAGE_EXECUTE                    :: 0x00000010;
-PAGE_EXECUTE_READ               :: 0x00000020;
-PAGE_EXECUTE_READWRITE          :: 0x00000040;
-PAGE_EXECUTE_WRITECOPY          :: 0x00000080;
-PAGE_GUARD                      :: 0x00000100;
-PAGE_NOCACHE                    :: 0x00000200;
-PAGE_WRITECOMBINE               :: 0x00000400;
-PAGE_GRAPHICS_NOACCESS          :: 0x00000800;
-PAGE_GRAPHICS_READONLY          :: 0x00001000;
-PAGE_GRAPHICS_READWRITE         :: 0x00002000;
-PAGE_GRAPHICS_EXECUTE           :: 0x00004000;
-PAGE_GRAPHICS_EXECUTE_READ      :: 0x00008000;
-PAGE_GRAPHICS_EXECUTE_READWRITE :: 0x00010000;
-PAGE_GRAPHICS_COHERENT          :: 0x00020000;
-PAGE_ENCLAVE_THREAD_CONTROL     :: 0x80000000;
-PAGE_REVERT_TO_FILE_MAP         :: 0x80000000;
-PAGE_TARGETS_NO_UPDATE          :: 0x40000000;
-PAGE_TARGETS_INVALID            :: 0x40000000;
-PAGE_ENCLAVE_UNVALIDATED        :: 0x20000000;
-PAGE_ENCLAVE_DECOMMIT           :: 0x10000000;
+PAGE_NOACCESS                   :: 0x00000001
+PAGE_READONLY                   :: 0x00000002
+PAGE_READWRITE                  :: 0x00000004
+PAGE_WRITECOPY                  :: 0x00000008
+PAGE_EXECUTE                    :: 0x00000010
+PAGE_EXECUTE_READ               :: 0x00000020
+PAGE_EXECUTE_READWRITE          :: 0x00000040
+PAGE_EXECUTE_WRITECOPY          :: 0x00000080
+PAGE_GUARD                      :: 0x00000100
+PAGE_NOCACHE                    :: 0x00000200
+PAGE_WRITECOMBINE               :: 0x00000400
+PAGE_GRAPHICS_NOACCESS          :: 0x00000800
+PAGE_GRAPHICS_READONLY          :: 0x00001000
+PAGE_GRAPHICS_READWRITE         :: 0x00002000
+PAGE_GRAPHICS_EXECUTE           :: 0x00004000
+PAGE_GRAPHICS_EXECUTE_READ      :: 0x00008000
+PAGE_GRAPHICS_EXECUTE_READWRITE :: 0x00010000
+PAGE_GRAPHICS_COHERENT          :: 0x00020000
+PAGE_ENCLAVE_THREAD_CONTROL     :: 0x80000000
+PAGE_REVERT_TO_FILE_MAP         :: 0x80000000
+PAGE_TARGETS_NO_UPDATE          :: 0x40000000
+PAGE_TARGETS_INVALID            :: 0x40000000
+PAGE_ENCLAVE_UNVALIDATED        :: 0x20000000
+PAGE_ENCLAVE_DECOMMIT           :: 0x10000000
 
-MEM_COMMIT                     :: 0x00001000;
-MEM_RESERVE                    :: 0x00002000;
-MEM_REPLACE_PLACEHOLDER        :: 0x00004000;
-MEM_RESERVE_PLACEHOLDER        :: 0x00040000;
-MEM_RESET                      :: 0x00080000;
-MEM_TOP_DOWN                   :: 0x00100000;
-MEM_WRITE_WATCH                :: 0x00200000;
-MEM_PHYSICAL                   :: 0x00400000;
-MEM_ROTATE                     :: 0x00800000;
-MEM_DIFFERENT_IMAGE_BASE_OK    :: 0x00800000;
-MEM_RESET_UNDO                 :: 0x01000000;
-MEM_LARGE_PAGES                :: 0x20000000;
-MEM_4MB_PAGES                  :: 0x80000000;
-MEM_64K_PAGES                  :: MEM_LARGE_PAGES | MEM_PHYSICAL;
-MEM_UNMAP_WITH_TRANSIENT_BOOST :: 0x00000001;
-MEM_COALESCE_PLACEHOLDERS      :: 0x00000001;
-MEM_PRESERVE_PLACEHOLDER       :: 0x00000002;
-MEM_DECOMMIT                   :: 0x00004000;
-MEM_RELEASE                    :: 0x00008000;
-MEM_FREE                       :: 0x00010000;
+MEM_COMMIT                     :: 0x00001000
+MEM_RESERVE                    :: 0x00002000
+MEM_REPLACE_PLACEHOLDER        :: 0x00004000
+MEM_RESERVE_PLACEHOLDER        :: 0x00040000
+MEM_RESET                      :: 0x00080000
+MEM_TOP_DOWN                   :: 0x00100000
+MEM_WRITE_WATCH                :: 0x00200000
+MEM_PHYSICAL                   :: 0x00400000
+MEM_ROTATE                     :: 0x00800000
+MEM_DIFFERENT_IMAGE_BASE_OK    :: 0x00800000
+MEM_RESET_UNDO                 :: 0x01000000
+MEM_LARGE_PAGES                :: 0x20000000
+MEM_4MB_PAGES                  :: 0x80000000
+MEM_64K_PAGES                  :: MEM_LARGE_PAGES | MEM_PHYSICAL
+MEM_UNMAP_WITH_TRANSIENT_BOOST :: 0x00000001
+MEM_COALESCE_PLACEHOLDERS      :: 0x00000001
+MEM_PRESERVE_PLACEHOLDER       :: 0x00000002
+MEM_DECOMMIT                   :: 0x00004000
+MEM_RELEASE                    :: 0x00008000
+MEM_FREE                       :: 0x00010000
 
-WS_BORDER           :: 0x00800000;
-WS_CAPTION          :: 0x00C00000;
-WS_CHILD            :: 0x40000000;
-WS_CHILDWINDOW      :: 0x40000000;
-WS_CLIPCHILDREN     :: 0x02000000;
-WS_CLIPSIBLINGS     :: 0x04000000;
-WS_DISABLED         :: 0x08000000;
-WS_DLGFRAME         :: 0x00400000;
-WS_GROUP            :: 0x00020000;
-WS_HSCROLL          :: 0x00100000;
-WS_ICONIC           :: 0x20000000;
-WS_MAXIMIZE         :: 0x01000000;
-WS_MAXIMIZEBOX      :: 0x00010000;
-WS_MINIMIZE         :: 0x20000000;
-WS_MINIMIZEBOX      :: 0x00020000;
-WS_OVERLAPPED       :: 0x00000000;
-WS_OVERLAPPEDWINDOW :: WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_THICKFRAME | WS_MINIMIZEBOX | WS_MAXIMIZEBOX;
-WS_POPUP            :: 0x80000000;
-WS_POPUPWINDOW      :: WS_POPUP | WS_BORDER | WS_SYSMENU;
-WS_SIZEBOX          :: 0x00040000;
-WS_SYSMENU          :: 0x00080000;
-WS_TABSTOP          :: 0x00010000;
-WS_THICKFRAME       :: 0x00040000;
-WS_TILED            :: 0x00000000;
-WS_TILEDWINDOW      :: WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_THICKFRAME | WS_MINIMIZEBOX | WS_MAXIMIZEBOX;
-WS_VISIBLE          :: 0x10000000;
-WS_VSCROLL          :: 0x00200000;
+WS_BORDER           :: 0x00800000
+WS_CAPTION          :: 0x00C00000
+WS_CHILD            :: 0x40000000
+WS_CHILDWINDOW      :: 0x40000000
+WS_CLIPCHILDREN     :: 0x02000000
+WS_CLIPSIBLINGS     :: 0x04000000
+WS_DISABLED         :: 0x08000000
+WS_DLGFRAME         :: 0x00400000
+WS_GROUP            :: 0x00020000
+WS_HSCROLL          :: 0x00100000
+WS_ICONIC           :: 0x20000000
+WS_MAXIMIZE         :: 0x01000000
+WS_MAXIMIZEBOX      :: 0x00010000
+WS_MINIMIZE         :: 0x20000000
+WS_MINIMIZEBOX      :: 0x00020000
+WS_OVERLAPPED       :: 0x00000000
+WS_OVERLAPPEDWINDOW :: WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_THICKFRAME | WS_MINIMIZEBOX | WS_MAXIMIZEBOX
+WS_POPUP            :: 0x80000000
+WS_POPUPWINDOW      :: WS_POPUP | WS_BORDER | WS_SYSMENU
+WS_SIZEBOX          :: 0x00040000
+WS_SYSMENU          :: 0x00080000
+WS_TABSTOP          :: 0x00010000
+WS_THICKFRAME       :: 0x00040000
+WS_TILED            :: 0x00000000
+WS_TILEDWINDOW      :: WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_THICKFRAME | WS_MINIMIZEBOX | WS_MAXIMIZEBOX
+WS_VISIBLE          :: 0x10000000
+WS_VSCROLL          :: 0x00200000
 
-CW_USEDEFAULT :: 0x80000000;
+CW_USEDEFAULT :: 0x80000000
 
-PM_NOREMOVE :: 0x0000;
-PM_REMOVE   :: 0x0001;
-PM_NOYIELD  :: 0x0002;
+PM_NOREMOVE :: 0x0000
+PM_REMOVE   :: 0x0001
+PM_NOYIELD  :: 0x0002
 
-WINVER  :: 0x0500;
+WINVER  :: 0x0500
 
 /*
  * Window Messages
  */
 
-WM_NULL                         :: 0x0000;
-WM_CREATE                       :: 0x0001;
-WM_DESTROY                      :: 0x0002;
-WM_MOVE                         :: 0x0003;
-WM_SIZE                         :: 0x0005;
-WM_ACTIVATE                     :: 0x0006;
+WM_NULL                         :: 0x0000
+WM_CREATE                       :: 0x0001
+WM_DESTROY                      :: 0x0002
+WM_MOVE                         :: 0x0003
+WM_SIZE                         :: 0x0005
+WM_ACTIVATE                     :: 0x0006
 
 /*
  * WM_ACTIVATE state values
  */
-WA_INACTIVE     :: 0;
-WA_ACTIVE       :: 1;
-WA_CLICKACTIVE  :: 2;
+WA_INACTIVE     :: 0
+WA_ACTIVE       :: 1
+WA_CLICKACTIVE  :: 2
 
-WM_SETFOCUS                     :: 0x0007;
-WM_KILLFOCUS                    :: 0x0008;
-WM_ENABLE                       :: 0x000A;
-WM_SETREDRAW                    :: 0x000B;
-WM_SETTEXT                      :: 0x000C;
-WM_GETTEXT                      :: 0x000D;
-WM_GETTEXTLENGTH                :: 0x000E;
-WM_PAINT                        :: 0x000F;
-WM_CLOSE                        :: 0x0010;
-WM_QUIT                         :: 0x0012;
-WM_ERASEBKGND                   :: 0x0014;
-WM_SYSCOLORCHANGE               :: 0x0015;
-WM_SHOWWINDOW                   :: 0x0018;
-WM_WININICHANGE                 :: 0x001A;
+WM_SETFOCUS                     :: 0x0007
+WM_KILLFOCUS                    :: 0x0008
+WM_ENABLE                       :: 0x000A
+WM_SETREDRAW                    :: 0x000B
+WM_SETTEXT                      :: 0x000C
+WM_GETTEXT                      :: 0x000D
+WM_GETTEXTLENGTH                :: 0x000E
+WM_PAINT                        :: 0x000F
+WM_CLOSE                        :: 0x0010
+WM_QUIT                         :: 0x0012
+WM_ERASEBKGND                   :: 0x0014
+WM_SYSCOLORCHANGE               :: 0x0015
+WM_SHOWWINDOW                   :: 0x0018
+WM_WININICHANGE                 :: 0x001A
 
 #if WINVER >= 0x0400 {
-	WM_SETTINGCHANGE                :: WM_WININICHANGE;
+	WM_SETTINGCHANGE                :: WM_WININICHANGE
 }
 
-WM_DEVMODECHANGE                :: 0x001B;
-WM_ACTIVATEAPP                  :: 0x001C;
-WM_FONTCHANGE                   :: 0x001D;
-WM_TIMECHANGE                   :: 0x001E;
-WM_CANCELMODE                   :: 0x001F;
-WM_SETCURSOR                    :: 0x0020;
-WM_MOUSEACTIVATE                :: 0x0021;
-WM_CHILDACTIVATE                :: 0x0022;
-WM_QUEUESYNC                    :: 0x0023;
+WM_DEVMODECHANGE                :: 0x001B
+WM_ACTIVATEAPP                  :: 0x001C
+WM_FONTCHANGE                   :: 0x001D
+WM_TIMECHANGE                   :: 0x001E
+WM_CANCELMODE                   :: 0x001F
+WM_SETCURSOR                    :: 0x0020
+WM_MOUSEACTIVATE                :: 0x0021
+WM_CHILDACTIVATE                :: 0x0022
+WM_QUEUESYNC                    :: 0x0023
 
-WM_GETMINMAXINFO                :: 0x0024;
+WM_GETMINMAXINFO                :: 0x0024
 
-WM_PAINTICON                    :: 0x0026;
-WM_ICONERASEBKGND               :: 0x0027;
-WM_NEXTDLGCTL                   :: 0x0028;
-WM_SPOOLERSTATUS                :: 0x002A;
-WM_DRAWITEM                     :: 0x002B;
-WM_MEASUREITEM                  :: 0x002C;
-WM_DELETEITEM                   :: 0x002D;
-WM_VKEYTOITEM                   :: 0x002E;
-WM_CHARTOITEM                   :: 0x002F;
-WM_SETFONT                      :: 0x0030;
-WM_GETFONT                      :: 0x0031;
-WM_SETHOTKEY                    :: 0x0032;
-WM_GETHOTKEY                    :: 0x0033;
-WM_QUERYDRAGICON                :: 0x0037;
-WM_COMPAREITEM                  :: 0x0039;
+WM_PAINTICON                    :: 0x0026
+WM_ICONERASEBKGND               :: 0x0027
+WM_NEXTDLGCTL                   :: 0x0028
+WM_SPOOLERSTATUS                :: 0x002A
+WM_DRAWITEM                     :: 0x002B
+WM_MEASUREITEM                  :: 0x002C
+WM_DELETEITEM                   :: 0x002D
+WM_VKEYTOITEM                   :: 0x002E
+WM_CHARTOITEM                   :: 0x002F
+WM_SETFONT                      :: 0x0030
+WM_GETFONT                      :: 0x0031
+WM_SETHOTKEY                    :: 0x0032
+WM_GETHOTKEY                    :: 0x0033
+WM_QUERYDRAGICON                :: 0x0037
+WM_COMPAREITEM                  :: 0x0039
 #if WINVER >= 0x0500 {
-	WM_GETOBJECT                    :: 0x003D;
+	WM_GETOBJECT                    :: 0x003D
 }
-WM_COMPACTING                   :: 0x0041;
-WM_COMMNOTIFY                   :: 0x0044;  /* no longer suported */
-WM_WINDOWPOSCHANGING            :: 0x0046;
-WM_WINDOWPOSCHANGED             :: 0x0047;
+WM_COMPACTING                   :: 0x0041
+WM_COMMNOTIFY                   :: 0x0044  /* no longer suported */
+WM_WINDOWPOSCHANGING            :: 0x0046
+WM_WINDOWPOSCHANGED             :: 0x0047
 
-WM_POWER                        :: 0x0048;
+WM_POWER                        :: 0x0048
 /*
  * wParam for WM_POWER window message and DRV_POWER driver notification
  */
-PWR_OK              :: 1;
-PWR_FAIL            :: -1;
-PWR_SUSPENDREQUEST  :: 1;
-PWR_SUSPENDRESUME   :: 2;
-PWR_CRITICALRESUME  :: 3;
+PWR_OK              :: 1
+PWR_FAIL            :: -1
+PWR_SUSPENDREQUEST  :: 1
+PWR_SUSPENDRESUME   :: 2
+PWR_CRITICALRESUME  :: 3
 
-WM_COPYDATA                     :: 0x004A;
-WM_CANCELJOURNAL                :: 0x004B;
+WM_COPYDATA                     :: 0x004A
+WM_CANCELJOURNAL                :: 0x004B
 
 /*
 #if true { // WINAPI_FAMILY_PARTITION(WINAPI_PARTITION_DESKTOP)
@@ -387,152 +387,152 @@ WM_CANCELJOURNAL                :: 0x004B;
 	* lParam of WM_COPYDATA message points to...
 	*/
 	COPYDATASTRUCT :: struct {
-		dwData: ULONG_PTR;
-		cbData: DWORD;
-		lpData: PVOID;
+		dwData: ULONG_PTR
+		cbData: DWORD
+		lpData: PVOID
 	}
-	PCOPYDATASTRUCT :: COPYDATASTRUCT;
+	PCOPYDATASTRUCT :: COPYDATASTRUCT
 
 	#if WINVER >= 0x0400 {
 		MDINEXTMENU :: struct {
-			hmenuIn:   HMENU;
-			hmenuNext: HMENU;  
-			hwndNext:  HWND; 
+			hmenuIn:   HMENU
+			hmenuNext: HMENU  
+			hwndNext:  HWND 
 		}
-		PMDINEXTMENU :: MDINEXTMENU;
-		LPMDINEXTMENU :: MDINEXTMENU;
+		PMDINEXTMENU :: MDINEXTMENU
+		LPMDINEXTMENU :: MDINEXTMENU
 	}
 }
 */
 
 
 #if WINVER >= 0x0400 {
-	WM_NOTIFY                       :: 0x004E;
-	WM_INPUTLANGCHANGEREQUEST       :: 0x0050;
-	WM_INPUTLANGCHANGE              :: 0x0051;
-	WM_TCARD                        :: 0x0052;
-	WM_HELP                         :: 0x0053;
-	WM_USERCHANGED                  :: 0x0054;
-	WM_NOTIFYFORMAT                 :: 0x0055;
+	WM_NOTIFY                       :: 0x004E
+	WM_INPUTLANGCHANGEREQUEST       :: 0x0050
+	WM_INPUTLANGCHANGE              :: 0x0051
+	WM_TCARD                        :: 0x0052
+	WM_HELP                         :: 0x0053
+	WM_USERCHANGED                  :: 0x0054
+	WM_NOTIFYFORMAT                 :: 0x0055
 
-	NFR_ANSI                             :: 1;
-	NFR_UNICODE                          :: 2;
-	NF_QUERY                             :: 3;
-	NF_REQUERY                           :: 4;
+	NFR_ANSI                             :: 1
+	NFR_UNICODE                          :: 2
+	NF_QUERY                             :: 3
+	NF_REQUERY                           :: 4
 
-	WM_CONTEXTMENU                  :: 0x007B;
-	WM_STYLECHANGING                :: 0x007C;
-	WM_STYLECHANGED                 :: 0x007D;
-	WM_DISPLAYCHANGE                :: 0x007E;
-	WM_GETICON                      :: 0x007F;
-	WM_SETICON                      :: 0x0080;
+	WM_CONTEXTMENU                  :: 0x007B
+	WM_STYLECHANGING                :: 0x007C
+	WM_STYLECHANGED                 :: 0x007D
+	WM_DISPLAYCHANGE                :: 0x007E
+	WM_GETICON                      :: 0x007F
+	WM_SETICON                      :: 0x0080
 }
 
-WM_NCCREATE                     :: 0x0081;
-WM_NCDESTROY                    :: 0x0082;
-WM_NCCALCSIZE                   :: 0x0083;
-WM_NCHITTEST                    :: 0x0084;
-WM_NCPAINT                      :: 0x0085;
-WM_NCACTIVATE                   :: 0x0086;
-WM_GETDLGCODE                   :: 0x0087;
+WM_NCCREATE                     :: 0x0081
+WM_NCDESTROY                    :: 0x0082
+WM_NCCALCSIZE                   :: 0x0083
+WM_NCHITTEST                    :: 0x0084
+WM_NCPAINT                      :: 0x0085
+WM_NCACTIVATE                   :: 0x0086
+WM_GETDLGCODE                   :: 0x0087
 // #ifndef _WIN32_WCE
-WM_SYNCPAINT                    :: 0x0088;
+WM_SYNCPAINT                    :: 0x0088
 // #endif
-WM_NCMOUSEMOVE                  :: 0x00A0;
-WM_NCLBUTTONDOWN                :: 0x00A1;
-WM_NCLBUTTONUP                  :: 0x00A2;
-WM_NCLBUTTONDBLCLK              :: 0x00A3;
-WM_NCRBUTTONDOWN                :: 0x00A4;
-WM_NCRBUTTONUP                  :: 0x00A5;
-WM_NCRBUTTONDBLCLK              :: 0x00A6;
-WM_NCMBUTTONDOWN                :: 0x00A7;
-WM_NCMBUTTONUP                  :: 0x00A8;
-WM_NCMBUTTONDBLCLK              :: 0x00A9;
+WM_NCMOUSEMOVE                  :: 0x00A0
+WM_NCLBUTTONDOWN                :: 0x00A1
+WM_NCLBUTTONUP                  :: 0x00A2
+WM_NCLBUTTONDBLCLK              :: 0x00A3
+WM_NCRBUTTONDOWN                :: 0x00A4
+WM_NCRBUTTONUP                  :: 0x00A5
+WM_NCRBUTTONDBLCLK              :: 0x00A6
+WM_NCMBUTTONDOWN                :: 0x00A7
+WM_NCMBUTTONUP                  :: 0x00A8
+WM_NCMBUTTONDBLCLK              :: 0x00A9
 
 
 
 // #if _WIN32_WINNT >= 0x0500 {
-WM_NCXBUTTONDOWN                :: 0x00AB;
-WM_NCXBUTTONUP                  :: 0x00AC;
-WM_NCXBUTTONDBLCLK              :: 0x00AD;
+WM_NCXBUTTONDOWN                :: 0x00AB
+WM_NCXBUTTONUP                  :: 0x00AC
+WM_NCXBUTTONDBLCLK              :: 0x00AD
 // }
 
 
 // #if(_WIN32_WINNT >= 0x0501)
-WM_INPUT_DEVICE_CHANGE          :: 0x00FE;
+WM_INPUT_DEVICE_CHANGE          :: 0x00FE
 // #endif /* _WIN32_WINNT >= 0x0501 */
 
 // #if(_WIN32_WINNT >= 0x0501)
-WM_INPUT                        :: 0x00FF;
+WM_INPUT                        :: 0x00FF
 // #endif /* _WIN32_WINNT >= 0x0501 */
 
-WM_KEYFIRST                     :: 0x0100;
-WM_KEYDOWN                      :: 0x0100;
-WM_KEYUP                        :: 0x0101;
-WM_CHAR                         :: 0x0102;
-WM_DEADCHAR                     :: 0x0103;
-WM_SYSKEYDOWN                   :: 0x0104;
-WM_SYSKEYUP                     :: 0x0105;
-WM_SYSCHAR                      :: 0x0106;
-WM_SYSDEADCHAR                  :: 0x0107;
+WM_KEYFIRST                     :: 0x0100
+WM_KEYDOWN                      :: 0x0100
+WM_KEYUP                        :: 0x0101
+WM_CHAR                         :: 0x0102
+WM_DEADCHAR                     :: 0x0103
+WM_SYSKEYDOWN                   :: 0x0104
+WM_SYSKEYUP                     :: 0x0105
+WM_SYSCHAR                      :: 0x0106
+WM_SYSDEADCHAR                  :: 0x0107
 // #if(_WIN32_WINNT >= 0x0501)
-WM_UNICHAR                      :: 0x0109;
-WM_KEYLAST                      :: 0x0109;
-UNICODE_NOCHAR                  :: 0xFFFF;
+WM_UNICHAR                      :: 0x0109
+WM_KEYLAST                      :: 0x0109
+UNICODE_NOCHAR                  :: 0xFFFF
 // #else
-WM_KEYLAST                      :: 0x0108;
+WM_KEYLAST                      :: 0x0108
 // #endif /* _WIN32_WINNT >= 0x0501 */
 
 // #if(WINVER >= 0x0400)
-WM_IME_STARTCOMPOSITION         :: 0x010D;
-WM_IME_ENDCOMPOSITION           :: 0x010E;
-WM_IME_COMPOSITION              :: 0x010F;
-WM_IME_KEYLAST                  :: 0x010F;
+WM_IME_STARTCOMPOSITION         :: 0x010D
+WM_IME_ENDCOMPOSITION           :: 0x010E
+WM_IME_COMPOSITION              :: 0x010F
+WM_IME_KEYLAST                  :: 0x010F
 // #endif /* WINVER >= 0x0400 */
 
-WM_INITDIALOG                   :: 0x0110;
-WM_COMMAND                      :: 0x0111;
-WM_SYSCOMMAND                   :: 0x0112;
-WM_TIMER                        :: 0x0113;
-WM_HSCROLL                      :: 0x0114;
-WM_VSCROLL                      :: 0x0115;
-WM_INITMENU                     :: 0x0116;
-WM_INITMENUPOPUP                :: 0x0117;
+WM_INITDIALOG                   :: 0x0110
+WM_COMMAND                      :: 0x0111
+WM_SYSCOMMAND                   :: 0x0112
+WM_TIMER                        :: 0x0113
+WM_HSCROLL                      :: 0x0114
+WM_VSCROLL                      :: 0x0115
+WM_INITMENU                     :: 0x0116
+WM_INITMENUPOPUP                :: 0x0117
 // #if(WINVER >= 0x0601)
-WM_GESTURE                      :: 0x0119;
-WM_GESTURENOTIFY                :: 0x011A;
+WM_GESTURE                      :: 0x0119
+WM_GESTURENOTIFY                :: 0x011A
 // #endif /* WINVER >= 0x0601 */
-WM_MENUSELECT                   :: 0x011F;
-WM_MENUCHAR                     :: 0x0120;
-WM_ENTERIDLE                    :: 0x0121;
+WM_MENUSELECT                   :: 0x011F
+WM_MENUCHAR                     :: 0x0120
+WM_ENTERIDLE                    :: 0x0121
 // #if(WINVER >= 0x0500)
 // #ifndef _WIN32_WCE
-WM_MENURBUTTONUP                :: 0x0122;
-WM_MENUDRAG                     :: 0x0123;
-WM_MENUGETOBJECT                :: 0x0124;
-WM_UNINITMENUPOPUP              :: 0x0125;
-WM_MENUCOMMAND                  :: 0x0126;
+WM_MENURBUTTONUP                :: 0x0122
+WM_MENUDRAG                     :: 0x0123
+WM_MENUGETOBJECT                :: 0x0124
+WM_UNINITMENUPOPUP              :: 0x0125
+WM_MENUCOMMAND                  :: 0x0126
 
 // #ifndef _WIN32_WCE
 // #if(_WIN32_WINNT >= 0x0500)
-WM_CHANGEUISTATE                :: 0x0127;
-WM_UPDATEUISTATE                :: 0x0128;
-WM_QUERYUISTATE                 :: 0x0129;
+WM_CHANGEUISTATE                :: 0x0127
+WM_UPDATEUISTATE                :: 0x0128
+WM_QUERYUISTATE                 :: 0x0129
 
 /*
  * LOWORD(wParam) values in WM_*UISTATE*
  */
-UIS_SET                         :: 1;
-UIS_CLEAR                       :: 2;
-UIS_INITIALIZE                  :: 3;
+UIS_SET                         :: 1
+UIS_CLEAR                       :: 2
+UIS_INITIALIZE                  :: 3
 
 /*
  * HIWORD(wParam) values in WM_*UISTATE*
  */
-UISF_HIDEFOCUS                  :: 0x1;
-UISF_HIDEACCEL                  :: 0x2;
+UISF_HIDEFOCUS                  :: 0x1
+UISF_HIDEACCEL                  :: 0x2
 // #if(_WIN32_WINNT >= 0x0501)
-UISF_ACTIVE                     :: 0x4;
+UISF_ACTIVE                     :: 0x4
 // #endif /* _WIN32_WINNT >= 0x0501 */
 // #endif /* _WIN32_WINNT >= 0x0500 */
 // #endif
@@ -540,121 +540,121 @@ UISF_ACTIVE                     :: 0x4;
 // #endif
 // #endif /* WINVER >= 0x0500 */
 
-WM_CTLCOLORMSGBOX               :: 0x0132;
-WM_CTLCOLOREDIT                 :: 0x0133;
-WM_CTLCOLORLISTBOX              :: 0x0134;
-WM_CTLCOLORBTN                  :: 0x0135;
-WM_CTLCOLORDLG                  :: 0x0136;
-WM_CTLCOLORSCROLLBAR            :: 0x0137;
-WM_CTLCOLORSTATIC               :: 0x0138;
-MN_GETHMENU                     :: 0x01E1;
+WM_CTLCOLORMSGBOX               :: 0x0132
+WM_CTLCOLOREDIT                 :: 0x0133
+WM_CTLCOLORLISTBOX              :: 0x0134
+WM_CTLCOLORBTN                  :: 0x0135
+WM_CTLCOLORDLG                  :: 0x0136
+WM_CTLCOLORSCROLLBAR            :: 0x0137
+WM_CTLCOLORSTATIC               :: 0x0138
+MN_GETHMENU                     :: 0x01E1
 
-WM_MOUSEFIRST                   :: 0x0200;
-WM_MOUSEMOVE                    :: 0x0200;
-WM_LBUTTONDOWN                  :: 0x0201;
-WM_LBUTTONUP                    :: 0x0202;
-WM_LBUTTONDBLCLK                :: 0x0203;
-WM_RBUTTONDOWN                  :: 0x0204;
-WM_RBUTTONUP                    :: 0x0205;
-WM_RBUTTONDBLCLK                :: 0x0206;
-WM_MBUTTONDOWN                  :: 0x0207;
-WM_MBUTTONUP                    :: 0x0208;
-WM_MBUTTONDBLCLK                :: 0x0209;
+WM_MOUSEFIRST                   :: 0x0200
+WM_MOUSEMOVE                    :: 0x0200
+WM_LBUTTONDOWN                  :: 0x0201
+WM_LBUTTONUP                    :: 0x0202
+WM_LBUTTONDBLCLK                :: 0x0203
+WM_RBUTTONDOWN                  :: 0x0204
+WM_RBUTTONUP                    :: 0x0205
+WM_RBUTTONDBLCLK                :: 0x0206
+WM_MBUTTONDOWN                  :: 0x0207
+WM_MBUTTONUP                    :: 0x0208
+WM_MBUTTONDBLCLK                :: 0x0209
 // #if (_WIN32_WINNT >= 0x0400) || (_WIN32_WINDOWS > 0x0400)
-WM_MOUSEWHEEL                   :: 0x020A;
+WM_MOUSEWHEEL                   :: 0x020A
 // #endif
 // #if (_WIN32_WINNT >= 0x0500)
-WM_XBUTTONDOWN                  :: 0x020B;
-WM_XBUTTONUP                    :: 0x020C;
-WM_XBUTTONDBLCLK                :: 0x020D;
+WM_XBUTTONDOWN                  :: 0x020B
+WM_XBUTTONUP                    :: 0x020C
+WM_XBUTTONDBLCLK                :: 0x020D
 // #endif
 // #if (_WIN32_WINNT >= 0x0600)
-WM_MOUSEHWHEEL                  :: 0x020E;
+WM_MOUSEHWHEEL                  :: 0x020E
 // #endif
 
 // #if (_WIN32_WINNT >= 0x0600)
-WM_MOUSELAST                    :: 0x020E;
+WM_MOUSELAST                    :: 0x020E
 // #elif (_WIN32_WINNT >= 0x0500)
-WM_MOUSELAST                    :: 0x020D;
+WM_MOUSELAST                    :: 0x020D
 // #elif (_WIN32_WINNT >= 0x0400) || (_WIN32_WINDOWS > 0x0400)
-WM_MOUSELAST                    :: 0x020A;
+WM_MOUSELAST                    :: 0x020A
 // #else
-WM_MOUSELAST                    :: 0x0209;
+WM_MOUSELAST                    :: 0x0209
 // #endif /* (_WIN32_WINNT >= 0x0600) */
 
 
 // #if(_WIN32_WINNT >= 0x0400)
 /* Value for rolling one detent */
-WHEEL_DELTA                     :: 120;
-// GET_WHEEL_DELTA_WPARAM(wParam)  ((short)HIWORD(wParam:: ));
+WHEEL_DELTA                     :: 120
+// GET_WHEEL_DELTA_WPARAM(wParam)  ((short)HIWORD(wParam:: ))
 
 /* Setting to scroll one page for SPI_GET/SETWHEELSCROLLLINES */
-// WHEEL_PAGESCROLL                (UINT_MAX:: );
+// WHEEL_PAGESCROLL                (UINT_MAX:: )
 // #endif /* _WIN32_WINNT >= 0x0400 */
 
 // #if(_WIN32_WINNT >= 0x0500)
- //GET_KEYSTATE_WPARAM(wParam)     (LOWORD(wParam:: ));
- //GET_NCHITTEST_WPARAM(wParam)    ((short)LOWORD(wParam:: ));
- //GET_XBUTTON_WPARAM(wParam)      (HIWORD(wParam:: ));
+ //GET_KEYSTATE_WPARAM(wParam)     (LOWORD(wParam:: ))
+ //GET_NCHITTEST_WPARAM(wParam)    ((short)LOWORD(wParam:: ))
+ //GET_XBUTTON_WPARAM(wParam)      (HIWORD(wParam:: ))
 
 /* XButton values are WORD flags */
-XBUTTON1      :: 0x0001;
-XBUTTON2      :: 0x0002;
+XBUTTON1      :: 0x0001
+XBUTTON2      :: 0x0002
 /* Were there to be an XBUTTON3, its value would be 0x0004 */
 // #endif /* _WIN32_WINNT >= 0x0500 */
 
-WM_PARENTNOTIFY                 :: 0x0210;
-WM_ENTERMENULOOP                :: 0x0211;
-WM_EXITMENULOOP                 :: 0x0212;
+WM_PARENTNOTIFY                 :: 0x0210
+WM_ENTERMENULOOP                :: 0x0211
+WM_EXITMENULOOP                 :: 0x0212
 
 // #if(WINVER >= 0x0400)
-WM_NEXTMENU                     :: 0x0213;
-WM_SIZING                       :: 0x0214;
-WM_CAPTURECHANGED               :: 0x0215;
-WM_MOVING                       :: 0x0216;
+WM_NEXTMENU                     :: 0x0213
+WM_SIZING                       :: 0x0214
+WM_CAPTURECHANGED               :: 0x0215
+WM_MOVING                       :: 0x0216
 // #endif /* WINVER >= 0x0400 */
 
 // #if(WINVER >= 0x0400)
 
 
-WM_POWERBROADCAST               :: 0x0218;
+WM_POWERBROADCAST               :: 0x0218
 
 // #ifndef _WIN32_WCE
-PBT_APMQUERYSUSPEND             :: 0x0000;
-PBT_APMQUERYSTANDBY             :: 0x0001;
+PBT_APMQUERYSUSPEND             :: 0x0000
+PBT_APMQUERYSTANDBY             :: 0x0001
 
-PBT_APMQUERYSUSPENDFAILED       :: 0x0002;
-PBT_APMQUERYSTANDBYFAILED       :: 0x0003;
+PBT_APMQUERYSUSPENDFAILED       :: 0x0002
+PBT_APMQUERYSTANDBYFAILED       :: 0x0003
 
-PBT_APMSUSPEND                  :: 0x0004;
-PBT_APMSTANDBY                  :: 0x0005;
+PBT_APMSUSPEND                  :: 0x0004
+PBT_APMSTANDBY                  :: 0x0005
 
-PBT_APMRESUMECRITICAL           :: 0x0006;
-PBT_APMRESUMESUSPEND            :: 0x0007;
-PBT_APMRESUMESTANDBY            :: 0x0008;
+PBT_APMRESUMECRITICAL           :: 0x0006
+PBT_APMRESUMESUSPEND            :: 0x0007
+PBT_APMRESUMESTANDBY            :: 0x0008
 
-PBTF_APMRESUMEFROMFAILURE       :: 0x00000001;
+PBTF_APMRESUMEFROMFAILURE       :: 0x00000001
 
-PBT_APMBATTERYLOW               :: 0x0009;
-PBT_APMPOWERSTATUSCHANGE        :: 0x000A;
+PBT_APMBATTERYLOW               :: 0x0009
+PBT_APMPOWERSTATUSCHANGE        :: 0x000A
 
-PBT_APMOEMEVENT                 :: 0x000B;
+PBT_APMOEMEVENT                 :: 0x000B
 
 
-PBT_APMRESUMEAUTOMATIC          :: 0x0012;
+PBT_APMRESUMEAUTOMATIC          :: 0x0012
 // #if (_WIN32_WINNT >= 0x0502)
 // #ifndef PBT_POWERSETTINGCHANGE
-PBT_POWERSETTINGCHANGE          :: 0x8013;
+PBT_POWERSETTINGCHANGE          :: 0x8013
 
 // #pragma region Desktop Family
 // #if WINAPI_FAMILY_PARTITION(WINAPI_PARTITION_DESKTOP)
 
 /*
 POWERBROADCAST_SETTING :: struct {
-    PowerSetting: GUID;
-    DataLength: DWORD;
+    PowerSetting: GUID
+    DataLength: DWORD
 }
-PPOWERBROADCAST_SETTING :: *POWERBROADCAST_SETTING;
+PPOWERBROADCAST_SETTING :: *POWERBROADCAST_SETTING
 */
 
 // #endif /* WINAPI_FAMILY_PARTITION(WINAPI_PARTITION_DESKTOP) */
@@ -668,154 +668,154 @@ PPOWERBROADCAST_SETTING :: *POWERBROADCAST_SETTING;
 // #endif /* WINVER >= 0x0400 */
 
 // #if(WINVER >= 0x0400)
-WM_DEVICECHANGE                 :: 0x0219;
+WM_DEVICECHANGE                 :: 0x0219
 // #endif /* WINVER >= 0x0400 */
 
-WM_MDICREATE                    :: 0x0220;
-WM_MDIDESTROY                   :: 0x0221;
-WM_MDIACTIVATE                  :: 0x0222;
-WM_MDIRESTORE                   :: 0x0223;
-WM_MDINEXT                      :: 0x0224;
-WM_MDIMAXIMIZE                  :: 0x0225;
-WM_MDITILE                      :: 0x0226;
-WM_MDICASCADE                   :: 0x0227;
-WM_MDIICONARRANGE               :: 0x0228;
-WM_MDIGETACTIVE                 :: 0x0229;
+WM_MDICREATE                    :: 0x0220
+WM_MDIDESTROY                   :: 0x0221
+WM_MDIACTIVATE                  :: 0x0222
+WM_MDIRESTORE                   :: 0x0223
+WM_MDINEXT                      :: 0x0224
+WM_MDIMAXIMIZE                  :: 0x0225
+WM_MDITILE                      :: 0x0226
+WM_MDICASCADE                   :: 0x0227
+WM_MDIICONARRANGE               :: 0x0228
+WM_MDIGETACTIVE                 :: 0x0229
 
 
-WM_MDISETMENU                   :: 0x0230;
-WM_ENTERSIZEMOVE                :: 0x0231;
-WM_EXITSIZEMOVE                 :: 0x0232;
-WM_DROPFILES                    :: 0x0233;
-WM_MDIREFRESHMENU               :: 0x0234;
+WM_MDISETMENU                   :: 0x0230
+WM_ENTERSIZEMOVE                :: 0x0231
+WM_EXITSIZEMOVE                 :: 0x0232
+WM_DROPFILES                    :: 0x0233
+WM_MDIREFRESHMENU               :: 0x0234
 
 // #if(WINVER >= 0x0602)
-WM_POINTERDEVICECHANGE          :: 0x238;
-WM_POINTERDEVICEINRANGE         :: 0x239;
-WM_POINTERDEVICEOUTOFRANGE      :: 0x23A;
+WM_POINTERDEVICECHANGE          :: 0x238
+WM_POINTERDEVICEINRANGE         :: 0x239
+WM_POINTERDEVICEOUTOFRANGE      :: 0x23A
 // #endif /* WINVER >= 0x0602 */
 
 
 // #if(WINVER >= 0x0601)
-WM_TOUCH                        :: 0x0240;
+WM_TOUCH                        :: 0x0240
 // #endif /* WINVER >= 0x0601 */
 
 // #if(WINVER >= 0x0602)
-WM_NCPOINTERUPDATE              :: 0x0241;
-WM_NCPOINTERDOWN                :: 0x0242;
-WM_NCPOINTERUP                  :: 0x0243;
-WM_POINTERUPDATE                :: 0x0245;
-WM_POINTERDOWN                  :: 0x0246;
-WM_POINTERUP                    :: 0x0247;
-WM_POINTERENTER                 :: 0x0249;
-WM_POINTERLEAVE                 :: 0x024A;
-WM_POINTERACTIVATE              :: 0x024B;
-WM_POINTERCAPTURECHANGED        :: 0x024C;
-WM_TOUCHHITTESTING              :: 0x024D;
-WM_POINTERWHEEL                 :: 0x024E;
-WM_POINTERHWHEEL                :: 0x024F;
-DM_POINTERHITTEST               :: 0x0250;
-WM_POINTERROUTEDTO              :: 0x0251;
-WM_POINTERROUTEDAWAY            :: 0x0252;
-WM_POINTERROUTEDRELEASED        :: 0x0253;
+WM_NCPOINTERUPDATE              :: 0x0241
+WM_NCPOINTERDOWN                :: 0x0242
+WM_NCPOINTERUP                  :: 0x0243
+WM_POINTERUPDATE                :: 0x0245
+WM_POINTERDOWN                  :: 0x0246
+WM_POINTERUP                    :: 0x0247
+WM_POINTERENTER                 :: 0x0249
+WM_POINTERLEAVE                 :: 0x024A
+WM_POINTERACTIVATE              :: 0x024B
+WM_POINTERCAPTURECHANGED        :: 0x024C
+WM_TOUCHHITTESTING              :: 0x024D
+WM_POINTERWHEEL                 :: 0x024E
+WM_POINTERHWHEEL                :: 0x024F
+DM_POINTERHITTEST               :: 0x0250
+WM_POINTERROUTEDTO              :: 0x0251
+WM_POINTERROUTEDAWAY            :: 0x0252
+WM_POINTERROUTEDRELEASED        :: 0x0253
 // #endif /* WINVER >= 0x0602 */
 
 
 // #if(WINVER >= 0x0400)
-WM_IME_SETCONTEXT               :: 0x0281;
-WM_IME_NOTIFY                   :: 0x0282;
-WM_IME_CONTROL                  :: 0x0283;
-WM_IME_COMPOSITIONFULL          :: 0x0284;
-WM_IME_SELECT                   :: 0x0285;
-WM_IME_CHAR                     :: 0x0286;
+WM_IME_SETCONTEXT               :: 0x0281
+WM_IME_NOTIFY                   :: 0x0282
+WM_IME_CONTROL                  :: 0x0283
+WM_IME_COMPOSITIONFULL          :: 0x0284
+WM_IME_SELECT                   :: 0x0285
+WM_IME_CHAR                     :: 0x0286
 // #endif /* WINVER >= 0x0400 */
 // #if(WINVER >= 0x0500)
-WM_IME_REQUEST                  :: 0x0288;
+WM_IME_REQUEST                  :: 0x0288
 // #endif /* WINVER >= 0x0500 */
 // #if(WINVER >= 0x0400)
-WM_IME_KEYDOWN                  :: 0x0290;
-WM_IME_KEYUP                    :: 0x0291;
+WM_IME_KEYDOWN                  :: 0x0290
+WM_IME_KEYUP                    :: 0x0291
 // #endif /* WINVER >= 0x0400 */
 
 // #if((_WIN32_WINNT >= 0x0400) || (WINVER >= 0x0500))
-WM_MOUSEHOVER                   :: 0x02A1;
-WM_MOUSELEAVE                   :: 0x02A3;
+WM_MOUSEHOVER                   :: 0x02A1
+WM_MOUSELEAVE                   :: 0x02A3
 // #endif
 // #if(WINVER >= 0x0500)
-WM_NCMOUSEHOVER                 :: 0x02A0;
-WM_NCMOUSELEAVE                 :: 0x02A2;
+WM_NCMOUSEHOVER                 :: 0x02A0
+WM_NCMOUSELEAVE                 :: 0x02A2
 // #endif /* WINVER >= 0x0500 */
 
 // #if(_WIN32_WINNT >= 0x0501)
-WM_WTSSESSION_CHANGE            :: 0x02B1;
+WM_WTSSESSION_CHANGE            :: 0x02B1
 
-WM_TABLET_FIRST                 :: 0x02c0;
-WM_TABLET_LAST                  :: 0x02df;
+WM_TABLET_FIRST                 :: 0x02c0
+WM_TABLET_LAST                  :: 0x02df
 // #endif /* _WIN32_WINNT >= 0x0501 */
 
 // #if(WINVER >= 0x0601)
-WM_DPICHANGED                   :: 0x02E0;
+WM_DPICHANGED                   :: 0x02E0
 // #endif /* WINVER >= 0x0601 */
 // #if(WINVER >= 0x0605)
-WM_DPICHANGED_BEFOREPARENT      :: 0x02E2;
-WM_DPICHANGED_AFTERPARENT       :: 0x02E3;
-WM_GETDPISCALEDSIZE             :: 0x02E4;
+WM_DPICHANGED_BEFOREPARENT      :: 0x02E2
+WM_DPICHANGED_AFTERPARENT       :: 0x02E3
+WM_GETDPISCALEDSIZE             :: 0x02E4
 // #endif /* WINVER >= 0x0605 */
 
 
-WM_CUT                          :: 0x0300;
-WM_COPY                         :: 0x0301;
-WM_PASTE                        :: 0x0302;
-WM_CLEAR                        :: 0x0303;
-WM_UNDO                         :: 0x0304;
-WM_RENDERFORMAT                 :: 0x0305;
-WM_RENDERALLFORMATS             :: 0x0306;
-WM_DESTROYCLIPBOARD             :: 0x0307;
-WM_DRAWCLIPBOARD                :: 0x0308;
-WM_PAINTCLIPBOARD               :: 0x0309;
-WM_VSCROLLCLIPBOARD             :: 0x030A;
-WM_SIZECLIPBOARD                :: 0x030B;
-WM_ASKCBFORMATNAME              :: 0x030C;
-WM_CHANGECBCHAIN                :: 0x030D;
-WM_HSCROLLCLIPBOARD             :: 0x030E;
-WM_QUERYNEWPALETTE              :: 0x030F;
-WM_PALETTEISCHANGING            :: 0x0310;
-WM_PALETTECHANGED               :: 0x0311;
-WM_HOTKEY                       :: 0x0312;
+WM_CUT                          :: 0x0300
+WM_COPY                         :: 0x0301
+WM_PASTE                        :: 0x0302
+WM_CLEAR                        :: 0x0303
+WM_UNDO                         :: 0x0304
+WM_RENDERFORMAT                 :: 0x0305
+WM_RENDERALLFORMATS             :: 0x0306
+WM_DESTROYCLIPBOARD             :: 0x0307
+WM_DRAWCLIPBOARD                :: 0x0308
+WM_PAINTCLIPBOARD               :: 0x0309
+WM_VSCROLLCLIPBOARD             :: 0x030A
+WM_SIZECLIPBOARD                :: 0x030B
+WM_ASKCBFORMATNAME              :: 0x030C
+WM_CHANGECBCHAIN                :: 0x030D
+WM_HSCROLLCLIPBOARD             :: 0x030E
+WM_QUERYNEWPALETTE              :: 0x030F
+WM_PALETTEISCHANGING            :: 0x0310
+WM_PALETTECHANGED               :: 0x0311
+WM_HOTKEY                       :: 0x0312
 
 // #if(WINVER >= 0x0400)
-WM_PRINT                        :: 0x0317;
-WM_PRINTCLIENT                  :: 0x0318;
+WM_PRINT                        :: 0x0317
+WM_PRINTCLIENT                  :: 0x0318
 // #endif /* WINVER >= 0x0400 */
 
 // #if(_WIN32_WINNT >= 0x0500)
-WM_APPCOMMAND                   :: 0x0319;
+WM_APPCOMMAND                   :: 0x0319
 // #endif /* _WIN32_WINNT >= 0x0500 */
 
 // #if(_WIN32_WINNT >= 0x0501)
-WM_THEMECHANGED                 :: 0x031A;
+WM_THEMECHANGED                 :: 0x031A
 // #endif /* _WIN32_WINNT >= 0x0501 */
 
 
 // #if(_WIN32_WINNT >= 0x0501)
-WM_CLIPBOARDUPDATE              :: 0x031D;
+WM_CLIPBOARDUPDATE              :: 0x031D
 // #endif /* _WIN32_WINNT >= 0x0501 */
 
 // #if(_WIN32_WINNT >= 0x0600)
-WM_DWMCOMPOSITIONCHANGED        :: 0x031E;
-WM_DWMNCRENDERINGCHANGED        :: 0x031F;
-WM_DWMCOLORIZATIONCOLORCHANGED  :: 0x0320;
-WM_DWMWINDOWMAXIMIZEDCHANGE     :: 0x0321;
+WM_DWMCOMPOSITIONCHANGED        :: 0x031E
+WM_DWMNCRENDERINGCHANGED        :: 0x031F
+WM_DWMCOLORIZATIONCOLORCHANGED  :: 0x0320
+WM_DWMWINDOWMAXIMIZEDCHANGE     :: 0x0321
 // #endif /* _WIN32_WINNT >= 0x0600 */
 
 // #if(_WIN32_WINNT >= 0x0601)
-WM_DWMSENDICONICTHUMBNAIL           :: 0x0323;
-WM_DWMSENDICONICLIVEPREVIEWBITMAP   :: 0x0326;
+WM_DWMSENDICONICTHUMBNAIL           :: 0x0323
+WM_DWMSENDICONICLIVEPREVIEWBITMAP   :: 0x0326
 // #endif /* _WIN32_WINNT >= 0x0601 */
 
 
 // #if(WINVER >= 0x0600)
-WM_GETTITLEBARINFOEX            :: 0x033F;
+WM_GETTITLEBARINFOEX            :: 0x033F
 // #endif /* WINVER >= 0x0600 */
 
 // #if(WINVER >= 0x0400)
@@ -823,19 +823,19 @@ WM_GETTITLEBARINFOEX            :: 0x033F;
 
 
 // #if(WINVER >= 0x0400)
-WM_HANDHELDFIRST                :: 0x0358;
-WM_HANDHELDLAST                 :: 0x035F;
+WM_HANDHELDFIRST                :: 0x0358
+WM_HANDHELDLAST                 :: 0x035F
 
-WM_AFXFIRST                     :: 0x0360;
-WM_AFXLAST                      :: 0x037F;
+WM_AFXFIRST                     :: 0x0360
+WM_AFXLAST                      :: 0x037F
 // #endif /* WINVER >= 0x0400 */
 
-WM_PENWINFIRST                  :: 0x0380;
-WM_PENWINLAST                   :: 0x038F;
+WM_PENWINFIRST                  :: 0x0380
+WM_PENWINLAST                   :: 0x038F
 
 
 // #if(WINVER >= 0x0400)
-WM_APP                          :: 0x8000;
+WM_APP                          :: 0x8000
 // #endif /* WINVER >= 0x0400 */
 
 
@@ -844,60 +844,60 @@ WM_APP                          :: 0x8000;
  *
  * Private Window Messages Start Here:
  */
-WM_USER                         :: 0x0400;
+WM_USER                         :: 0x0400
 
 
-RIM_TYPEMOUSE    :: 0; // Raw input comes from the mouse.
-RIM_TYPEKEYBOARD :: 1; // Raw input comes from the keyboard.
-RIM_TYPEHID      :: 2; // Raw input comes from some device that is not a keyboard or a mouse.
+RIM_TYPEMOUSE    :: 0 // Raw input comes from the mouse.
+RIM_TYPEKEYBOARD :: 1 // Raw input comes from the keyboard.
+RIM_TYPEHID      :: 2 // Raw input comes from some device that is not a keyboard or a mouse.
 
 
-RID_HEADER :: 0x10000005; // Get the header information from the RAWINPUT structure.
-RID_INPUT  :: 0x10000003; // Get the raw data from the RAWINPUT structure. 
+RID_HEADER :: 0x10000005 // Get the header information from the RAWINPUT structure.
+RID_INPUT  :: 0x10000003 // Get the raw data from the RAWINPUT structure. 
 
-RI_MOUSE_LEFT_BUTTON_DOWN   :: 0x0001; // Left button changed to down.
-RI_MOUSE_LEFT_BUTTON_UP     :: 0x0002; // Left button changed to up.
-RI_MOUSE_RIGHT_BUTTON_DOWN  :: 0x0004; // Right button changed to down.
-RI_MOUSE_RIGHT_BUTTON_UP    :: 0x0008; // Right button changed to up.
-RI_MOUSE_MIDDLE_BUTTON_DOWN :: 0x0010; // Middle button changed to down.
-RI_MOUSE_MIDDLE_BUTTON_UP   :: 0x0020; // Middle button changed to up.
-RI_MOUSE_BUTTON_4_DOWN      :: 0x0040; // XBUTTON1 changed to down.
-RI_MOUSE_BUTTON_4_UP        :: 0x0080; // XBUTTON1 changed to up.
-RI_MOUSE_BUTTON_5_DOWN      :: 0x0100; // XBUTTON2 changed to down.
-RI_MOUSE_BUTTON_5_UP        :: 0x0200; // XBUTTON2 changed to up.
-RI_MOUSE_WHEEL              :: 0x0400; // Raw input comes from a mouse wheel. The wheel delta is stored in usButtonData. A positive value indicates that the wheel was rotated forward, away from the user; a negative value indicates that the wheel was rotated backward, toward the user. For further information see the following Remarks section.
-RI_MOUSE_HWHEEL             :: 0x0800; // Raw input comes from a horizontal mouse wheel. The wheel delta is stored in usButtonData. A positive value indicates that the wheel was rotated to the right; a negative value indicates that the wheel was rotated to the left. For further information see the following Remarks section. Windows XP/2000: This value is not supported.
+RI_MOUSE_LEFT_BUTTON_DOWN   :: 0x0001 // Left button changed to down.
+RI_MOUSE_LEFT_BUTTON_UP     :: 0x0002 // Left button changed to up.
+RI_MOUSE_RIGHT_BUTTON_DOWN  :: 0x0004 // Right button changed to down.
+RI_MOUSE_RIGHT_BUTTON_UP    :: 0x0008 // Right button changed to up.
+RI_MOUSE_MIDDLE_BUTTON_DOWN :: 0x0010 // Middle button changed to down.
+RI_MOUSE_MIDDLE_BUTTON_UP   :: 0x0020 // Middle button changed to up.
+RI_MOUSE_BUTTON_4_DOWN      :: 0x0040 // XBUTTON1 changed to down.
+RI_MOUSE_BUTTON_4_UP        :: 0x0080 // XBUTTON1 changed to up.
+RI_MOUSE_BUTTON_5_DOWN      :: 0x0100 // XBUTTON2 changed to down.
+RI_MOUSE_BUTTON_5_UP        :: 0x0200 // XBUTTON2 changed to up.
+RI_MOUSE_WHEEL              :: 0x0400 // Raw input comes from a mouse wheel. The wheel delta is stored in usButtonData. A positive value indicates that the wheel was rotated forward, away from the user a negative value indicates that the wheel was rotated backward, toward the user. For further information see the following Remarks section.
+RI_MOUSE_HWHEEL             :: 0x0800 // Raw input comes from a horizontal mouse wheel. The wheel delta is stored in usButtonData. A positive value indicates that the wheel was rotated to the right a negative value indicates that the wheel was rotated to the left. For further information see the following Remarks section. Windows XP/2000: This value is not supported.
 
-RI_MOUSE_BUTTON_1_DOWN :: RI_MOUSE_LEFT_BUTTON_DOWN;
-RI_MOUSE_BUTTON_1_UP   :: RI_MOUSE_LEFT_BUTTON_UP;
-RI_MOUSE_BUTTON_2_DOWN :: RI_MOUSE_RIGHT_BUTTON_DOWN;
-RI_MOUSE_BUTTON_2_UP   :: RI_MOUSE_RIGHT_BUTTON_UP;
-RI_MOUSE_BUTTON_3_DOWN :: RI_MOUSE_MIDDLE_BUTTON_DOWN;
-RI_MOUSE_BUTTON_3_UP   :: RI_MOUSE_MIDDLE_BUTTON_UP;
+RI_MOUSE_BUTTON_1_DOWN :: RI_MOUSE_LEFT_BUTTON_DOWN
+RI_MOUSE_BUTTON_1_UP   :: RI_MOUSE_LEFT_BUTTON_UP
+RI_MOUSE_BUTTON_2_DOWN :: RI_MOUSE_RIGHT_BUTTON_DOWN
+RI_MOUSE_BUTTON_2_UP   :: RI_MOUSE_RIGHT_BUTTON_UP
+RI_MOUSE_BUTTON_3_DOWN :: RI_MOUSE_MIDDLE_BUTTON_DOWN
+RI_MOUSE_BUTTON_3_UP   :: RI_MOUSE_MIDDLE_BUTTON_UP
 
 
-IDC_APPSTARTING :: 32650 as *U8;
-IDC_ARROW       :: 32512 as *U8;
-IDC_CROSS       :: 32515 as *U8;
-IDC_HAND        :: 32649 as *U8;
-IDC_HELP        :: 32651 as *U8;
-IDC_IBEAM       :: 32513 as *U8;
-IDC_ICON        :: 32641 as *U8;
-IDC_NO          :: 32648 as *U8;
-IDC_SIZE        :: 32640 as *U8;
-IDC_SIZEALL     :: 32646 as *U8;
-IDC_SIZENESW    :: 32643 as *U8;
-IDC_SIZENS      :: 32645 as *U8;
-IDC_SIZENWSE    :: 32642 as *U8;
-IDC_SIZEWE      :: 32644 as *U8;
-IDC_UPARROW     :: 32516 as *U8;
-IDC_WAIT        :: 32514 as *U8;
+IDC_APPSTARTING :: 32650 as *U8
+IDC_ARROW       :: 32512 as *U8
+IDC_CROSS       :: 32515 as *U8
+IDC_HAND        :: 32649 as *U8
+IDC_HELP        :: 32651 as *U8
+IDC_IBEAM       :: 32513 as *U8
+IDC_ICON        :: 32641 as *U8
+IDC_NO          :: 32648 as *U8
+IDC_SIZE        :: 32640 as *U8
+IDC_SIZEALL     :: 32646 as *U8
+IDC_SIZENESW    :: 32643 as *U8
+IDC_SIZENS      :: 32645 as *U8
+IDC_SIZENWSE    :: 32642 as *U8
+IDC_SIZEWE      :: 32644 as *U8
+IDC_UPARROW     :: 32516 as *U8
+IDC_WAIT        :: 32514 as *U8
 
 #extern_library "kernel32"
 
-GetStdHandle :: (nStdHandle: DWORD): HANDLE;
+GetStdHandle :: (nStdHandle: DWORD): HANDLE
 
-WriteConsoleA :: (hConsoleOutput: HANDLE, lpBuffer: LPCVOID, nNumberOfCharsToWrite: DWORD, lpNumberOfCharsWritten: LPDWORD, lpReserved: LPVOID): BOOL;
+WriteConsoleA :: (hConsoleOutput: HANDLE, lpBuffer: LPCVOID, nNumberOfCharsToWrite: DWORD, lpNumberOfCharsWritten: LPDWORD, lpReserved: LPVOID): BOOL
 
 CreateFileA :: (
 	lpFileName: LPCSTR,
@@ -907,7 +907,7 @@ CreateFileA :: (
 	dwCreationDisposition: DWORD,
 	dwFlagsAndAttributes: DWORD,
 	hTemplateFile: HANDLE
-): HANDLE;
+): HANDLE
 
 WriteFile :: (
 	hFile:                  HANDLE,
@@ -915,41 +915,41 @@ WriteFile :: (
 	nNumberOfBytesToWrite:  DWORD,
 	lpNumberOfBytesWritten: LPDWORD,
 	lpOverlapped:           *OVERLAPPED
-): BOOL;
+): BOOL
 
-GetLastError :: (): DWORD;
+GetLastError :: (): DWORD
 
 VirtualAlloc :: (
 	lpAddress        : LPVOID,
 	dwSize           : SIZE_T,
 	flAllocationType : DWORD,
 	flProtect        : DWORD
-): LPVOID;
+): LPVOID
 
 VirtualFree :: (
 	lpAddress: LPVOID,
 	dwSize: SIZE_T,
 	dwFreeType: DWORD
-): BOOL;
+): BOOL
 
 GetModuleHandleA :: (
 	lpModuleName : LPCSTR
-): HMODULE;
+): HMODULE
 
-ExitProcess :: (ret: UINT);
+ExitProcess :: (ret: UINT)
 
 #extern_library "user32"
 
 RegisterClassExA :: (
 	unnamedParam1 : *WNDCLASSEXA
-): ATOM;
+): ATOM
 
 DefWindowProcA :: (
 	hWnd   : HWND,
 	Msg    : UINT,
 	wParam : WPARAM,
 	lParam : LPARAM 
-): LRESULT ;
+): LRESULT 
 
 CreateWindowExA :: (
 	dwExStyle    : DWORD,
@@ -964,7 +964,7 @@ CreateWindowExA :: (
 	hMenu        : HMENU,
 	hInstance    : HINSTANCE,
 	lpParam      : LPVOID
-): HWND;
+): HWND
 
 PeekMessageA :: (
 	lpMsg         : LPMSG,
@@ -972,38 +972,38 @@ PeekMessageA :: (
 	wMsgFilterMin : UINT, 
 	wMsgFilterMax : UINT, 
 	wRemoveMsg    : UINT 
-): BOOL;
+): BOOL
 
 TranslateMessage :: (
 	lpMsg : *MSG
-): BOOL;
+): BOOL
 
 DispatchMessageA :: (
 	lpMsg : *MSG
-): LRESULT;
+): LRESULT
 
 PostQuitMessage :: (
   nExitCode : INT
-);
+)
 
 LoadCursorA :: (
   hInstance    : HINSTANCE,
   lpCursorName : LPCSTR
-): HCURSOR;
+): HCURSOR
 
 GetDC :: (
   hWnd : HWND
-): HDC;
+): HDC
 
 RegisterRawInputDevices :: (
     pRawInputDevices: PCRAWINPUTDEVICE,
     uiNumDevices: UINT,
     cbSize: UINT
-): BOOL;
+): BOOL
 
-SetCapture :: (hWnd: HWND): HWND;
+SetCapture :: (hWnd: HWND): HWND
 
-ReleaseCapture :: (): BOOL;
+ReleaseCapture :: (): BOOL
 
 GetRawInputData :: (
   hRawInput:    HRAWINPUT,
@@ -1011,4 +1011,4 @@ GetRawInputData :: (
   pData:	    LPVOID,
   pcbSize:	    PUINT,
   cbSizeHeader: UINT
-): UINT;
+): UINT

@@ -1078,7 +1078,6 @@ void unlock(Scope *scope);
 
 extern Map<String, AstDefinition *> names_not_available_for_globals;
 
-bool needs_semicolon(AstExpression *node);
 bool can_be_global(AstStatement *statement);
 
 AstStruct &get_built_in_type_from_token(TokenKind t);

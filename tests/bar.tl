@@ -1,6 +1,6 @@
 Bar :: struct {
-    s: Int;
+    s: Int
 }
 main :: () {
-    return Bar(69).s;
+    return Bar(69).s
 }

@@ -1,9 +1,9 @@
 import "std.tl"
 
 main :: (): Int {
-    println(#file);
-    println(#line);
-    println(#location);
-    println(#function);
-    return 42;
+    println(#file)
+    println(#line)
+    println(#location)
+    println(#function)
+    return 42
 }
