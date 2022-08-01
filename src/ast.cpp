@@ -517,7 +517,7 @@ bool is_integer_or_pointer(AstExpression *type) {
 bool is_integer_internally(AstExpression *type) {
 	return
 		::is_integer(type) ||
-		is_pointer(type) ||
+		is_pointer_internally(type) ||
 		direct_as<AstEnum>(type);
 }
 

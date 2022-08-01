@@ -14,7 +14,7 @@ enum class Register8 :u8{ al, cl, dl, bl,spl,bpl,sil,dil,r8b,r9b,r10b,r11b,r12b,
 // | reg | volatile |
 // +-----+----------+
 // | rax |    +     |
-// | rbx |          | used for bunch of bytecode instructions, for example to save rdx in div/idiv, or for pushing/popping floats
+// | rbx |          |
 // | rcx |    +     |
 // | rdx |    +     |
 // | rsi |          |

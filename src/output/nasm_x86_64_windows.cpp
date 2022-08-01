@@ -71,25 +71,84 @@ _ps:
 	//     1. convert tlangcall arguments to stdcall arguments
 	//     2. call rax
 	//     3. put rax into return value
+	// NOTE: to keep stack aligned to 16 bytes there are two versions, for even and odd number of arguments.
 	append(builder, R"(
-_stdcall:
+_stdcall_even:
+	push rsi
+	sub rsp, 32
+	mov rsi, rbx
 	xor rcx, rcx
 ._stdcall_l0:
-	cmp rcx, rbx
+	cmp rcx, rsi
 	je ._stdcall_l1
 
-	push qword [rsp + 8 + rcx*2]
+	push qword [rsp + 48 + rcx*2]
 
 	add rcx, 8
 	jmp ._stdcall_l0
 ._stdcall_l1:
+
+	mov rcx, rsp
+	and rcx, 15
+	test rcx, rcx
+	jz .ok
+	int3
+.ok:
+
 	mov rcx, [rsp + 0]
 	mov rdx, [rsp + 8]
 	mov r8,  [rsp + 16]
 	mov r9,  [rsp + 24]
+	movq xmm0, rcx
+	movq xmm1, rdx
+	movq xmm2, r8
+	movq xmm3, r9
 	call rax
-	add rsp, rbx
-	mov [rsp + 8 + rbx], rax
+	add rsp, rsi
+	mov [rsp + 48 + rsi], rax
+	add rsp, 32
+	pop rsi
+	ret
+)"
+	);
+	append(builder, R"(
+_stdcall_odd:
+	push rsi
+	push rsi
+	sub rsp, 32
+	mov rsi, rbx
+	xor rcx, rcx
+._stdcall_l0:
+	cmp rcx, rsi
+	je ._stdcall_l1
+
+	push qword [rsp + 56 + rcx*2]
+
+	add rcx, 8
+	jmp ._stdcall_l0
+._stdcall_l1:
+
+	mov rcx, rsp
+	and rcx, 15
+	test rcx, rcx
+	jz .ok
+	int3
+.ok:
+
+	mov rcx, [rsp + 0]
+	mov rdx, [rsp + 8]
+	mov r8,  [rsp + 16]
+	mov r9,  [rsp + 24]
+	movq xmm0, rcx
+	movq xmm1, rdx
+	movq xmm2, r8
+	movq xmm3, r9
+	call rax
+	add rsp, rsi
+	mov [rsp + 56 + rsi], rax
+	add rsp, 32
+	pop rsi
+	pop rsi
 	ret
 )"
 	);
@@ -150,7 +209,7 @@ DECLARE_OUTPUT_BUILDER {
 
 		append(builder, "bits 64\nextern ExitProcess\n");
 
-		for_each(bytecode.extern_libraries, [&](auto lib, auto fns) {
+		for_each(compiler.extern_libraries, [&](auto lib, auto fns) {
 			for (auto f : fns) {
 				append_format(builder, "extern {}\n", f);
 			}
@@ -214,11 +273,11 @@ DECLARE_OUTPUT_BUILDER {
 			compiler.output_path,
 			wkits_directory
 		);
-		for_each(bytecode.extern_libraries, [&](auto library, auto) {
+		for_each(compiler.extern_libraries, [&](auto library, auto) {
 			append_format(bat_builder, " {}.lib", library);
 		});
 
-		auto bat_path = u8"nasm_build.bat"s;
+		auto bat_path = format(u8"{}.build.bat"s, output_path_base);
 		write_entire_file(bat_path, as_bytes(to_string(bat_builder)));
 #if 1
 		timed_block(compiler.profiler, "nasm + link"s);

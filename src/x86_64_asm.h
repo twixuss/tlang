@@ -155,7 +155,15 @@ inline umm append_instruction(StringBuilder &builder, s64 idx, Instruction i) {
 		case mov1_mc: return append_format(builder, "mov byte{},{}", i.mov1_mc.d, i.mov1_mc.s);
 		case mov2_mc: return append_format(builder, "mov word{},{}", i.mov2_mc.d, i.mov2_mc.s);
 		case mov4_mc: return append_format(builder, "mov dword{},{}", i.mov4_mc.d, i.mov4_mc.s);
-		case mov8_mc: return append_format(builder, "mov qword{},{}", i.mov8_mc.d, i.mov8_mc.s);
+		case mov8_mc: {
+			REDECLARE_REF(i, i.mov8_mc);
+			auto mask = 0xFFFF'FFFF'8000'0000;
+			auto s = i.s & mask;
+			if (s == 0 || s == mask)
+				return append_format(builder, "mov qword{},{}", i.d, i.s);
+
+			return append_format(builder, "mov dword{},{}\nmov dword{},{}", i.d, (u32)i.s, i.d + 4, (u32)(i.s >> 32));
+		}
 
 		case mov1_rm: return append_format(builder, "mov {},{}", part1b(i.mov1_rm.d), i.mov1_rm.s);
 		case mov2_rm: return append_format(builder, "mov {},{}", part2b(i.mov2_rm.d), i.mov2_rm.s);
@@ -188,11 +196,11 @@ inline umm append_instruction(StringBuilder &builder, s64 idx, Instruction i) {
 			break;
 		}
 		case push_r: return append_format(builder, "push {}", i.push_r.s);
-		case push_f: return append_format(builder, "movq rbx,{}\npush rbx", i.push_f.s);
+		case push_f: return append_format(builder, "movq rax,{}\npush rax", i.push_f.s);
 		case push_m: return append_format(builder, "push qword{}", i.push_m.s);
 
 		case pop_r: return append_format(builder, "pop {}", i.pop_r.d);
-		case pop_f: return append_format(builder, "pop rbx\nmovq {}, rbx", i.pop_f.d);
+		case pop_f: return append_format(builder, "pop rax\nmovq {}, rax", i.pop_f.d);
 
 		case ret: return append_format(builder, "ret");
 
@@ -635,7 +643,8 @@ inline umm append_instruction(StringBuilder &builder, s64 idx, Instruction i) {
 			REDECLARE_REF(i, i.call_r);
 			switch (i.lambda->convention) {
 				case CallingConvention::tlang: return append_format(builder, "call {}", i.s);
-				case CallingConvention::stdcall: return append_format(builder, "mov rax, {}\nmov rbx, {}\ncall _stdcall", i.s, i.lambda->parameters_size);
+				case CallingConvention::stdcall:
+					return append_format(builder, "mov rax, {}\nmov rbx, {}\ncall _stdcall_{}", i.s, i.lambda->parameters_size, i.lambda->parameters_size % 16 == 0 ? "even" : "odd");
 				default: invalid_code_path();
 			}
 			break;
@@ -644,7 +653,7 @@ inline umm append_instruction(StringBuilder &builder, s64 idx, Instruction i) {
 			REDECLARE_REF(i, i.call_m);
 			switch (i.lambda->convention) {
 				case CallingConvention::tlang:  return append_format(builder, "call qword {}", i.s);
-				case CallingConvention::stdcall: return append_format(builder, "mov rax, {}\nmov rbx, {}\ncall _stdcall", i.s, i.lambda->parameters_size);
+				case CallingConvention::stdcall: return append_format(builder, "mov rax, {}\nmov rbx, {}\ncall _stdcall_{}", i.s, i.lambda->parameters_size, i.lambda->parameters_size % 16 == 0 ? "even" : "odd");
 				default: invalid_code_path();
 			}
 			break;
@@ -831,66 +840,122 @@ inline umm append_instruction(StringBuilder &builder, s64 idx, Instruction i) {
 			// [ ] parameters
 			// [ ] return parameters
 
+			auto begin_tlang = [&] {
+				append_format(builder, "push rbp\nmov rbp, rsp\n");
+
+				saved_registers_size = 0;
+
+				for_each(lambda->used_registers, [&](umm bit) {
+					append_format(builder, "push {}\n", (Register)bit);
+					saved_registers_size += 8;
+				});
+
+				// keep the stack 16-byte aligned
+				if (lambda->used_registers.count() & 1) {
+					append_format(builder, "sub rsp, 8\n");
+					saved_registers_size += 8;
+				}
+
+
+				auto used_bytes = lambda->locals_size + lambda->temporary_size + lambda->max_stack_space_used_for_call;
+				if (used_bytes >= 4096) {
+					append_format(builder, "mov rax, {}\ncall _ps\n", used_bytes);
+				}
+
+				if (used_bytes)
+					append_format(builder, "sub rsp, {}; reserve space for locals, temporary storage and call arguments\n", used_bytes);
+
+				temporary_offset = -(saved_registers_size + lambda->temporary_size);
+				locals_offset    = -(saved_registers_size + lambda->temporary_size + lambda->locals_size);
+				parameters_size  = lambda->parameters_size;
+			};
+
 			switch (lambda->convention) {
 				case CallingConvention::tlang: {
-					append_format(builder, "push rbp\nmov rbp, rsp\n");
-
-					saved_registers_size = 0;
-
-					for_each(lambda->used_registers, [&](umm bit) {
-						append_format(builder, "push {}\n", (Register)bit);
-						saved_registers_size += 8;
-					});
-
-					// keep the stack 16-byte aligned
-					if (lambda->used_registers.count() & 1) {
-						append_format(builder, "sub rsp, 8\n");
-						saved_registers_size += 8;
-					}
-
-
-					auto used_bytes = lambda->locals_size + lambda->temporary_size + lambda->max_stack_space_used_for_call;
-					if (used_bytes >= 4096) {
-						append_format(builder, "mov rax, {}\ncall _ps\n", used_bytes);
-					}
-
-					if (used_bytes)
-						append_format(builder, "sub rsp, {}; reserve space for locals, temporary storage and call arguments\n", used_bytes);
-
-					temporary_offset = -(saved_registers_size + lambda->temporary_size);
-					locals_offset    = -(saved_registers_size + lambda->temporary_size + lambda->locals_size);
-					parameters_size  = lambda->parameters_size;
-
-					//not_implemented();
+					begin_tlang();
 					break;
 				}
-				case CallingConvention::stdcall: not_implemented();
+				case CallingConvention::stdcall: {
+					auto param_size = (s64)lambda->parameters.count * 8;
+					auto return_size = 8;
+
+					s64 total_bytes_will_be_pushed = param_size + return_size;
+
+					auto param_offset = 16; // return addres and return value
+
+					if (total_bytes_will_be_pushed % 16 == 0) {
+						append(builder, "sub rsp, 8\n");  // keep alignment
+						total_bytes_will_be_pushed += 8;
+						param_offset += 8;
+					}
+
+					append(builder, "sub rsp, 8; reseve return parameter space\n");
+
+					if (lambda->parameters.count > 0) append(builder, "push rcx\n");
+					if (lambda->parameters.count > 1) append(builder, "push rdx\n");
+					if (lambda->parameters.count > 2) append(builder, "push r8\n");
+					if (lambda->parameters.count > 3) append(builder, "push r9\n");
+
+					for (umm i = 4; i < lambda->parameters.count; ++i) {
+						append_format(builder, "push qword[rsp + {}]\n", (i * 2) * 8 + param_offset);
+					}
+
+					append(builder, "push 0xDEADC0D; dummy return address\n");
+
+					begin_tlang();
+
+					break;
+				}
 			}
 			return 0;
 		}
 		case end_lambda: {
 			REDECLARE_REF(i, i.end_lambda);
 			auto lambda = i.lambda;
+
+			auto end_tlang = [&] {
+				auto used_bytes = lambda->locals_size + lambda->temporary_size + lambda->max_stack_space_used_for_call;
+
+				// keep the stack 16-byte aligned
+				if (lambda->used_registers.count() & 1) {
+					used_bytes += 8;
+				}
+				if (used_bytes)
+					append_format(builder, "add rsp, {}; remove space for locals, temporary storage and call arguments\n", used_bytes);
+
+				for_each<ForEach_reverse>(lambda->used_registers, [&](umm bit) {
+					append_format(builder, "pop {}\n", (Register)bit);
+				});
+				append(builder, "mov rsp, rbp\npop rbp\n");
+			};
+
 			switch (lambda->convention) {
 				case CallingConvention::tlang: {
-
-					auto used_bytes = lambda->locals_size + lambda->temporary_size + lambda->max_stack_space_used_for_call;
-
-					// keep the stack 16-byte aligned
-					if (lambda->used_registers.count() & 1) {
-						used_bytes += 8;
-					}
-					if (used_bytes)
-						append_format(builder, "add rsp, {}; remove space for locals, temporary storage and call arguments\n", used_bytes);
-
-					for_each(lambda->used_registers, [&](umm bit) {
-						append_format(builder, "pop {}\n", (Register)bit);
-					});
-
-					append_format(builder, "mov rsp, rbp\npop rbp\nret");
+					end_tlang();
+					append(builder, "ret");
 					break;
 				}
-				case CallingConvention::stdcall: not_implemented();
+				case CallingConvention::stdcall: {
+					end_tlang();
+
+					auto param_size = (s64)lambda->parameters.count * 8;
+					auto return_size = 8;
+					s64 total_bytes_were_pushed = param_size + return_size;
+
+
+					append(builder, "add rsp,8; pop dummy return address\n");
+
+
+					append_format(builder, "add rsp,{}\n", param_size);
+
+					append(builder, "pop rax\n");
+
+					if (total_bytes_were_pushed % 16 == 0) {
+						append(builder, "add rsp, 8\n");  // keep alignment
+					}
+					append(builder, "ret");
+					break;
+				}
 			}
 			return 0;
 		}

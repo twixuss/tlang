@@ -385,8 +385,6 @@ inline auto get_instruction_variant() {
 inline static constexpr auto QWERTY1 = sizeof RegisterOrAddress;
 inline static constexpr auto QWERTY2 = sizeof Instruction;
 
-using ExternLibraries = Map<String, List<String>>;
-
 using InstructionList = BlockList<Instruction>;
 
 struct SectionBuilder {
@@ -421,7 +419,6 @@ struct SectionBuilder {
 
 struct Bytecode {
 	List<Instruction> instructions;
-	ExternLibraries extern_libraries;
 };
 
 Bytecode build_bytecode();

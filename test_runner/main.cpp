@@ -2,6 +2,8 @@
 #include <tl/main.h>
 #include <tl/file.h>
 #include <tl/process.h>
+#include <tl/thread.h>
+#include <tl/cpu.h>
 #include <conio.h>
 
 using namespace tl;
@@ -81,9 +83,9 @@ struct RanProcess {
 	Span<utf8> output = {};
 };
 
-RanProcess run_process(Span<utf8> command) {
-	print("{} ", command);
+Mutex stdout_mutex;
 
+RanProcess run_process(Span<utf8> command) {
 	auto process = start_process(to_utf16(command));
 	assert(is_valid(process));
 
@@ -103,8 +105,6 @@ RanProcess run_process(Span<utf8> command) {
 		.exit_code = get_exit_code(process),
 		.output = as_utf8(to_string(output_builder)),
 	};
-
-	with(ConsoleColor::cyan, print("{}\n", result.exit_code));
 
 	return result;
 }
@@ -148,108 +148,130 @@ s32 tl_main(Span<Span<utf8>> arguments) {
 	u32 n_failed = 0;
 	u32 n_succeeded = 0;
 
+	ThreadPool pool;
+	init_thread_pool(pool, get_cpu_info().logical_processor_count - 1);
+
+	auto queue = make_work_queue(pool);
+
 	for (auto test : tests) {
-		struct ExpectedOutput {
-			RanProcess compiler;
-			Optional<RanProcess> test;
-		};
+		queue += [test, update, &n_failed, &n_succeeded] {
+			with(stdout_mutex, print("{}\n", test));
 
-		auto separator = u8"\0\0\0\0"s;
-
-		auto expected_output_path = format("expected/{}", test);
-
-		ExpectedOutput expected = {};
-		if (auto expected_output_data = read_entire_file(expected_output_path); expected_output_data.data) {
-			auto remaining = (Span<utf8>)expected_output_data;
-
-			expected.compiler.exit_code = *(u32 *)remaining.data;
-			remaining.set_begin(remaining.data + sizeof u32);
-
-			auto found_separator = find(remaining, separator);
-			if (found_separator) {
-				expected.compiler.output = {
-					remaining.data,
-					found_separator
-				};
-
-				remaining.set_begin(expected.compiler.output.end() + separator.count);
-
-				assert(remaining.count);
-
-				RanProcess test;
-				test.exit_code = *(u32 *)remaining.data;
-				remaining.set_begin(remaining.data + sizeof u32);
-
-				test.output = remaining;
-				expected.test = test;
-			} else {
-				expected.compiler.output = remaining;
-			}
-		}
-
-		auto actual_compiler = run_process(format(u8"tlang.exe {}"s, test));
-		auto test_exe_path = format(u8"{}.exe"s, parse_path(test).name);
-		Optional<RanProcess> actual_test;
-		if (file_exists(test_exe_path))
-			actual_test = run_process(test_exe_path);
-
-		if (update) {
-			StringBuilder builder;
-			append_bytes(builder, actual_compiler.exit_code);
-			append(builder, actual_compiler.output);
-			if (actual_test) {
-				append(builder, separator);
-				append_bytes(builder, actual_test.value().exit_code);
-				append(builder, actual_test.value().output);
-			}
-			write_entire_file(expected_output_path, as_bytes(to_string(builder)));
-		} else {
-			bool fail = false;
-
-			auto check = [&] (RanProcess actual, RanProcess expected) {
-				if (actual.exit_code != expected.exit_code) {
-					fail = true;
-					with(ConsoleColor::red, print("Exit code mismatch: "));
-					print("expected {}, got {}\n", expected.exit_code, actual.exit_code);
-				}
-				if (actual.output != expected.output) {
-					fail = true;
-					with(ConsoleColor::red, print("Output mismatch:\n"));
-					with(ConsoleColor::cyan, print("Expected:\n"));
-					print("{}\n", expected.output);
-					with(ConsoleColor::cyan, print("Actual:\n"));
-					print("{}\n", actual.output);
-				}
+			struct ExpectedOutput {
+				RanProcess compiler;
+				Optional<RanProcess> test;
 			};
 
-			check(actual_compiler, expected.compiler);
+			auto separator = u8"\0\0\0\0"s;
 
-			if (!fail) {
-				if (actual_test) {
-					if (expected.test) {
-						check(actual_test.value(), expected.test.value());
-					} else {
-						fail = true;
-						with(ConsoleColor::red, print("Test executable was generated, but no expected output was found.\n"));
-					}
+			auto expected_output_path = format("expected/{}", test);
+
+			ExpectedOutput expected = {};
+			if (auto expected_output_data = read_entire_file(expected_output_path); expected_output_data.data) {
+				auto remaining = (Span<utf8>)expected_output_data;
+
+				expected.compiler.exit_code = *(u32 *)remaining.data;
+				remaining.set_begin(remaining.data + sizeof u32);
+
+				auto found_separator = find(remaining, separator);
+				if (found_separator) {
+					expected.compiler.output = {
+						remaining.data,
+						found_separator
+					};
+
+					remaining.set_begin(expected.compiler.output.end() + separator.count);
+
+					assert(remaining.count);
+
+					RanProcess test;
+					test.exit_code = *(u32 *)remaining.data;
+					remaining.set_begin(remaining.data + sizeof u32);
+
+					test.output = remaining;
+					expected.test = test;
 				} else {
-					if (expected.test) {
-						fail = true;
-						with(ConsoleColor::red, print("Compiler was expected to generate an executable, but it was not found.\n"));
-					}
+					expected.compiler.output = remaining;
 				}
 			}
 
-			n_failed += fail;
-			n_succeeded += !fail;
-		}
+			auto actual_compiler = run_process(format(u8"tlang.exe {}"s, test));
+			auto test_exe_path = format(u8"{}.exe"s, parse_path(test).name);
+			Optional<RanProcess> actual_test;
+			if (file_exists(test_exe_path))
+				actual_test = run_process(test_exe_path);
+
+			if (update) {
+				StringBuilder builder;
+				append_bytes(builder, actual_compiler.exit_code);
+				append(builder, actual_compiler.output);
+				if (actual_test) {
+					append(builder, separator);
+					append_bytes(builder, actual_test.value().exit_code);
+					append(builder, actual_test.value().output);
+				}
+				write_entire_file(expected_output_path, as_bytes(to_string(builder)));
+			} else {
+				bool fail = false;
+
+				scoped(stdout_mutex);
+
+				auto do_fail = [&] () {
+					if (!fail) {
+						fail = true;
+						with(ConsoleColor::red, print("    Test {} failed:\n", test));
+					}
+				};
+
+				auto check = [&] (RanProcess actual, RanProcess expected) {
+					if (actual.exit_code != expected.exit_code) {
+						do_fail();
+						with(ConsoleColor::red, print("Exit code mismatch: "));
+						print("expected {}, got {}\n", expected.exit_code, actual.exit_code);
+					}
+					if (actual.output != expected.output) {
+						do_fail();
+						with(ConsoleColor::red, print("Output mismatch:\n"));
+						with(ConsoleColor::cyan, print("Expected:\n"));
+						print("{}\n", expected.output);
+						with(ConsoleColor::cyan, print("Actual:\n"));
+						print("{}\n", actual.output);
+					}
+				};
+
+				check(actual_compiler, expected.compiler);
+
+				if (!fail) {
+					if (actual_test) {
+						if (expected.test) {
+							check(actual_test.value(), expected.test.value());
+						} else {
+							do_fail();
+							with(ConsoleColor::red, print("Test executable was generated, but no expected output was found.\n"));
+							with(ConsoleColor::cyan, print("Actual output:\n"));
+							print("{}\n", actual_test.value().output);
+						}
+					} else {
+						if (expected.test) {
+							do_fail();
+							with(ConsoleColor::red, print("Compiler was expected to generate an executable, but it was not found.\n"));
+						}
+					}
+				}
+
+				atomic_add(&n_failed, fail);
+				atomic_add(&n_succeeded, !fail);
+			}
+		};
 	}
+
+	queue.wait_for_completion();
 
 	if (update) {
 		with(ConsoleColor::cyan, print("{} tests updated.\n", tests.count));
 	} else {
 		if (n_failed) with(ConsoleColor::red,   print("{}/{} tests failed.\n", n_failed, tests.count));
-		else          with(ConsoleColor::green, print("All tests succeeded.\n"));
+		else          with(ConsoleColor::green, print("All {} tests succeeded.\n", tests.count));
 	}
 
 //retry:

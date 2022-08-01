@@ -1,16 +1,21 @@
-main :: (): Int =>
-    t0() +
-    t1(1) -
-    t2(1, 2) *
-    t3(1, 2, 3) +
-    t4(1, 2, 3, 4) -
-    t5(1, 2, 3, 4, 5) *
-    s0() +
-    s1(1) -
-    s2(1, 2) *
-    s3(1, 2, 3) +
-    s4(1, 2, 3, 4) -
-    s5(1, 2, 3, 4, 5)
+main :: () {
+    assert t0() == 59
+    assert t1(1) == 1
+    assert t2(1, 2) == 2
+    assert t3(1, 2, 3) == 3
+    assert t4(1, 2, 3, 4) == 4
+    assert t5(1, 2, 3, 4, 5) == 5
+    assert t6(1, 2, 3, 4, 5, 6) == 6
+    assert s0() == 59
+    assert s1(1) == 1
+    assert s2(1, 2) == 2
+    assert s3(1, 2, 3) == 3
+    assert s4(1, 2, 3, 4) == 4
+    assert s5(1, 2, 3, 4, 5) == 5
+    assert s6(1, 2, 3, 4, 5, 6) == 6
+}
+
+# () => main()
 
 t0 :: (): Int => 59
 t1 :: (x: Int): Int => x
@@ -26,4 +31,4 @@ s2 :: (x: Int, y: Int): Int #stdcall => y
 s3 :: (x: Int, y: Int, z: Int): Int #stdcall => z
 s4 :: (x: Int, y: Int, z: Int, w: Int): Int #stdcall => w
 s5 :: (x: Int, y: Int, z: Int, w: Int, a: Int): Int #stdcall => a
-s6 :: (x: Int, y: Int, z: Int, w: Int, a: Int, b: Int): Int #stdcall => a
+s6 :: (x: Int, y: Int, z: Int, w: Int, a: Int, b: Int): Int #stdcall => b

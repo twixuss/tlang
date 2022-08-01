@@ -162,16 +162,19 @@ if condition
   a = b + c;
 else
   a = b - c;
-// This does what you think.
 ```
-In this case if you put semicolon or not, nothing changes.
-But in some cases they may be considered as empty statements:
+Note that semicolon mus be placed on the same line with the statement.
 ```java
-while true;
+if condition
+  a = b + c
+  ;
+else
+  a = b - c;
+// Error. The line with the semicolon and the one above are independent statements,
+// and we can't use `else` block without braces after `if`.
 ```
-Here the semicolon is treated as an empty statement.
 Basically the rule is:
-* If a semicolon is present right after a statement, it is included in that statement and the statement is terminated.
+* If a semicolon is present right after a statement (no new line between them), it is included in that statement and the statement is terminated.
 * Otherwise it is treated as an independent empty statement.
 
 Note that empty statements and block statements, like `while`, `defer` and others, can not be terminated with a semicolon.
@@ -193,19 +196,30 @@ Windows uses stdcall convention, so #stdcall directive says to use stdcall calli
 This directive says to use stdcall calling convention for ALL following functions. if you want to restore language default calling convention, use `#tlangcall` directive.
 ## "Macros"
 ```c
-#line           // line number
-#column         // column number
-#file           // file string
-#function       // function type string *
-#assert         // compile-time assert
-#print expr     // compile-time print
-#typeof expr    // returns the type of expr
-#compiles {...} // evaluates to true or false depending if the following block compiles or not.
-                // that block will not be evaluated at runtime.
+#line // line number
+
+#column // column number
+
+#file // file string
+
+#location // string in form "file:line:column"
+
+#function // function type string *
+// NOTE: Because of return type deduction, if no return type was specified, #function has to be
+// evaluated after typechecking the entire body. It will evaluate to correct name at runtime, but if
+// it is used in constant context, it will result in "undefined".
+
+#assert <expression> // assert at compile time that expression evaluates to `true`
+
+#print <expression> // prints the value at compile time
+
+#typeof <expression> // returns the type of expression
+
+#compiles <statement> // evaluates to true or false depending if the following statement compiles or not.
+                      // that block will not be evaluated at runtime.
+
+# <lambda> // evaluate lambda at compile time.
 ```
-\* Because of return type deduction, if no return type was specified, #function has to be
-evaluated after typechecking the entire body. It will evaluate to correct name at runtime, but if
-it is used in constant context, it will result in "undefined".
 # Types
 ## Optional
 ```java

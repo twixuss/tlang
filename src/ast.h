@@ -229,13 +229,18 @@ forceinline T *raw(Statement<T> statement) { return statement.raw(); }
 
 using DefinitionList = SmallList<AstDefinition *>;
 
+struct UsingAndDefinition {
+	AstUsing *Using;
+	AstDefinition *definition;
+};
+
 struct Scope : DefaultAllocatable<Scope> {
 	AstNode *node = 0;
 	Scope *parent = 0;
 	u32 level = 0;
 	SmallList<Scope *> children;
 	SmallList<AstStatement *> statements;
-	SmallList<AstUsing *> usings;
+	SmallList<UsingAndDefinition> usings;
 	Map<KeyString, DefinitionList> definitions; // multiple definitions for a single name in case of function overloading
 	SmallList<AstDefer *> bytecode_defers;
 	u32 defers_start_index = 0;
@@ -428,11 +433,12 @@ struct AstDefinition : AstStatement, StatementPool<AstDefinition> {
 	LambdaDefinitionLocation definition_location = {};
 	s32 offset = -1;
 
-	bool is_constant         : 1 = false;
-	bool typechecked         : 1 = false;
-	bool is_poly             : 1 = false;
-	bool depends_on_poly     : 1 = false;
-	bool is_pack             : 1 = false;
+	bool is_constant     : 1 = false;
+	bool typechecked     : 1 = false;
+	bool is_poly         : 1 = false;
+	bool depends_on_poly : 1 = false;
+	bool is_pack         : 1 = false;
+	bool has_using       : 1 = false;
 };
 
 // Started with 176
@@ -526,7 +532,6 @@ struct AstLambda : AstExpression, ExpressionPool<AstLambda> {
 
 	SmallList<HardenedPoly> hardened_polys;
 	Expression<AstLambda> original_poly = {};
-	Expression<> insert_into = {};
 
 	bool has_body                   : 1 = true;
 	bool is_type                    : 1 = false;
@@ -1006,7 +1011,6 @@ struct AstUsing : AstStatement, StatementPool<AstUsing> {
 	}
 
 	Expression<> expression = {};
-	Statement<AstDefinition> definition = {};
 };
 
 struct BuiltinStruct {

@@ -437,6 +437,18 @@ got_breaker_name:;
 
 		[&] {
 			__try {
+				auto jump = [&](Instruction *i) {
+					s64 index = i - _instructions.data;
+					if ((u64)index >= _instructions.count) {
+						with(ConsoleColor::red, print("INSTRUCTION OT OF BOUNDS\n"));
+						print("Attempt to jump to instruction {}, actual instruction count is {}.\n", index, _instructions.count);
+						debugging = true;
+						broken = true;
+						return false;
+					}
+					rip = i;
+					return true;
+				};
 				switch (i.kind) {
 					using enum InstructionKind;
 					case mov_rc:  R(i.mov_rc.d) = i.mov_rc.s; break;
@@ -516,7 +528,8 @@ got_breaker_name:;
 						}
 
 						// NOTE: rip will be incremented at the end of iteration
-						rip = (Instruction *)POP();
+						if (!jump((Instruction *)POP()))
+							return;
 						break;
 					}
 					case jmp_label:
@@ -532,51 +545,70 @@ got_breaker_name:;
 					}
 					case call_r: {
 						auto lambda = i.call_r.lambda;
-						if (lambda->convention == CallingConvention::stdcall) {
+						if (lambda->convention == CallingConvention::stdcall && !lambda->extern_library.is_empty()) {
 							auto fn = (u64 (__stdcall *)(u64, u64, u64, u64, u64, u64, u64, u64, u64, u64, u64, u64)) R(i.call_r.s);
 
+							auto p0  = *M8(rs + lambda->parameters_size - 8 *  1);
+							auto p1  = *M8(rs + lambda->parameters_size - 8 *  2);
+							auto p2  = *M8(rs + lambda->parameters_size - 8 *  3);
+							auto p3  = *M8(rs + lambda->parameters_size - 8 *  4);
+							auto p4  = *M8(rs + lambda->parameters_size - 8 *  5);
+							auto p5  = *M8(rs + lambda->parameters_size - 8 *  6);
+							auto p6  = *M8(rs + lambda->parameters_size - 8 *  7);
+							auto p7  = *M8(rs + lambda->parameters_size - 8 *  8);
+							auto p8  = *M8(rs + lambda->parameters_size - 8 *  9);
+							auto p9  = *M8(rs + lambda->parameters_size - 8 * 10);
+							auto p10 = *M8(rs + lambda->parameters_size - 8 * 11);
+							auto p11 = *M8(rs + lambda->parameters_size - 8 * 12);
+
 							auto retval = fn(
-								*M8(rs + lambda->parameters_size - 8 * 1),
-								*M8(rs + lambda->parameters_size - 8 * 2),
-								*M8(rs + lambda->parameters_size - 8 * 3),
-								*M8(rs + lambda->parameters_size - 8 * 4),
-								*M8(rs + lambda->parameters_size - 8 * 5),
-								*M8(rs + lambda->parameters_size - 8 * 6),
-								*M8(rs + lambda->parameters_size - 8 * 7),
-								*M8(rs + lambda->parameters_size - 8 * 8),
-								*M8(rs + lambda->parameters_size - 8 * 9),
-								*M8(rs + lambda->parameters_size - 8 * 10),
-								*M8(rs + lambda->parameters_size - 8 * 11),
-								*M8(rs + lambda->parameters_size - 8 * 12)
+								p0 ,
+								p1 ,
+								p2 ,
+								p3 ,
+								p4 ,
+								p5 ,
+								p6 ,
+								p7 ,
+								p8 ,
+								p9 ,
+								p10,
+								p11
 							);
 
 							*M8(rs + lambda->parameters_size) = retval;
 						} else {
 							PUSH((u64)&i);
-							auto prev_rip = rip;
-							rip = (Instruction *)R(i.call_r.s);
-							if (!rip) {
-								with(ConsoleColor::red, print("Execution error:\n"));
-								print("Attempt to call null.\n");
-								compiler.immediate_info(prev_rip->node->location, "Caused from:");
-								compiler.immediate_info(lambda->location, "Lambda:");
-
-								// FIXME: probably wanna return an error.
-								return;
-							}
+							//auto prev_rip = rip;
+							jump((Instruction *)R(i.call_r.s));
+							//if (!rip) {
+							//	with(ConsoleColor::red, print("Execution error:\n"));
+							//	print("Attempt to call null.\n");
+							//	compiler.immediate_info(prev_rip->node->location, "Caused from:");
+							//	compiler.immediate_info(lambda->location, "Lambda:");
+							//
+							//	// FIXME: probably wanna return an error.
+							//	return;
+							//}
 							return;
 						}
 
 						break;
 					}
 					case lea: {
-						R(i.lea.d) = (u64)M(i.lea.s);
-						dprint("loaded {} {} into {}\n", R(i.lea.d), i.lea.s, i.lea.d);
+						if (i.lea.s.base == instructions) {
+							not_implemented();
+						} else {
+							R(i.lea.d) = (u64)M(i.lea.s);
+							dprint("loaded {} {} into {}\n", R(i.lea.d), i.lea.s, i.lea.d);
+						}
 						break;
 					}
 					case call_c: {
 						PUSH((u64)&i);
-						rip = _instructions.data + i.call_c.constant;
+
+						jump(_instructions.data + i.call_c.constant);
+
 						return;
 					}
 					case cmpu1: {

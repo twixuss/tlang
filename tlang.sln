@@ -13,67 +13,11 @@ Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Solution Items", "Solution 
 EndProject
 Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "test_runner", "test_runner\test_runner.vcxproj", "{16969B99-DD9B-41BC-AE2C-7C5C3CBBB289}"
 EndProject
-Project("{911E67C6-3D85-4FCE-B560-20A9C3E3FF48}") = "a", "bin\a.exe", "{72B146B8-867E-42A2-83C6-150271C80750}"
-	ProjectSection(DebuggerProjectSystem) = preProject
-		PortSupplier = 00000000-0000-0000-0000-000000000000
-		Executable = F:\tlang\devtest\a.exe
-		RemoteMachine = DESKTOP-2HA4U8E
-		StartingDirectory = F:\tlang\devtest
-		Environment = По умолчанию
-		LaunchingEngine = 00000000-0000-0000-0000-000000000000
-		UseLegacyDebugEngines = No
-		LaunchSQLEngine = No
-		AttachLaunchAction = No
-		IORedirection = Auto
-	EndProjectSection
-EndProject
 Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "nasm_x86_64_windows", "nasm_x86_64_windows.vcxproj", "{1AF0BD2E-16B1-4C3D-AB7E-17A7C29E1787}"
 EndProject
 Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "fasm_x86_64_windows", "fasm_x86_64_windows.vcxproj", "{98A1BC8C-C1F5-4832-B3BD-60F7B63BA55F}"
 EndProject
-Project("{911E67C6-3D85-4FCE-B560-20A9C3E3FF48}") = "window", "bin\window.exe", "{5878F281-E4D9-4673-B8A4-DE0EE800B6DC}"
-	ProjectSection(DebuggerProjectSystem) = preProject
-		PortSupplier = 00000000-0000-0000-0000-000000000000
-		Executable = F:\tlang\devtest\window.exe
-		RemoteMachine = DESKTOP-2HA4U8E
-		StartingDirectory = F:\tlang\devtest
-		Environment = По умолчанию
-		LaunchingEngine = 00000000-0000-0000-0000-000000000000
-		UseLegacyDebugEngines = No
-		LaunchSQLEngine = No
-		AttachLaunchAction = No
-		IORedirection = Auto
-	EndProjectSection
-EndProject
 Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "nasm_x86_flat", "nasm_x86_flat.vcxproj", "{BABBD040-C55A-4BF1-AE0C-DA7676EA8DBA}"
-EndProject
-Project("{911E67C6-3D85-4FCE-B560-20A9C3E3FF48}") = "opengl", "bin\opengl.exe", "{A86035D5-0807-4CE1-AE17-B426D64E42FE}"
-	ProjectSection(DebuggerProjectSystem) = preProject
-		PortSupplier = 00000000-0000-0000-0000-000000000000
-		Executable = F:\tlang\devtest\opengl.exe
-		RemoteMachine = DESKTOP-2HA4U8E
-		StartingDirectory = F:\tlang\devtest
-		Environment = По умолчанию
-		LaunchingEngine = 00000000-0000-0000-0000-000000000000
-		UseLegacyDebugEngines = No
-		LaunchSQLEngine = No
-		AttachLaunchAction = No
-		IORedirection = Auto
-	EndProjectSection
-EndProject
-Project("{911E67C6-3D85-4FCE-B560-20A9C3E3FF48}") = "main", "devtest\main.exe", "{8F715AF6-C73D-46FB-A071-922C2DAEECF0}"
-	ProjectSection(DebuggerProjectSystem) = preProject
-		PortSupplier = 00000000-0000-0000-0000-000000000000
-		Executable = F:\tlang\devtest\main.exe
-		RemoteMachine = DESKTOP-2HA4U8E
-		StartingDirectory = F:\tlang\devtest
-		Environment = По умолчанию
-		LaunchingEngine = 00000000-0000-0000-0000-000000000000
-		UseLegacyDebugEngines = No
-		LaunchSQLEngine = No
-		AttachLaunchAction = No
-		IORedirection = Auto
-	EndProjectSection
 EndProject
 Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "x86_64_windows", "x86_64_windows.vcxproj", "{93A7B294-A46D-471D-9ECA-87872F92E205}"
 EndProject
@@ -127,12 +71,6 @@ Global
 		{16969B99-DD9B-41BC-AE2C-7C5C3CBBB289}.UltraSpeed|x64.Build.0 = UltraSpeed|x64
 		{16969B99-DD9B-41BC-AE2C-7C5C3CBBB289}.UltraSpeed|x86.ActiveCfg = UltraSpeed|Win32
 		{16969B99-DD9B-41BC-AE2C-7C5C3CBBB289}.UltraSpeed|x86.Build.0 = UltraSpeed|Win32
-		{72B146B8-867E-42A2-83C6-150271C80750}.Debug|x64.ActiveCfg = Release
-		{72B146B8-867E-42A2-83C6-150271C80750}.Debug|x86.ActiveCfg = Release
-		{72B146B8-867E-42A2-83C6-150271C80750}.Release|x64.ActiveCfg = Release
-		{72B146B8-867E-42A2-83C6-150271C80750}.Release|x86.ActiveCfg = Release
-		{72B146B8-867E-42A2-83C6-150271C80750}.UltraSpeed|x64.ActiveCfg = Release|x64
-		{72B146B8-867E-42A2-83C6-150271C80750}.UltraSpeed|x86.ActiveCfg = Release
 		{1AF0BD2E-16B1-4C3D-AB7E-17A7C29E1787}.Debug|x64.ActiveCfg = Debug|x64
 		{1AF0BD2E-16B1-4C3D-AB7E-17A7C29E1787}.Debug|x64.Build.0 = Debug|x64
 		{1AF0BD2E-16B1-4C3D-AB7E-17A7C29E1787}.Debug|x86.ActiveCfg = Debug|Win32
@@ -157,12 +95,6 @@ Global
 		{98A1BC8C-C1F5-4832-B3BD-60F7B63BA55F}.UltraSpeed|x64.Build.0 = UltraSpeed|x64
 		{98A1BC8C-C1F5-4832-B3BD-60F7B63BA55F}.UltraSpeed|x86.ActiveCfg = UltraSpeed|Win32
 		{98A1BC8C-C1F5-4832-B3BD-60F7B63BA55F}.UltraSpeed|x86.Build.0 = UltraSpeed|Win32
-		{5878F281-E4D9-4673-B8A4-DE0EE800B6DC}.Debug|x64.ActiveCfg = Release|x64
-		{5878F281-E4D9-4673-B8A4-DE0EE800B6DC}.Debug|x86.ActiveCfg = Release|x64
-		{5878F281-E4D9-4673-B8A4-DE0EE800B6DC}.Release|x64.ActiveCfg = Release|x64
-		{5878F281-E4D9-4673-B8A4-DE0EE800B6DC}.Release|x86.ActiveCfg = Release|x64
-		{5878F281-E4D9-4673-B8A4-DE0EE800B6DC}.UltraSpeed|x64.ActiveCfg = Release|x64
-		{5878F281-E4D9-4673-B8A4-DE0EE800B6DC}.UltraSpeed|x86.ActiveCfg = Release|x64
 		{BABBD040-C55A-4BF1-AE0C-DA7676EA8DBA}.Debug|x64.ActiveCfg = Debug|x64
 		{BABBD040-C55A-4BF1-AE0C-DA7676EA8DBA}.Debug|x64.Build.0 = Debug|x64
 		{BABBD040-C55A-4BF1-AE0C-DA7676EA8DBA}.Debug|x86.ActiveCfg = Debug|Win32
@@ -175,18 +107,6 @@ Global
 		{BABBD040-C55A-4BF1-AE0C-DA7676EA8DBA}.UltraSpeed|x64.Build.0 = UltraSpeed|x64
 		{BABBD040-C55A-4BF1-AE0C-DA7676EA8DBA}.UltraSpeed|x86.ActiveCfg = UltraSpeed|Win32
 		{BABBD040-C55A-4BF1-AE0C-DA7676EA8DBA}.UltraSpeed|x86.Build.0 = UltraSpeed|Win32
-		{A86035D5-0807-4CE1-AE17-B426D64E42FE}.Debug|x64.ActiveCfg = Release|x64
-		{A86035D5-0807-4CE1-AE17-B426D64E42FE}.Debug|x86.ActiveCfg = Release|x64
-		{A86035D5-0807-4CE1-AE17-B426D64E42FE}.Release|x64.ActiveCfg = Release|x64
-		{A86035D5-0807-4CE1-AE17-B426D64E42FE}.Release|x86.ActiveCfg = Release|x64
-		{A86035D5-0807-4CE1-AE17-B426D64E42FE}.UltraSpeed|x64.ActiveCfg = Release|x64
-		{A86035D5-0807-4CE1-AE17-B426D64E42FE}.UltraSpeed|x86.ActiveCfg = Release|x64
-		{8F715AF6-C73D-46FB-A071-922C2DAEECF0}.Debug|x64.ActiveCfg = Release|x64
-		{8F715AF6-C73D-46FB-A071-922C2DAEECF0}.Debug|x86.ActiveCfg = Release|x64
-		{8F715AF6-C73D-46FB-A071-922C2DAEECF0}.Release|x64.ActiveCfg = Release|x64
-		{8F715AF6-C73D-46FB-A071-922C2DAEECF0}.Release|x86.ActiveCfg = Release|x64
-		{8F715AF6-C73D-46FB-A071-922C2DAEECF0}.UltraSpeed|x64.ActiveCfg = Release|x64
-		{8F715AF6-C73D-46FB-A071-922C2DAEECF0}.UltraSpeed|x86.ActiveCfg = Release|x64
 		{93A7B294-A46D-471D-9ECA-87872F92E205}.Debug|x64.ActiveCfg = Debug|x64
 		{93A7B294-A46D-471D-9ECA-87872F92E205}.Debug|x64.Build.0 = Debug|x64
 		{93A7B294-A46D-471D-9ECA-87872F92E205}.Debug|x86.ActiveCfg = Debug|Win32

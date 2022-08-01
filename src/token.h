@@ -10,7 +10,6 @@ E(in,       'in') \
 E(then,     'then') \
 E(else,     'else') \
 E(null,     'null') \
-E(this,     'this') \
 E(simd,     'simd') \
 E(enum,     'enum') \
 E(for,      'for') \

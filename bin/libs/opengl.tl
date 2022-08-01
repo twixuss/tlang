@@ -480,12 +480,12 @@ GL_COLOR_BUFFER_BIT :: 0x00004000
 
 
 wglCreateContext :: (
-  unnamedParam1: HDC
+	unnamedParam1: HDC
 ): HGLRC
 
 wglMakeCurrent :: (
-  unnamedParam1: HDC,
-  unnamedParam2: HGLRC
+	unnamedParam1: HDC,
+	unnamedParam2: HGLRC
 ): BOOL
 
 wglGetProcAddress :: (name: *U8): *Void
@@ -496,11 +496,11 @@ glClear :: (flags: U32)
 glVertex2f :: (x: F32, y: F32)
 glColor3f :: (r: F32, g: F32, b: F32)
 glColor4f :: (r: F32, g: F32, b: F32, a: F32)
-    
+
 glOrtho :: (_: F32, _: F32, _: F32, _: F32, _: F32, _: F32)
-    
+
 glViewport :: (x: GLint, y: GLint, width: GLsizei, height: GLsizei)
-    
+
 glBegin      :: (mode: U32)
 glEnd        :: ()
 glFlush      :: ()
@@ -508,31 +508,114 @@ glDrawArrays :: (mode: GLenum, first: GLint, count: GLsizei)
 glEnable     :: (cap: GLenum)
 glDisable    :: (cap: GLenum)
 
-glGenBuffers_t              :: (n: GLsizei, buffers: *GLuint) #type
-glBindBuffer_t              :: (target: GLenum, buffer: GLuint) #type
-glBufferData_t              :: (target: GLenum, size: GLsizeiptr, data: *GLvoid, usage: GLenum) #type
-glCreateShader_t            :: (shaderType: GLenum): GLuint #type
-glShaderSource_t            :: (id: GLuint, count: GLsizei, str: **GLchar, length: *GLint) #type
-glCompileShader_t           :: (id: GLuint) #type
-glGetShaderiv_t             :: (id: GLuint, pname: GLenum, params: *GLint) #type
-glGetShaderInfoLog_t        :: (id: GLuint, maxLength: GLsizei, length: *GLsizei, infoLog: *GLchar) #type
-glCreateProgram_t           :: (): GLuint #type
-glAttachShader_t            :: (program: GLuint, id: GLuint) #type
-glDeleteShader_t            :: (shader: GLuint) #type
-glLinkProgram_t             :: (program: GLuint) #type
-glDetachShader_t            :: (program: GLuint, shader: GLuint) #type
-glGetProgramiv_t            :: (program: GLuint, pname: GLenum, params: *GLint) #type
-glGetProgramInfoLog_t       :: (program: GLuint, maxLength: GLsizei, length: *GLsizei, infoLog: *GLchar) #type
-glDeleteProgram_t           :: (program: GLuint) #type
-glGenVertexArrays_t         :: (n: GLsizei, arrays: *GLuint) #type
-glDeleteVertexArrays_t      :: (n: GLsizei, arrays: *GLuint) #type
-glBindVertexArray_t         :: (array: GLuint) #type
-glVertexAttribPointer_t     :: (index: GLuint, size: GLint, type: GLenum, normalized: GLboolean, stride: GLsizei, pointer: *Void) #type
-glEnableVertexAttribArray_t :: (index: GLuint) #type
-glUseProgram_t              :: (program: GLuint) #type
-glDebugMessageCallback_t    :: (callback: DEBUGPROC, userParam: *Void) #type
-glDebugMessageControl_t     :: (source: GLenum, type: GLenum, severity: GLenum, count: GLsizei, ids: *GLuint, enabled: GLboolean) #type
-wglSwapIntervalEXT_t           :: (interval: S32): BOOL #type
-wglCreateContextAttribsARB_t   :: (hDC: HDC, hShareContext: HGLRC, attribList: *S32): HGLRC #type
-wglChoosePixelFormatARB_t      :: (hdc: HDC, piAttribIList: *S32, pfAttribFList: *F32, nMaxFormats: UINT, piFormats: *S32, nNumFormats: *UINT): BOOL #type
-wglGetPixelFormatAttribivARB_t :: (hdc: HDC, iPixelFormat: S32, iLayerPlane: S32, nAttributes: UINT, piAttributes: *S32, piValues: *S32): BOOL #type
+// TODO: this a good use case for macros
+
+glGenBuffers              : (n: GLsizei, buffers: *GLuint) #type
+glBindBuffer              : (target: GLenum, buffer: GLuint) #type
+glBufferData              : (target: GLenum, size: GLsizeiptr, data: *GLvoid, usage: GLenum) #type
+glCreateShader            : (shaderType: GLenum): GLuint #type
+glShaderSource            : (id: GLuint, count: GLsizei, str: **GLchar, length: *GLint) #type
+glCompileShader           : (id: GLuint) #type
+glGetShaderiv             : (id: GLuint, pname: GLenum, params: *GLint) #type
+glGetShaderInfoLog        : (id: GLuint, maxLength: GLsizei, length: *GLsizei, infoLog: *GLchar) #type
+glCreateProgram           : (): GLuint #type
+glAttachShader            : (program: GLuint, id: GLuint) #type
+glDeleteShader            : (shader: GLuint) #type
+glLinkProgram             : (program: GLuint) #type
+glDetachShader            : (program: GLuint, shader: GLuint) #type
+glGetProgramiv            : (program: GLuint, pname: GLenum, params: *GLint) #type
+glGetProgramInfoLog       : (program: GLuint, maxLength: GLsizei, length: *GLsizei, infoLog: *GLchar) #type
+glDeleteProgram           : (program: GLuint) #type
+glGenVertexArrays         : (n: GLsizei, arrays: *GLuint) #type
+glDeleteVertexArrays      : (n: GLsizei, arrays: *GLuint) #type
+glBindVertexArray         : (array: GLuint) #type
+glVertexAttribPointer     : (index: GLuint, size: GLint, type: GLenum, normalized: GLboolean, stride: GLsizei, pointer: *Void) #type
+glEnableVertexAttribArray : (index: GLuint) #type
+glUseProgram              : (program: GLuint) #type
+glDebugMessageCallback    : (callback: DEBUGPROC, userParam: *Void) #type
+glDebugMessageControl     : (source: GLenum, type: GLenum, severity: GLenum, count: GLsizei, ids: *GLuint, enabled: GLboolean) #type
+glUniform1f               : (location: GLint, v0: GLfloat) #type
+glUniform2f               : (location: GLint, v0: GLfloat, v1: GLfloat) #type
+glUniform3f               : (location: GLint, v0: GLfloat, v1: GLfloat, v2: GLfloat) #type
+glUniform4f               : (location: GLint, v0: GLfloat, v1: GLfloat, v2: GLfloat, v3: GLfloat) #type
+glUniform1i               : (location: GLint, v0: GLint) #type
+glUniform2i               : (location: GLint, v0: GLint, v1: GLint) #type
+glUniform3i               : (location: GLint, v0: GLint, v1: GLint, v2: GLint) #type
+glUniform4i               : (location: GLint, v0: GLint, v1: GLint, v2: GLint, v3: GLint) #type
+glUniform1ui              : (location: GLint, v0: GLuint) #type
+glUniform2ui              : (location: GLint, v0: GLuint, v1: GLuint) #type
+glUniform3ui              : (location: GLint, v0: GLuint, v1: GLuint, v2: GLuint) #type
+glUniform4ui              : (location: GLint, v0: GLuint, v1: GLuint, v2: GLuint, v3: GLuint) #type
+glUniform1fv              : (location: GLint, count: GLsizei, value: *GLfloat) #type
+glUniform2fv              : (location: GLint, count: GLsizei, value: *GLfloat) #type
+glUniform3fv              : (location: GLint, count: GLsizei, value: *GLfloat) #type
+glUniform4fv              : (location: GLint, count: GLsizei, value: *GLfloat) #type
+glUniform1iv              : (location: GLint, count: GLsizei, value: *GLint) #type
+glUniform2iv              : (location: GLint, count: GLsizei, value: *GLint) #type
+glUniform3iv              : (location: GLint, count: GLsizei, value: *GLint) #type
+glUniform4iv              : (location: GLint, count: GLsizei, value: *GLint) #type
+glUniform1uiv             : (location: GLint, count: GLsizei, value: *GLuint) #type
+glUniform2uiv             : (location: GLint, count: GLsizei, value: *GLuint) #type
+glUniform3uiv             : (location: GLint, count: GLsizei, value: *GLuint) #type
+glUniform4uiv             : (location: GLint, count: GLsizei, value: *GLuint) #type
+glGetUniformLocation      : (program: GLuint, name: *GLchar): GLint #type
+wglSwapIntervalEXT           : (interval: S32): BOOL #type
+wglCreateContextAttribsARB   : (hDC: HDC, hShareContext: HGLRC, attribList: *S32): HGLRC #type
+wglChoosePixelFormatARB      : (hdc: HDC, piAttribIList: *S32, pfAttribFList: *F32, nMaxFormats: UINT, piFormats: *S32, nNumFormats: *UINT): BOOL #type
+wglGetPixelFormatAttribivARB : (hdc: HDC, iPixelFormat: S32, iLayerPlane: S32, nAttributes: UINT, piAttributes: *S32, piValues: *S32): BOOL #type
+
+load_opengl_functions :: () {
+	glGenBuffers              = @wglGetProcAddress("glGenBuffers"             .data)
+	glBindBuffer              = @wglGetProcAddress("glBindBuffer"             .data)
+	glBufferData              = @wglGetProcAddress("glBufferData"             .data)
+	glCreateShader            = @wglGetProcAddress("glCreateShader"           .data)
+	glShaderSource            = @wglGetProcAddress("glShaderSource"           .data)
+	glCompileShader           = @wglGetProcAddress("glCompileShader"          .data)
+	glGetShaderiv             = @wglGetProcAddress("glGetShaderiv"            .data)
+	glGetShaderInfoLog        = @wglGetProcAddress("glGetShaderInfoLog"       .data)
+	glCreateProgram           = @wglGetProcAddress("glCreateProgram"          .data)
+	glAttachShader            = @wglGetProcAddress("glAttachShader"           .data)
+	glDeleteShader            = @wglGetProcAddress("glDeleteShader"           .data)
+	glLinkProgram             = @wglGetProcAddress("glLinkProgram"            .data)
+	glDetachShader            = @wglGetProcAddress("glDetachShader"           .data)
+	glGetProgramInfoLog       = @wglGetProcAddress("glGetProgramInfoLog"      .data)
+	glGetProgramiv            = @wglGetProcAddress("glGetProgramiv"           .data)
+	glDeleteProgram           = @wglGetProcAddress("glDeleteProgram"          .data)
+	glGenVertexArrays         = @wglGetProcAddress("glGenVertexArrays"        .data)
+	glDeleteVertexArrays      = @wglGetProcAddress("glDeleteVertexArrays"     .data)
+	glBindVertexArray         = @wglGetProcAddress("glBindVertexArray"        .data)
+	glVertexAttribPointer     = @wglGetProcAddress("glVertexAttribPointer"    .data)
+	glEnableVertexAttribArray = @wglGetProcAddress("glEnableVertexAttribArray".data)
+	glUseProgram              = @wglGetProcAddress("glUseProgram"             .data)
+	glDebugMessageCallback    = @wglGetProcAddress("glDebugMessageCallback"   .data)
+	glDebugMessageControl     = @wglGetProcAddress("glDebugMessageControl"    .data)
+	glUniform1f               = @wglGetProcAddress("glUniform1f"              .data)
+	glUniform2f               = @wglGetProcAddress("glUniform2f"              .data)
+	glUniform3f               = @wglGetProcAddress("glUniform3f"              .data)
+	glUniform4f               = @wglGetProcAddress("glUniform4f"              .data)
+	glUniform1i               = @wglGetProcAddress("glUniform1i"              .data)
+	glUniform2i               = @wglGetProcAddress("glUniform2i"              .data)
+	glUniform3i               = @wglGetProcAddress("glUniform3i"              .data)
+	glUniform4i               = @wglGetProcAddress("glUniform4i"              .data)
+	glUniform1ui              = @wglGetProcAddress("glUniform1ui"             .data)
+	glUniform2ui              = @wglGetProcAddress("glUniform2ui"             .data)
+	glUniform3ui              = @wglGetProcAddress("glUniform3ui"             .data)
+	glUniform4ui              = @wglGetProcAddress("glUniform4ui"             .data)
+	glUniform1fv              = @wglGetProcAddress("glUniform1fv"             .data)
+	glUniform2fv              = @wglGetProcAddress("glUniform2fv"             .data)
+	glUniform3fv              = @wglGetProcAddress("glUniform3fv"             .data)
+	glUniform4fv              = @wglGetProcAddress("glUniform4fv"             .data)
+	glUniform1iv              = @wglGetProcAddress("glUniform1iv"             .data)
+	glUniform2iv              = @wglGetProcAddress("glUniform2iv"             .data)
+	glUniform3iv              = @wglGetProcAddress("glUniform3iv"             .data)
+	glUniform4iv              = @wglGetProcAddress("glUniform4iv"             .data)
+	glUniform1uiv             = @wglGetProcAddress("glUniform1uiv"            .data)
+	glUniform2uiv             = @wglGetProcAddress("glUniform2uiv"            .data)
+	glUniform3uiv             = @wglGetProcAddress("glUniform3uiv"            .data)
+	glUniform4uiv             = @wglGetProcAddress("glUniform4uiv"            .data)
+	glGetUniformLocation      = @wglGetProcAddress("glGetUniformLocation"     .data)
+	wglSwapIntervalEXT           = @wglGetProcAddress("wglSwapIntervalEXT"          .data)
+	wglCreateContextAttribsARB   = @wglGetProcAddress("wglCreateContextAttribsARB"  .data)
+	wglChoosePixelFormatARB      = @wglGetProcAddress("wglChoosePixelFormatARB"     .data)
+	wglGetPixelFormatAttribivARB = @wglGetProcAddress("wglGetPixelFormatAttribivARB".data)
+}

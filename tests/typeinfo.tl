@@ -14,5 +14,3 @@ main :: () {
 	for i in 0..info.members.count
 		println("{}: {}  offset = {}", info.members[i].name, info.members[i].type.name, info.members[i].offset)
 }
-
-# () => main()

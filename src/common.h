@@ -288,6 +288,9 @@ inline Report make_report(ReportKind kind, String location, Char const *format_s
 	return r;
 }
 
+// Library name -> list of function names
+using ExternLibraries = Map<String, List<String>>;
+
 struct Compiler {
 	String source_path;
 	String source_path_without_extension;
@@ -329,6 +332,10 @@ struct Compiler {
 
 	Strings strings;
 
+	struct BytecodeBuilder *bytecode;
+
+	ExternLibraries extern_libraries;
+
 	SourceFileInfo *get_source_info(utf8 *location) {
 		for (auto &source : sources) {
 			if (source.source.begin() <= location && location < source.source.end()) {
@@ -348,7 +355,9 @@ struct Compiler {
 			auto begin = lines.data;
 			auto end = lines.data + lines.count;
 			while (1) {
-				assert(begin <= end);
+				if (begin == end)
+					return begin - lines.data + 1;
+				assert(begin < end);
 				auto line = begin + (end - begin) / 2;
 				if (line->data <= from && from < line->data + line->count) {
 					return line - lines.data + 1;

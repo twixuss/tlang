@@ -652,16 +652,25 @@ struct Parser {
 	AstIdentifier *poly_identifier = 0;
 	AstWhile *current_loop = 0;
 
+#define ENABLE_PARSER_BREAKS 1
 	bool next() {
+	retry:
 		assert(token->kind != 'eof');
 		++token;
 		if (token->kind == 'eof') {
 			return false;
 		}
 
+#if ENABLE_PARSER_BREAKS
+		if (token->string == "#pb") {
+			debug_break();
+			goto retry;
+		}
+#endif
 		return true;
 	}
 	bool next_solid() {
+	retry:
 		assert(token->kind != 'eof');
 		while (1) {
 			++token;
@@ -671,10 +680,15 @@ struct Parser {
 				case '\n':
 					continue;
 				default:
+#if ENABLE_PARSER_BREAKS
+					if (token->string == "#pb") {
+						debug_break();
+						goto retry;
+					}
+#endif
 					return true;
 			}
 		}
-
 		return true;
 	}
 
@@ -784,6 +798,25 @@ AstLiteral *make_float(f64 value, AstExpression *type = builtin_unsized_float.id
 	i->Float = value;
 	i->type = type;
 	return i;
+}
+
+AstBinaryOperator *make_binop(BinaryOperation op, AstExpression *left, AstExpression *right) {
+	auto bin = AstBinaryOperator::create();
+	bin->left = left;
+	bin->right = right;
+	bin->operation = op;
+	return bin;
+}
+AstIdentifier *make_identifier(KeyString name) {
+	auto i = AstIdentifier::create();
+	i->name = name;
+	return i;
+}
+AstSubscript *make_subscript(AstExpression *expression, AstExpression *index_expression) {
+	auto s = AstSubscript::create();
+	s->expression = expression;
+	s->index_expression = index_expression;
+	return s;
 }
 
 AstStatement *parse_statement(Parser *parser);
@@ -1001,7 +1034,7 @@ AstStruct *parse_struct(Parser *parser, String token) {
 	if (!parser->expect('{'))
 		return 0;
 
-	parser->next();
+	parser->next_solid();
 
 	push_scope(Struct->member_scope);
 
@@ -1059,36 +1092,11 @@ AstExpression *parse_lambda(Parser *parser) {
 
 	if (parser->token->kind != ')') {
 		for (;;) {
-			if (parser->token->kind == 'this') {
-				lambda->is_member = true;
+			bool has_using = false;
+			if (parser->token->kind == Token_using) {
+				has_using = true;
 
 				parser->next_solid();
-
-				if (parser->token->kind == ':') {
-					parser->next_solid();
-					if (parser->token->kind != ':') {
-						parser->reporter->error(parser->token->string, "Expected ':', but got '{}'", token_kind_to_string(parser->token->kind));
-						return 0;
-					}
-					parser->next_solid();
-
-					lambda->insert_into = parse_expression(parser);
-					if (!lambda->insert_into) {
-						return 0;
-					}
-				}
-
-				if (parser->token->kind == ')') {
-					break;
-				}
-
-				if (parser->token->kind == ',') {
-					parser->next_solid();
-					continue;
-				}
-
-				parser->reporter->error(parser->token->string, "Expected ',' or ')', but got '{}'", token_kind_to_string(parser->token->kind));
-				return 0;
 			}
 
 			auto name = parse_identifier(parser);
@@ -1136,6 +1144,7 @@ AstExpression *parse_lambda(Parser *parser) {
 
 			definition->definition_location = LambdaDefinitionLocation::parameter;
 			definition->container_node = lambda;
+			definition->has_using = has_using;
 
 			for (auto &other_parameter : lambda->parameters) {
 				if (definition->name != "_"str && definition->name == other_parameter->name) {
@@ -1158,8 +1167,14 @@ AstExpression *parse_lambda(Parser *parser) {
 			parser->next_solid();
 		}
 	}
-
 	parser->next();
+
+	if (lambda->parameters.count) {
+		if (lambda->parameters[0]->name == "me") {
+			lambda->is_member = true;
+			lambda->parameters[0]->has_using = true;
+		}
+	}
 
 	if (parser->token->kind == ':') {
 		parser->next_solid();
@@ -1180,6 +1195,14 @@ AstExpression *parse_lambda(Parser *parser) {
 				parser->token = first_retparam_token;
 				goto parse_retparam_expression;
 			}
+		} else if (parser->token->kind == Token_using) {
+			parser->next_solid();
+			lambda->return_parameter = parse_definition(parser);
+			if (!lambda->return_parameter) {
+				return 0;
+			}
+			lambda->return_parameter->has_using = true;
+			lambda->return_parameter->definition_location = LambdaDefinitionLocation::return_parameter;
 		} else {
 		parse_retparam_expression:
 			auto return_type = parse_expression(parser);
@@ -1217,7 +1240,25 @@ AstExpression *parse_lambda(Parser *parser) {
 
 	if (!lambda->is_type) {
 		if (parser->token->kind != '{' && parser->token->kind != '=>' && parser->token->kind != ';' && parser->token->kind != '\n' && parser->token->kind != 'eof') {
-			parser->reporter->error(parser->token->string, "Expected {{ or => or ; or : or <new line> or <eof> instead of '{}'.", parser->token->string);
+			parser->reporter->error(parser->token->string, "Unexpected token: '{}'.", parser->token->string);
+			parser->reporter->info(R"(Here are allowed constructions:
+This is the simplest lambda:
+	()
+
+Next you can optionally specify the type:
+	(): ReturnType
+
+Return value can be optionally named:
+	(): name: ReturnType
+
+If a name is provided, a `using` can be used:
+	(): using name: ReturnType
+
+Then the body may follow:
+	()                   // no body
+	() {{ statements... }}
+	() => expression
+)");
 			return 0;
 		}
 	}
@@ -1269,8 +1310,8 @@ AstExpression *parse_lambda(Parser *parser) {
 				// This will be performed by parse_statement
 				// lambda->body_scope->statements.add(statement);
 			}
+			parser->next();
 		}
-		parser->next_solid();
 	} else {
 		if (!lambda->is_type && !lambda->is_intrinsic) {
 			// Extern functions
@@ -1319,7 +1360,7 @@ bool should_parse_lambda(Parser *parser) {
 	if (!parser->next_solid())
 		return false;
 
-	if (parser->token->kind == ')')
+	if (parser->token->kind == ')' || parser->token->kind == Token_using)
 		return true;
 
 	if (!parser->next_solid())
@@ -1555,24 +1596,26 @@ AstExpression *parse_expression_0(Parser *parser) {
 		case Token_if: {
 			auto If = AstIfx::create();
 			If->location = parser->token->string;
-			parser->next();
+			parser->next_solid();
 
 			If->condition = parse_expression(parser);
 			if (!If->condition)
 				return 0;
 
 			if (parser->token->kind == Token_then)
-				parser->next();
+				parser->next_solid();
 
 			If->true_expression = parse_expression(parser);
 			if (!If->true_expression)
 				return 0;
 
+			skip_newlines(parser);
+
 			if (!parser->expect(Token_else)) {
 				return 0;
 			}
 
-			parser->next();
+			parser->next_solid();
 
 			If->false_expression = parse_expression(parser);
 			if (!If->false_expression)
@@ -1824,6 +1867,21 @@ AstExpression *parse_expression_0(Parser *parser) {
 					}
 
 					return test;
+				} else if (parser->token->string == "#") {
+					parser->next();
+
+					auto lambda = parse_lambda(parser);
+					if (!lambda)
+						return 0;
+
+					if (lambda->kind != Ast_Lambda) {
+						parser->reporter->error(lambda->location, "Expected a lambda.");
+						return 0;
+					}
+
+					((AstLambda *)lambda)->is_evaluated_at_compile_time = true;
+
+					return lambda;
 				} else {
 					parser->reporter->error(parser->token->string, "Unexpected directive (expression).");
 					return 0;
@@ -1883,7 +1941,7 @@ AstExpression *parse_expression_1(Parser *parser) {
 		}
 		while (parser->token->kind == '(') {
 			auto open_paren = parser->token->string;
-			parser->next();
+			parser->next_solid();
 
 			SmallList<NamedArgument> arguments;
 			if (parser->token->kind != ')') {
@@ -1920,6 +1978,11 @@ AstExpression *parse_expression_1(Parser *parser) {
 
 					arguments.add(argument);
 
+					if (!skip_newlines(parser)) {
+						parser->reporter->error(parser->token->string, "Unexpected end of file in call");
+						return 0;
+					}
+
 					if (parser->token->kind == ')') {
 						break;
 					}
@@ -1927,7 +1990,7 @@ AstExpression *parse_expression_1(Parser *parser) {
 					if (!parser->expect(','))
 						return 0;
 
-					parser->next();
+					parser->next_solid();
 				}
 			}
 
@@ -2492,7 +2555,7 @@ bool is_statement(AstExpression *expression) {
 		case Ast_Call:
 		case Ast_Import:
 			return true;
-		case Ast_BinaryOperator:
+		case Ast_BinaryOperator: {
 			auto bin = (AstBinaryOperator *)expression;
 			switch (bin->operation) {
 				using enum BinaryOperation;
@@ -2510,6 +2573,13 @@ bool is_statement(AstExpression *expression) {
 					return true;
 			}
 			break;
+		}
+		case Ast_Lambda: {
+			auto lambda = (AstLambda *)expression;
+			if (lambda->is_evaluated_at_compile_time)
+				return true;
+			break;
+		}
 	}
 	return false;
 }
@@ -2557,6 +2627,8 @@ AstIf *parse_if_statement(Parser *parser, String token) {
 
 	if (!parse_block_or_single_statement(parser, If->true_scope))
 		return 0;
+
+	skip_newlines(parser);
 
 	if (parser->token->kind == Token_else) {
 		parser->next();
@@ -2829,21 +2901,7 @@ void parse_statement(Parser *parser, AstStatement *&result) {
 				parser->reporter->error(parser->token->string, "Inserting code is not implemeted yet.");
 				return;
 			} else if (parser->token->string == "#") {
-				parser->next();
-
-				auto lambda = parse_lambda(parser);
-				if (!lambda)
-					return;
-
-				if (lambda->kind != Ast_Lambda) {
-					parser->reporter->error(lambda->location, "Expected a lambda.");
-					return;
-				}
-
-				((AstLambda *)lambda)->is_evaluated_at_compile_time = true;
-
-				result = make_statement(lambda);
-				return;
+				break;
 			} else {
 				parser->reporter->error(parser->token->string, "Unknown statement level directive.");
 				return;
@@ -3106,10 +3164,34 @@ void parse_statement(Parser *parser, AstStatement *&result) {
 			auto Using = AstUsing::create();
 			Using->location = parser->token->string;
 			parser->next_solid();
-			Using->expression = parse_expression(parser);
-			if (!Using->expression) {
+
+			auto ident_token = parser->token;
+
+			auto name = parse_identifier(parser);
+			if (name.is_empty())
 				return;
+
+			parser->next();
+
+			if (parser->token->kind == ':') {
+				auto definition = parse_definition(name, ident_token->string, parser);
+				if (!definition)
+					return;
+
+				definition->has_using = true;
+
+				result = definition;
+				return;
+			} else {
+				Using->expression = make_identifier(name);
+				if (!Using->expression) {
+					return;
+				}
+
+				Using->expression->location = ident_token->string;
 			}
+
+
 			result = Using;
 			return;
 		}
@@ -3139,7 +3221,7 @@ void parse_statement(Parser *parser, AstStatement *&result) {
 
 	auto expression = parse_expression(parser);
 	if (expression) {
-		if (parser->token->kind == '\n' || parser->token->kind == ';' || parser->token->kind == '}') {
+		if (parser->token->kind == '\n' || parser->token->kind == ';' || parser->token->kind == '}' || parser->token->kind == 'eof') {
 			if (!is_statement(expression)) {
 				parser->reporter->error(expression->location, "This expression is not a statement.");
 				return;
@@ -4934,25 +5016,6 @@ void typecheck(TypecheckState *state, Scope *scope) {
 	}
 }
 
-AstBinaryOperator *make_binop(BinaryOperation op, AstExpression *left, AstExpression *right) {
-	auto bin = AstBinaryOperator::create();
-	bin->left = left;
-	bin->right = right;
-	bin->operation = op;
-	return bin;
-}
-AstIdentifier *make_identifier(KeyString name) {
-	auto i = AstIdentifier::create();
-	i->name = name;
-	return i;
-}
-AstSubscript *make_subscript(AstExpression *expression, AstExpression *index_expression) {
-	auto s = AstSubscript::create();
-	s->expression = expression;
-	s->index_expression = index_expression;
-	return s;
-}
-
 AstStatement *typecheck(TypecheckState *state, AstDefinition *definition) {
 	if (definition->typechecked) {
 		return definition;
@@ -5097,6 +5160,10 @@ AstStatement *typecheck(TypecheckState *state, AstDefinition *definition) {
 			}
 		}
 	}
+
+	if (definition->has_using)
+		state->current_scope->usings.add({0, definition});
+
 	return definition;
 }
 AstStatement *typecheck(TypecheckState *state, AstReturn *Return) {
@@ -5527,20 +5594,18 @@ AstStatement *typecheck(TypecheckState *state, AstUsing *Using) {
 	typecheck(state, Using->expression);
 
 	if (Using->expression->kind != Ast_Identifier) {
-		state->reporter.error(Using->location, "Using can be applied to identifiers only.");
+		state->reporter.error(Using->location, "Only identifiers can be used in `using` statments.");
 		yield(TypecheckResult::fail);
 	}
 	auto Ident = (AstIdentifier *)Using->expression;
 
 	auto Struct = direct_as<AstStruct>(Ident->type);
 	if (!Struct) {
-		state->reporter.error(Using->location, "Using can be applied to identifiers with type `struct`.");
+		state->reporter.error(Using->location, "Using can be applied to structs.");
 		yield(TypecheckResult::fail);
 	}
 
-	Using->definition = Ident->definition();
-
-	state->current_scope->usings.add(Using);
+	state->current_scope->usings.add({Using, Ident->definition()});
 	return Using;
 }
 void typecheck(TypecheckState *state, AstStatement *&statement) {
@@ -6236,37 +6301,47 @@ AstExpression *typecheck(TypecheckState *state, AstIdentifier *identifier) {
 
 			struct SuitableMember {
 				AstUsing *Using;
+				AstDefinition *definition;
 				AstDefinition *member;
 			};
 
 			List<SuitableMember> suitable_members;
 			for (auto Using : scope->usings) {
-				if (auto Struct = direct_as<AstStruct>(Using->definition->type)) {
-					for (auto member : Struct->data_members) {
-						if (member->name == identifier->name) {
-							suitable_members.add({
-								.Using = Using,
-								.member = member,
-							});
-						}
+				AstStruct *Struct = direct_as<AstStruct>(Using.definition->type);
+				if (!Struct) {
+					if (auto pointer = as_pointer(Using.definition->type)) {
+						Struct = direct_as<AstStruct>(pointer->expression);
 					}
-				} else {
-					invalid_code_path("using expects a struct");
+				}
+				if (!Struct) {
+					state->reporter.error(Using.Using ? Using.Using->location : Using.definition->location, "`using` expects a struct or pointer to struct");
+					yield(TypecheckResult::fail);
+				}
+
+				for (auto member : Struct->data_members) {
+					if (member->name == identifier->name) {
+						suitable_members.add({
+							.Using = Using.Using,
+							.definition = Using.definition,
+							.member = member,
+						});
+					}
 				}
 			}
 
 			if (suitable_members.count) {
 				if (suitable_members.count == 1) {
 					auto Using = suitable_members[0].Using;
+					auto definition = suitable_members[0].definition;
 					auto member = suitable_members[0].member;
 
 					identifier->possible_definitions.set(member);
 
 					auto base = AstIdentifier::create();
-					base->name = Using->definition->name;
+					base->name = definition->name;
 					base->location = identifier->location;
-					base->possible_definitions.set(Using->definition);
-					base->type = Using->definition->type;
+					base->possible_definitions.set(definition);
+					base->type = definition->type;
 
 					auto bin = AstBinaryOperator::create();
 					bin->operation = BinaryOperation::dot;
@@ -6279,7 +6354,7 @@ AstExpression *typecheck(TypecheckState *state, AstIdentifier *identifier) {
 
 				state->reporter.error(identifier->location, "Ambiguous identifier", identifier->name);
 				for (auto member : suitable_members) {
-					state->reporter.info(member.Using->location, "Imported from here:");
+					state->reporter.info(member.Using ? member.Using->location : member.definition->location, "Imported from here:");
 					state->reporter.info(member.member->location, "Declared here:");
 				}
 				yield(TypecheckResult::fail);
@@ -6422,17 +6497,18 @@ AstExpression *typecheck(TypecheckState *state, AstCall *call) {
 		}
 		case Ast_BinaryOperator: {
 			auto binop = (AstBinaryOperator *)call->callable;
-			assert(binop->operation == BinaryOperation::dot);
-			assert(binop-> left->kind == Ast_Identifier);
-			assert(binop->right->kind == Ast_Identifier);
-			auto ident = (AstIdentifier *)binop->right;
-			for (auto definition : ident->possible_definitions) {
-				overloads.add({
-					.type = definition->type,
-					.definition = definition,
-				});
+			if (binop->operation == BinaryOperation::dot) {
+				if (binop->right->kind == Ast_Identifier) {
+					auto ident = (AstIdentifier *)binop->right;
+					for (auto definition : ident->possible_definitions) {
+						overloads.add({
+							.type = definition->type,
+							.definition = definition,
+						});
+					}
+					probably_this = binop->left;
+				}
 			}
-			probably_this = binop->left;
 			break;
 		}
 		case Ast_Struct: {
@@ -6487,6 +6563,34 @@ AstExpression *typecheck(TypecheckState *state, AstCall *call) {
 
 			resolution.sorted_arguments = successfully_sorted_arguments.value_unchecked();
 			auto &arguments = resolution.sorted_arguments;
+
+			if (lambda->is_member && probably_this) {
+				if (!probably_this) {
+					reporter.error(call->callable->location, "No instance provided.");
+					reporter.info(lambda->location, "Method definition:");
+					continue;
+				}
+
+				AstExpression *This = 0;
+
+				if (is_pointer(lambda->parameters[0]->type)) {
+					if (is_pointer(probably_this->type)) {
+						This = probably_this;
+					} else if (is_addressable(probably_this)) {
+						This = make_address_of(&reporter, probably_this);
+					} else {
+						This = make_unary(UnaryOperation::internal_move_to_temporary, probably_this);
+						This->type = make_pointer_type(probably_this->type);
+					}
+				} else if (direct_as<AstStruct>(lambda->parameters[0]->type)) {
+					This = probably_this;
+				} else {
+					reporter.error(call->location, "Failed to make `me` argument.");
+					continue;
+				}
+				assert(This);
+				arguments.add_front(This);
+			}
 
 
 			if (lambda->is_poly) {
@@ -6887,15 +6991,15 @@ AstExpression *typecheck(TypecheckState *state, AstCall *call) {
 			}
 		}
 
-		if (lambda->is_member) {
-			assert(probably_this);
-			if (!is_type(probably_this)) {
-				auto pointer = make_address_of(&state->reporter, probably_this);
-				if (!pointer)
-					yield(TypecheckResult::fail);
-				call->sorted_arguments.insert_at(pointer, 0);
-			}
-		}
+		//if (lambda->is_member) {
+		//	assert(probably_this);
+		//	if (!is_type(probably_this)) {
+		//		auto pointer = make_address_of(&state->reporter, probably_this);
+		//		if (!pointer)
+		//			yield(TypecheckResult::fail);
+		//		call->sorted_arguments.insert_at(pointer, 0);
+		//	}
+		//}
 
 		// NOTE: not sure if this wait is necessary
 		wait_for(
@@ -7061,11 +7165,12 @@ AstExpression *typecheck(TypecheckState *state, AstLambda *lambda) {
 		return lambda;
 	}
 
+	push_scope(lambda->parameter_scope);
+
 	if (lambda->return_parameter) {
 		typecheck(state, lambda->return_parameter);
 	}
 
-	push_scope(lambda->parameter_scope);
 	for (auto parameter : lambda->parameters) {
 		typecheck(state, parameter);
 	}
@@ -7078,21 +7183,29 @@ AstExpression *typecheck(TypecheckState *state, AstLambda *lambda) {
 
 	lambda->finished_typechecking_head = true;
 
-	if (lambda->insert_into) {
-		typecheck(state, lambda->insert_into);
-		if (lambda->insert_into->kind != Ast_Identifier) {
-			state->reporter.error(lambda->insert_into->location, "This is expected to be an identifier.");
-			yield(TypecheckResult::fail);
-		}
-		auto ident = (AstIdentifier *)lambda->insert_into;
-		if (auto Struct = direct_as<AstStruct>(ident)) {
-			assert(lambda->definition);
-			Struct->member_scope->definitions.get_or_insert(lambda->definition->name).add(lambda->definition);
-			Struct->member_scope->statements.add(lambda->definition);
+	if (lambda->is_member) {
+		auto This = lambda->parameters[0];
+
+		AstStruct *Struct = 0;
+		if (auto pointer = as_pointer(This->type)) {
+			Struct = direct_as<AstStruct>(pointer->expression);
+
 		} else {
-			state->reporter.error(lambda->insert_into->location, "This is expected to be an identifier for a struct.");
+			Struct = direct_as<AstStruct>(This->type);
+		}
+
+		if (!Struct) {
+			state->reporter.error(This->location, "This must be a struct or pointer to a struct.");
 			yield(TypecheckResult::fail);
 		}
+
+		if (!lambda->definition) {
+			state->reporter.error(lambda->location, "Lambda with `me` must have a name.");
+			yield(TypecheckResult::fail);
+		}
+
+		Struct->member_scope->definitions.get_or_insert(lambda->definition->name).add(lambda->definition);
+		Struct->member_scope->statements.add(lambda->definition);
  	}
 
 	typecheck_body(state, lambda);
@@ -7931,6 +8044,11 @@ AstExpression *typecheck(TypecheckState *state, AstStruct *Struct) {
 
 			if (!member->is_constant && member->expression) {
 				state->reporter.error(member->location, "Default values for struct members are not implemented yet.");
+				yield(TypecheckResult::fail);
+			}
+
+			if (types_match(member->type, builtin_void)) {
+				state->reporter.error(member->location, "Can't use member of type Void in a struct.");
 				yield(TypecheckResult::fail);
 			}
 		}
