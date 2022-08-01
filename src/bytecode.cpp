@@ -1289,7 +1289,8 @@ void FrameBuilder::load_address_of(AstExpression *expression, RegisterOrAddress 
 
 			// TODO: Clean up this copypasta.
 
-			if (auto span = direct_as<AstSpan>(subscript->expression->type)) {
+			// :span hack:
+			if (auto subtype = get_span_subtype(subscript->expression->type)) {
 				load_address_of(subscript->expression, destination);
 				if (destination.is_in_register) {
 					mov_rm(destination.reg, Address(destination.reg));
@@ -2456,8 +2457,8 @@ void FrameBuilder::append(AstBinaryOperator *bin, RegisterOrAddress destination)
 
 			{
 				auto array = as_array(from);
-				auto span = as_span(to);
-				if (array && span) {
+				auto subtype = get_span_subtype(to);
+				if (array && subtype) {
 					assert(!destination.is_in_register);
 					assert(compiler.stack_word_size == 8);
 
@@ -4011,9 +4012,9 @@ void FrameBuilder::append(AstPack *pack, RegisterOrAddress destination) {
 	assert(!destination.is_in_register);
 
 	assert(pack->type->kind == Ast_Subscript);
-	auto type = ((AstSubscript *)pack->type)->expression;
+	auto elem_type = ((AstSubscript *)pack->type)->expression;
 
-	auto elem_size = get_size(type);
+	auto elem_size = get_size(elem_type);
 
 	for (umm i = 0; i < pack->expressions.count; ++i) {
 		auto expression = pack->expressions[i];

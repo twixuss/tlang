@@ -37,6 +37,8 @@ BuiltinStruct builtin_unknown_enum;
 BuiltinStruct builtin_poly;
 BuiltinStruct builtin_overload_set;
 
+HashMap<AstExpression *, AstStruct *> span_instantiations;
+
 BuiltinStruct *builtin_default_signed_integer;
 BuiltinStruct *builtin_default_unsigned_integer;
 BuiltinStruct *builtin_default_integer;

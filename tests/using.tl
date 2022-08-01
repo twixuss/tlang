@@ -12,7 +12,8 @@ get_foo :: (): using result: Foo {
 }
 
 write :: (using foo: Foo) {
-	println(foo)
+	println(a)
+	println(b)
 }
 
 main :: () {

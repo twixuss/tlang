@@ -629,6 +629,8 @@ struct AstStruct : AstExpression, ExpressionPool<AstStruct> {
 
 	bool is_union    : 1 = false;
 	bool is_template : 1 = false;
+	// :span hack:
+	bool is_span     : 1 = false;
 };
 
 struct AstIf : AstStatement, StatementPool<AstIf> {
@@ -1014,23 +1016,27 @@ struct AstUsing : AstStatement, StatementPool<AstUsing> {
 };
 
 struct BuiltinStruct {
+	AstDefinition *definition;
+
 	// actual thing
 	AstStruct        *Struct;  // string :: struct
 
 	// reusable things
 	AstIdentifier    *ident;   // string
 	AstUnaryOperator *pointer; // *string
-	AstSpan          *span;	   // []string
+	AstStruct        *span;	   // []string
 };
 
 struct BuiltinEnum {
+	AstDefinition *definition;
+
 	// actual thing
 	AstEnum          *Enum;    // type_kind :: enum
 
 	// reusable things
 	AstIdentifier    *ident;   // type_kind
 	AstUnaryOperator *pointer; // *type_kind
-	AstSpan          *span;	   // []type_kind
+	AstStruct        *span;	   // []type_kind
 };
 
 extern BuiltinStruct builtin_void;
@@ -1063,6 +1069,8 @@ extern BuiltinStruct builtin_unknown;
 extern BuiltinStruct builtin_unknown_enum;
 extern BuiltinStruct builtin_poly;
 extern BuiltinStruct builtin_overload_set;
+
+extern HashMap<AstExpression *, AstStruct *> span_instantiations;
 
 extern BuiltinStruct *builtin_default_signed_integer;
 extern BuiltinStruct *builtin_default_unsigned_integer;
@@ -1256,3 +1264,22 @@ AstSubscript *as_array(AstExpression *type);
 AstSpan *as_span(AstExpression *type);
 
 bool is_addressable(AstExpression *expression);
+
+// :span hack:
+inline AstExpression *get_span_subtype(AstExpression *span) {
+	switch (span->kind) {
+		case Ast_Struct: {
+			auto Struct = (AstStruct *)span;
+			if (!Struct->is_span)
+				return 0;
+
+			auto def = (AstDefinition *)Struct->member_scope->statements[0];
+			assert(def->kind == Ast_Definition);
+
+			auto pointer = as_pointer(def->type);
+
+			return pointer->expression;
+		}
+	}
+	return 0;
+}

@@ -1,6 +1,41 @@
 import "windows.tl"
 import "allocator.tl"
 
+merge :: (a: U8, b: U8): U16 =>
+	(a as U16 << 8) | b
+
+strlen :: (str: *U8) {
+	c := str
+	while *c != 0 c += 1
+	return c as Int - str as Int
+}
+
+find :: (me: String, what: String): ?String {
+	if (count - what.count + 1) as Int <= 0
+		return null
+
+	same := true
+	for i in 0 .. count - what.count + 1 {
+		same = true
+		for j in 0 .. what.count
+			if what[j] != me[i + j]
+				same = false
+		if same
+			return String(&me[i], what.count)
+	}
+	return null
+}
+
+starts_with :: (me: String, sub: String) {
+	if sub.count > count
+        return false
+    for i in 0..sub.count
+        if data[i] != sub.data[i]
+            return false
+    return true
+}
+
+
 write_to_stdout :: (str: String) {
     WriteFile(GetStdHandle(STD_OUTPUT_HANDLE), str.data, str.count as U32, null, null)
     return str.count
@@ -264,6 +299,7 @@ stringize_quoted_if_string :: (value: Any, state: *Void, callback: StringizeCall
 
 stringize :: (value: Any, state: *Void, callback: StringizeCallback): Int {
 	info := value.type
+    assert info != null
 
 	stringize_span :: (data: *U8, count: Int, info: *TypeInfo, state: *Void, callback: StringizeCallback): Int {
         bytes_written: Int
@@ -306,6 +342,9 @@ stringize :: (value: Any, state: *Void, callback: StringizeCallback): Int {
 		.\struct => {
 			if info.name == "String" {
 				return callback(state, *(value.pointer as *String))
+            } else if info.name.starts_with("Span(") {
+                span := *(value.pointer as *[]U8)
+		    	return stringize_span(span.data, span.count, info.members[0].type.pointee, state, callback)
 			} else {
                 bytes_written: Int
                 bytes_written += callback(state, "{")
@@ -347,6 +386,9 @@ print :: (value: Any) {
 	b.free()
 }
 
+print :: (value: String) =>
+	write_to_stdout(value)
+
 print :: (format: String, values: ..Any) {
 	b := create_string_builder()
 	b.append_format(format, ..values)
@@ -367,32 +409,6 @@ println :: (value: String) {
 println :: (format: String, values: ..Any) {
 	print(format, ..values)
 	write_to_stdout('\n')
-}
-
-merge :: (a: U8, b: U8): U16 =>
-	(a as U16 << 8) | b
-
-strlen :: (str: *U8) {
-	c := str
-	while *c != 0 c += 1
-	return c as Int - str as Int
-}
-
-find :: (me: String, what: String): ?String {
-	if (count - what.count + 1) as Int <= 0
-		return null
-
-	same := true
-	for i in 0 .. count - what.count + 1 {
-		same = true
-		for j in 0 .. what.count {
-			if what[j] != me[i + j]
-				same = false
-		}
-		if same
-			return String(&me[i], what.count)
-	}
-	return null
 }
 
 STRING_BUILDER_INITIAL_BUFFER_CAPACITY :: 0x1000

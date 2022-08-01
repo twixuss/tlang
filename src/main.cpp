@@ -4261,6 +4261,8 @@ AstUnaryOperator *get_typeinfo(TypecheckState *state, AstExpression *type, Strin
 			set_member(typeinfo_initializer, "pointee", get_typeinfo(state, subscript->expression, location));
 		} else if (auto span = (AstSpan *)directed; directed->kind == Ast_Span) {
 			set_member(typeinfo_initializer, "pointee", get_typeinfo(state, span->expression, location));
+		} else if (auto pointer = as_pointer(directed)) {
+			set_member(typeinfo_initializer, "pointee", get_typeinfo(state, pointer->expression, location));
 		}
 
 		for (umm i = 0; i < typeinfo_initializer->sorted_arguments.count; ++i) {
@@ -4321,13 +4323,14 @@ bool implicitly_cast(TypecheckState *state, Reporter *reporter, CExpression auto
 		*conversion_distance = 1;
 
 	auto earray = as_array(expression->type);
-	auto tspan = as_span(type);
 
-	if (earray && tspan) {
-		if (types_match(earray->expression, tspan->expression)) {
-			if (apply)
-				expression = make_cast(expression, type);
-			return true;
+	if (earray) {
+		if (auto subtype = get_span_subtype(type)) {
+			if (types_match(earray->expression, subtype)) {
+				if (apply)
+					expression = make_cast(expression, type);
+				return true;
+			}
 		}
 	}
 
@@ -5301,7 +5304,7 @@ AstStatement *typecheck(TypecheckState *state, AstFor *For) {
 
 		typecheck(state, replacement_block);
 		return replacement_block;
-	} else if (auto span = direct_as<AstSpan>(For->range->type)) {
+	} else if (auto subtype = get_span_subtype(For->range->type)) {
 		auto replacement_block = AstBlock::create();
 		replacement_block->scope->parent = state->current_scope;
 
@@ -6271,6 +6274,45 @@ struct BinaryTypecheckerKey {
 
 HashMap<BinaryTypecheckerKey, AstExpression *(*)(TypecheckState *, AstBinaryOperator *)> binary_typecheckers;
 
+// :span hack:
+// FIXME: this is just hardcoded template.
+AstStruct *instantiate_span(AstExpression *subtype) {
+	auto &instantiation = span_instantiations.get_or_insert(subtype);
+	if (!instantiation) {
+		auto instantiation_definition = AstDefinition::create();
+		instantiation = AstStruct::create();
+
+		instantiation_definition->expression = instantiation;
+		instantiation_definition->name = format("Span({})"str, type_to_string(subtype));
+		instantiation_definition->parent_scope = &global_scope;
+		instantiation_definition->is_constant = true;
+
+		instantiation->layout = StructLayout::tlang;
+		instantiation->definition = instantiation_definition;
+		instantiation->is_span = true;
+		instantiation->alignment = compiler.stack_word_size;
+		instantiation->size = compiler.stack_word_size * 2;
+		instantiation->type = builtin_type.ident;
+
+		auto data = AstDefinition::create();
+		data->name = "data"str;
+		data->type = make_pointer_type(subtype);
+		data->offset = 0;
+		data->container_node = instantiation;
+		add_to_scope(data, instantiation->member_scope);
+		instantiation->data_members.add(data);
+
+		auto count = AstDefinition::create();
+		count->name = "count"str;
+		count->type = type_int;
+		count->offset = compiler.stack_word_size;
+		count->container_node = instantiation;
+		add_to_scope(count, instantiation->member_scope);
+		instantiation->data_members.add(count);
+	}
+	return instantiation;
+}
+
 AstExpression *typecheck(TypecheckState *state, AstIdentifier *identifier) {
 	if (identifier->possible_definitions.count) {
 		// immediate_info(identifier->location, "Redundant typecheck.");
@@ -6645,9 +6687,10 @@ AstExpression *typecheck(TypecheckState *state, AstCall *call) {
 
 						int distance = 0;
 						if (parameter->is_pack) {
-							assert(parameter->type->kind == Ast_Span);
+							auto subtype = get_span_subtype(parameter->type);
+							assert(subtype);
 
-							if (implicitly_cast(state, &reporter, &argument, ((AstSpan *)parameter->type)->expression, &distance, false)) {
+							if (implicitly_cast(state, &reporter, &argument, subtype, &distance, false)) {
 								resolution.packs[parameter_index].expressions.add(argument);
 
 								++argument_index;
@@ -6940,8 +6983,8 @@ AstExpression *typecheck(TypecheckState *state, AstCall *call) {
 				if (info.expression) {
 					packed_arguments.add(info.expression);
 				} else {
-					assert(parameter->type->kind == Ast_Span);
-					auto elem_type = ((AstSpan *)parameter->type)->expression;
+					auto elem_type = get_span_subtype(parameter->type);
+					assert(elem_type);
 
 					// Don'n repack the argument if unpack is passed to a pack.
 					if (info.expressions.count == 1) {
@@ -6969,10 +7012,9 @@ AstExpression *typecheck(TypecheckState *state, AstCall *call) {
 					type->index_expression = make_integer({}, (u64)pack->expressions.count);
 					type->location = pack->location;
 					type->type = builtin_type.ident;
+
 					pack->type = type;
 					packed_arguments.add(pack);
-
-
 				}
 			}
 			call->sorted_arguments = packed_arguments;
@@ -7951,11 +7993,14 @@ AstExpression *typecheck(TypecheckState *state, AstUnaryOperator *unop) {
 			if (is_type(unop->expression)) {
 				unop->type = builtin_type.ident;
 			} else {
-				if (!direct_as<AstSpan>(unop->expression->type)) {
-					state->reporter.error(unop->expression->location, "Type {} is not unpackable. Only span type can be unpacked.", type_to_string(unop->expression->type));
-					yield(TypecheckResult::fail);
+				if (auto Struct = direct_as<AstStruct>(unop->expression->type)) {
+					if (Struct->is_span) {
+						unop->type = unop->expression->type;
+						break;
+					}
 				}
-				unop->type = unop->expression->type;
+				state->reporter.error(unop->expression->location, "Type {} is not unpackable. Only span type can be unpacked.", type_to_string(unop->expression->type));
+				yield(TypecheckResult::fail);
 			}
 			break;
 		}
@@ -8131,7 +8176,10 @@ AstExpression *typecheck(TypecheckState *state, AstSubscript *subscript) {
 		if (type->kind == Ast_Subscript) {
 			subscript->type = ((AstSubscript *)type)->expression;
 		} else if (type->kind == Ast_Span) {
+			// NOTE: due to :span hack: this should not happen
 			subscript->type = ((AstSpan *)type)->expression;
+		} else if (auto subtype = get_span_subtype(type)) { // :span hack:
+			subscript->type = subtype;
 		} else if (is_pointer(type)) {
 			subscript->type = ((AstUnaryOperator *)type)->expression;
 		} else if (types_match(type, builtin_string)) {
@@ -8146,11 +8194,14 @@ AstExpression *typecheck(TypecheckState *state, AstSubscript *subscript) {
 AstExpression *typecheck(TypecheckState *state, AstSpan *span) {
 	typecheck(state, span->expression);
 	if (!is_type(span->expression)) {
-		state->reporter.error(span->expression->location, "Span expects this to be a type, but it isn't.");
+		state->reporter.error(span->expression->location, "This must be a type.");
 		yield(TypecheckResult::fail);
 	}
-	span->type = builtin_type.ident;
-	return span;
+
+	auto subtype = direct(span->expression);
+
+	// TODO: maybe return a new identifier instead of struct?
+	return instantiate_span(subtype);
 }
 AstExpression *typecheck(TypecheckState *state, AstIfx *If) {
 	typecheck(state, If->condition);
@@ -8878,6 +8929,339 @@ auto slab_allocator_func(AllocatorMode mode, void *data, umm old_size, umm new_s
 
 void init_strings();
 
+void init_builtin_types() {
+	// Builtin type creation is done in 4 steps:
+	// 1. Create all necessary nodes for structs, enums and aliases.
+	// 2. Init all structs and enums.
+	// 3. Init aliases.
+	// 4. Add members to structs. They depend on aliases being initialized.
+
+
+	// ========================
+	// Step 1: Create all nodes
+	// ========================
+	auto create_builtin = [&](auto &builtin) {
+		builtin.definition = AstDefinition::create();
+		builtin.ident = AstIdentifier::create();
+	};
+	auto create_struct = [&](BuiltinStruct &type) {
+		create_builtin(type);
+		type.ident->directed = type.Struct = AstStruct::create();
+	};
+	auto create_enum = [&](BuiltinEnum &type) {
+		create_builtin(type);
+		type.ident->directed = type.Enum = AstEnum::create();
+	};
+
+	// Type:
+	create_struct(builtin_type);
+
+	// Primitives:
+	create_struct(builtin_void);
+	create_struct(builtin_bool);
+	create_struct(builtin_u8);
+	create_struct(builtin_u16);
+	create_struct(builtin_u32);
+	create_struct(builtin_u64);
+	create_struct(builtin_s8);
+	create_struct(builtin_s16);
+	create_struct(builtin_s32);
+	create_struct(builtin_s64);
+	create_struct(builtin_f32);
+	create_struct(builtin_f64);
+
+	// Structs:  NOTE: members are appended after every builtin type was initialized.
+	create_struct(builtin_string);
+	create_struct(builtin_struct_member);
+	create_struct(builtin_enum_member);
+	create_struct(builtin_typeinfo);
+	create_struct(builtin_any);
+	create_struct(builtin_range);
+
+	// Enums:
+	create_enum(builtin_type_kind);
+
+	// Internal types:
+	create_struct(builtin_unsized_integer);
+	create_struct(builtin_unsized_float);
+	create_struct(builtin_noinit);
+	create_struct(builtin_unknown);
+	create_struct(builtin_unknown_enum);
+	create_struct(builtin_poly);
+	create_struct(builtin_overload_set);
+
+	auto create_global_alias = [&](String name) {
+		auto defn = AstDefinition::create();
+		defn->location = name;
+		defn->name = name;
+		defn->is_constant = true;
+		defn->typechecked = true;
+		// defn->add_to_scope(&global_scope);
+		global_scope.definitions.get_or_insert(defn->name).add(defn);
+		global_scope.statements.add(defn);
+
+		auto ident = AstIdentifier::create();
+		ident->location = name;
+		ident->name = name;
+		ident->possible_definitions.set(defn);
+
+		return ident;
+	};
+	type_sint  = create_global_alias("SInt"str);
+	type_uint  = create_global_alias("UInt"str);
+	type_int   = create_global_alias("Int"str);
+	type_float = create_global_alias("Float"str);
+	auto alias_s8  = create_global_alias("SInt8"str);
+	auto alias_s16 = create_global_alias("SInt16"str);
+	auto alias_s32 = create_global_alias("SInt32"str);
+	auto alias_s64 = create_global_alias("SInt64"str);
+	auto alias_u8  = create_global_alias("UInt8"str);
+	auto alias_u16 = create_global_alias("UInt16"str);
+	auto alias_u32 = create_global_alias("UInt32"str);
+	auto alias_u64 = create_global_alias("UInt64"str);
+	auto alias_f32 = create_global_alias("Float32"str);
+	auto alias_f64 = create_global_alias("Float64"str);
+
+	// ======================================
+	// Step 2: Init builtin structs and enums
+	// ======================================
+
+	auto init_builtin = [&](auto &builtin, auto thing, String name) {
+		auto definition = thing->definition = builtin.definition;
+		auto ident = builtin.ident;
+
+		thing->type = builtin_type.ident;
+
+		definition->is_constant = true;
+		definition->expression = thing;
+		definition->location = name;
+		definition->name = name;
+		definition->type = thing->type;
+		definition->typechecked = true;
+
+		add_to_scope(definition, &global_scope);
+		//typechecked_globals.get_or_insert(name) = definition;
+
+		ident->location = name;
+		ident->name = name;
+		ident->possible_definitions.set(definition);
+		ident->type = thing->type;
+		ident->directed = thing->directed;
+
+		// NOTE: not every builtin struct requires this, but i'd rather
+		// not have to debug for an hour because i forgot to do this.
+		builtin.pointer = make_pointer_type(builtin.ident);
+		builtin.span = instantiate_span(builtin.ident);
+	};
+	auto init_struct = [&](BuiltinStruct &type, String name, s64 size, s64 align) {
+		type.Struct->size = size;
+		type.Struct->alignment = align;
+		type.Struct->location = name;
+		type.Struct->parameter_scope->parent = &global_scope;
+		type.Struct->layout = StructLayout::tlang;
+		init_builtin(type, type.Struct, name);
+
+	};
+	auto init_enum = [&](BuiltinEnum &type, String name) {
+		type.Enum->location = name;
+		type.Enum->scope->parent = &global_scope;
+		init_builtin(type, type.Enum, name);
+	};
+
+	// Type:
+	init_struct(builtin_type, "Type"str, 8, 8);
+
+	// Primitives:
+	init_struct(builtin_void, "Void"str, 0, 0);
+	init_struct(builtin_bool, "Bool"str, 1, 1);
+	init_struct(builtin_u8,   "U8"str,   1, 1);
+	init_struct(builtin_u16,  "U16"str,  2, 2);
+	init_struct(builtin_u32,  "U32"str,  4, 4);
+	init_struct(builtin_u64,  "U64"str,  8, 8);
+	init_struct(builtin_s8,   "S8"str,   1, 1);
+	init_struct(builtin_s16,  "S16"str,  2, 2);
+	init_struct(builtin_s32,  "S32"str,  4, 4);
+	init_struct(builtin_s64,  "S64"str,  8, 8);
+	init_struct(builtin_f32,  "F32"str,  4, 4);
+	init_struct(builtin_f64,  "F64"str,  8, 8);
+
+	// Structs:  NOTE: members are appended after every builtin type was initialized.
+	init_struct(builtin_string,        "String"str, 0, 0);
+	init_struct(builtin_struct_member, "StructMember"str, 0, 0);
+	init_struct(builtin_enum_member,   "EnumMember"str, 0, 0);
+	init_struct(builtin_typeinfo,      "TypeInfo"str, 0, 0);
+	init_struct(builtin_any,           "Any"str, 0, 0);
+	init_struct(builtin_range,         "Range"str, 0, 0);
+
+	// Enums:
+	init_enum(builtin_type_kind, "TypeKind"str);
+
+	// Internal types:
+	init_struct(builtin_unsized_integer, "<integer>"str, 0, 0);
+	init_struct(builtin_unsized_float,   "<float>"str, 0, 0);
+	init_struct(builtin_noinit,          "<noinit>"str, 0, 0);
+	init_struct(builtin_unknown,         "<unknown>"str, 0, 0);
+	init_struct(builtin_unknown_enum,    "<unknown enum>"str, 0, 0);
+	init_struct(builtin_poly,            "<poly>"str, 0, 0);
+	init_struct(builtin_overload_set,    "<overload set>"str, 0, 0);
+
+	// ====================
+	// Step 3: Init aliases
+	// ====================
+	switch (compiler.register_size) {
+		case 4:
+			builtin_default_signed_integer = &builtin_s32;
+			builtin_default_unsigned_integer = &builtin_u32;
+			break;
+		case 8:
+			builtin_default_signed_integer = &builtin_s64;
+			builtin_default_unsigned_integer = &builtin_u64;
+			break;
+	}
+	builtin_default_integer = builtin_default_signed_integer;
+	builtin_default_float = &builtin_f64;
+
+	auto init_global_alias = [&](AstIdentifier *ident, AstExpression *expression) {
+		assert(expression->type);
+
+		auto defn = ident->possible_definitions[0];
+		defn->type = expression->type;
+		defn->expression = expression;
+
+		ident->type = expression->type;
+		ident->directed = expression->directed;
+
+		return ident;
+	};
+	init_global_alias(type_sint,  builtin_default_integer->ident);
+	init_global_alias(type_uint,  builtin_default_unsigned_integer->ident);
+	init_global_alias(type_int,   builtin_default_signed_integer->ident);
+	init_global_alias(type_float, builtin_default_float->ident);
+	init_global_alias(alias_s8,  builtin_s8.ident);
+	init_global_alias(alias_s16, builtin_s16.ident);
+	init_global_alias(alias_s32, builtin_s32.ident);
+	init_global_alias(alias_s64, builtin_s64.ident);
+	init_global_alias(alias_u8,  builtin_u8.ident);
+	init_global_alias(alias_u16, builtin_u16.ident);
+	init_global_alias(alias_u32, builtin_u32.ident);
+	init_global_alias(alias_u64, builtin_u64.ident);
+	init_global_alias(alias_f32, builtin_f32.ident);
+	init_global_alias(alias_f64, builtin_f64.ident);
+
+	// =============================
+	// Step 4: Append struct members
+	// =============================
+	auto append_member = [](BuiltinStruct &builtin, String name, AstExpression *type) {
+		auto Struct = builtin.Struct;
+
+		auto d = AstDefinition::create();
+		d->location = name;
+		d->name = name;
+		d->type = type;
+
+		auto member_size = get_size(type);
+		auto member_align = get_align(type);
+
+		d->offset = ceil(Struct->size, member_align);
+
+		Struct->alignment = max(Struct->alignment, member_align);
+		Struct->size += max(Struct->alignment, member_size);
+
+
+		add_to_scope(d, Struct->member_scope);
+		d->container_node = Struct;
+
+		Struct->data_members.add(d);
+
+		return d;
+	};
+	auto append_value = [](BuiltinEnum &builtin, String name, s64 value) {
+		auto Enum = builtin.Enum;
+
+		auto d = AstDefinition::create();
+		d->location = name;
+		d->name = name;
+		d->type = type_int;
+		d->expression = make_integer(name, value, type_int);
+
+		add_to_scope(d, Enum->scope);
+		d->container_node = Enum;
+
+		return d;
+	};
+
+	add_member(builtin_u8 .Struct, builtin_u8 .ident, "min"str, make_integer({}, (u64)min_value<u8 >), true, INVALID_MEMBER_OFFSET);
+	add_member(builtin_u16.Struct, builtin_u16.ident, "min"str, make_integer({}, (u64)min_value<u16>), true, INVALID_MEMBER_OFFSET);
+	add_member(builtin_u32.Struct, builtin_u32.ident, "min"str, make_integer({}, (u64)min_value<u32>), true, INVALID_MEMBER_OFFSET);
+	add_member(builtin_u64.Struct, builtin_u64.ident, "min"str, make_integer({}, (u64)min_value<u64>), true, INVALID_MEMBER_OFFSET);
+	add_member(builtin_u8 .Struct, builtin_u8 .ident, "max"str, make_integer({}, (u64)max_value<u8 >), true, INVALID_MEMBER_OFFSET);
+	add_member(builtin_u16.Struct, builtin_u16.ident, "max"str, make_integer({}, (u64)max_value<u16>), true, INVALID_MEMBER_OFFSET);
+	add_member(builtin_u32.Struct, builtin_u32.ident, "max"str, make_integer({}, (u64)max_value<u32>), true, INVALID_MEMBER_OFFSET);
+	add_member(builtin_u64.Struct, builtin_u64.ident, "max"str, make_integer({}, (u64)max_value<u64>), true, INVALID_MEMBER_OFFSET);
+	add_member(builtin_s8 .Struct, builtin_s8 .ident, "min"str, make_integer({}, (s64)min_value<s8 >), true, INVALID_MEMBER_OFFSET);
+	add_member(builtin_s16.Struct, builtin_s16.ident, "min"str, make_integer({}, (s64)min_value<s16>), true, INVALID_MEMBER_OFFSET);
+	add_member(builtin_s32.Struct, builtin_s32.ident, "min"str, make_integer({}, (s64)min_value<s32>), true, INVALID_MEMBER_OFFSET);
+	add_member(builtin_s64.Struct, builtin_s64.ident, "min"str, make_integer({}, (s64)min_value<s64>), true, INVALID_MEMBER_OFFSET);
+	add_member(builtin_s8 .Struct, builtin_s8 .ident, "max"str, make_integer({}, (s64)max_value<s8 >), true, INVALID_MEMBER_OFFSET);
+	add_member(builtin_s16.Struct, builtin_s16.ident, "max"str, make_integer({}, (s64)max_value<s16>), true, INVALID_MEMBER_OFFSET);
+	add_member(builtin_s32.Struct, builtin_s32.ident, "max"str, make_integer({}, (s64)max_value<s32>), true, INVALID_MEMBER_OFFSET);
+	add_member(builtin_s64.Struct, builtin_s64.ident, "max"str, make_integer({}, (s64)max_value<s64>), true, INVALID_MEMBER_OFFSET);
+
+	// string
+	append_member(builtin_string, "data"str,  builtin_u8.pointer);
+	append_member(builtin_string, "count"str, type_int);
+
+	// type_kind
+	{
+		using enum TypeKind;
+		append_value(builtin_type_kind, "Void"str,    (s64)Void   );
+		append_value(builtin_type_kind, "Bool"str,    (s64)Bool   );
+		append_value(builtin_type_kind, "U8"str,      (s64)U8     );
+		append_value(builtin_type_kind, "U16"str,     (s64)U16    );
+		append_value(builtin_type_kind, "U32"str,     (s64)U32    );
+		append_value(builtin_type_kind, "U64"str,     (s64)U64    );
+		append_value(builtin_type_kind, "S8"str,      (s64)S8     );
+		append_value(builtin_type_kind, "S16"str,     (s64)S16    );
+		append_value(builtin_type_kind, "S32"str,     (s64)S32    );
+		append_value(builtin_type_kind, "S64"str,     (s64)S64    );
+		append_value(builtin_type_kind, "F32"str,     (s64)F32    );
+		append_value(builtin_type_kind, "F64"str,     (s64)F64    );
+		append_value(builtin_type_kind, "struct"str,  (s64)Struct );
+		append_value(builtin_type_kind, "enum"str,    (s64)Enum   );
+		append_value(builtin_type_kind, "pointer"str, (s64)Pointer);
+		append_value(builtin_type_kind, "span"str,    (s64)Span   );
+		append_value(builtin_type_kind, "array"str,   (s64)Array  );
+	}
+
+	// struct_member
+	append_member(builtin_struct_member, "name"str,   builtin_string.ident);
+	append_member(builtin_struct_member, "type"str,   builtin_typeinfo.pointer);
+	append_member(builtin_struct_member, "offset"str, type_int);
+
+	// enum_member
+	append_member(builtin_enum_member, "value"str, type_int);
+	append_member(builtin_enum_member, "name"str,  builtin_string.ident);
+
+	// typeinfo
+	append_member(builtin_typeinfo, "kind"str, builtin_type_kind.ident);
+	append_member(builtin_typeinfo, "name"str, builtin_string.ident);
+	append_member(builtin_typeinfo, "size"str, type_int);
+	append_member(builtin_typeinfo, "members"str, builtin_struct_member.span);
+	append_member(builtin_typeinfo, "pointee"str, builtin_typeinfo.pointer);
+	append_member(builtin_typeinfo, "array_count"str, type_int);
+	append_member(builtin_typeinfo, "enum_members"str, builtin_enum_member.span);
+	append_member(builtin_typeinfo, "parameters"str, make_span(builtin_typeinfo.pointer));
+
+	// any
+	append_member(builtin_any, "pointer"str, builtin_u8      .pointer);
+	append_member(builtin_any, "type"str,    builtin_typeinfo.pointer);
+
+	// range
+	// TODO: make this a template. might be useful for aabb
+	append_member(builtin_range, "min"str, type_int);
+	append_member(builtin_range, "max"str, type_int);
+}
+
 s32 tl_main(Span<Span<utf8>> arguments) {
 	construct(compiler);
 
@@ -9050,6 +9434,7 @@ restart_main:
 	construct(has_value_overloads);
 
 	construct(typeinfo_definitinos);
+	construct(span_instantiations);
 
 	Pool32<AstExpression>::init();
 	Pool32<AstStatement>::init();
@@ -9142,247 +9527,7 @@ restart_main:
 	ENUMERATE_KEYWORDS(E);
 #undef E
 
-	auto add_global_alias = [&](String name, AstExpression *expression) {
-		auto defn = AstDefinition::create();
-		defn->location = name;
-		defn->name = name;
-		defn->is_constant = true;
-		defn->typechecked = true;
-		defn->type = expression->type;
-		defn->expression = expression;
-		// defn->add_to_scope(&global_scope);
-		global_scope.definitions.get_or_insert(defn->name).add(defn);
-		global_scope.statements.add(defn);
-
-		auto ident = AstIdentifier::create();
-		ident->location = name;
-		ident->name = name;
-		ident->possible_definitions.set(defn);
-		ident->type = expression->type;
-		ident->directed = expression->directed;
-
-		return ident;
-	};
-	auto init_builtin = [&](auto &builtin, auto thing, String name) {
-		auto definition = thing->definition = AstDefinition::create();
-		// NOTE: this identifier has to be created BEFORE doing
-		// `thing->type = builtin_type.ident` to allow `type` struct reference itself.
-		auto ident = builtin.ident = AstIdentifier::create();
-
-		thing->type = builtin_type.ident;
-
-		definition->is_constant = true;
-		definition->expression = thing;
-		definition->location = name;
-		definition->name = name;
-		definition->type = thing->type;
-		definition->typechecked = true;
-
-		add_to_scope(definition, &global_scope);
-		//typechecked_globals.get_or_insert(name) = definition;
-
-		ident->location = name;
-		ident->name = name;
-		ident->possible_definitions.set(definition);
-		ident->type = thing->type;
-		ident->directed = thing->directed;
-
-		// NOTE: not every builtin struct requires this, but i'd rather
-		// not have to debug for an hour because i forgot to do this.
-		builtin.pointer = make_pointer_type(builtin.ident);
-		builtin.span = make_span(builtin.ident);
-	};
-	auto init_struct = [&](BuiltinStruct &type, String name, s64 size, s64 align) {
-		type.Struct = AstStruct::create();
-		type.Struct->size = size;
-		type.Struct->alignment = align;
-		type.Struct->location = name;
-		type.Struct->parameter_scope->parent = &global_scope;
-		type.Struct->layout = StructLayout::tlang;
-		init_builtin(type, type.Struct, name);
-
-	};
-	auto init_enum = [&](BuiltinEnum &type, String name) {
-		type.Enum = AstEnum::create();
-		type.Enum->location = name;
-		type.Enum->scope->parent = &global_scope;
-		init_builtin(type, type.Enum, name);
-	};
-
-	// Type:
-	init_struct(builtin_type, "Type"str, 8, 8);
-
-	// Primitives:
-	init_struct(builtin_void, "Void"str, 0, 0);
-	init_struct(builtin_bool, "Bool"str, 1, 1);
-	init_struct(builtin_u8,   "U8"str,   1, 1);
-	init_struct(builtin_u16,  "U16"str,  2, 2);
-	init_struct(builtin_u32,  "U32"str,  4, 4);
-	init_struct(builtin_u64,  "U64"str,  8, 8);
-	init_struct(builtin_s8,   "S8"str,   1, 1);
-	init_struct(builtin_s16,  "S16"str,  2, 2);
-	init_struct(builtin_s32,  "S32"str,  4, 4);
-	init_struct(builtin_s64,  "S64"str,  8, 8);
-	init_struct(builtin_f32,  "F32"str,  4, 4);
-	init_struct(builtin_f64,  "F64"str,  8, 8);
-
-	// Structs:  NOTE: members are appended after every builtin type was initialized.
-	init_struct(builtin_string,        "String"str, 0, 0);
-	init_struct(builtin_struct_member, "StructMember"str, 0, 0);
-	init_struct(builtin_enum_member,   "EnumMember"str, 0, 0);
-	init_struct(builtin_typeinfo,      "TypeInfo"str, 0, 0);
-	init_struct(builtin_any,           "Any"str, 0, 0);
-	init_struct(builtin_range,         "Range"str, 0, 0);
-
-	// Enums:
-	init_enum(builtin_type_kind, "TypeKind"str);
-
-	// Internal types:
-	init_struct(builtin_unsized_integer, "<integer>"str, 0, 0);
-	init_struct(builtin_unsized_float,   "<float>"str, 0, 0);
-	init_struct(builtin_noinit,          "<noinit>"str, 0, 0);
-	init_struct(builtin_unknown,         "<unknown>"str, 0, 0);
-	init_struct(builtin_unknown_enum,    "<unknown enum>"str, 0, 0);
-	init_struct(builtin_poly,            "<poly>"str, 0, 0);
-	init_struct(builtin_overload_set,    "<overload set>"str, 0, 0);
-
-	switch (compiler.register_size) {
-		case 4:
-			builtin_default_signed_integer = &builtin_s32;
-			builtin_default_unsigned_integer = &builtin_u32;
-			break;
-		case 8:
-			builtin_default_signed_integer = &builtin_s64;
-			builtin_default_unsigned_integer = &builtin_u64;
-			break;
-	}
-	builtin_default_integer = builtin_default_signed_integer;
-	builtin_default_float = &builtin_f64;
-
-	type_sint  = add_global_alias("SInt"str,  builtin_default_integer->ident);
-	type_uint  = add_global_alias("UInt"str,  builtin_default_unsigned_integer->ident);
-	type_int   = add_global_alias("Int"str,   builtin_default_signed_integer->ident);
-	type_float = add_global_alias("Float"str, builtin_default_float->ident);
-	add_global_alias("SInt8"str,  builtin_s8.ident);
-	add_global_alias("SInt16"str, builtin_s16.ident);
-	add_global_alias("SInt32"str, builtin_s32.ident);
-	add_global_alias("SInt64"str, builtin_s64.ident);
-	add_global_alias("UInt8"str,  builtin_u8.ident);
-	add_global_alias("UInt16"str, builtin_u16.ident);
-	add_global_alias("UInt32"str, builtin_u32.ident);
-	add_global_alias("UInt64"str, builtin_u64.ident);
-	add_global_alias("Float32"str, builtin_f32.ident);
-	add_global_alias("Float64"str, builtin_f64.ident);
-
-	auto append_member = [](BuiltinStruct &builtin, String name, AstExpression *type) {
-		auto Struct = builtin.Struct;
-
-		auto d = AstDefinition::create();
-		d->location = name;
-		d->name = name;
-		d->type = type;
-
-		auto member_size = get_size(type);
-		auto member_align = get_align(type);
-
-		d->offset = ceil(Struct->size, member_align);
-
-		Struct->alignment = max(Struct->alignment, member_align);
-		Struct->size += max(Struct->alignment, member_size);
-
-
-		add_to_scope(d, Struct->member_scope);
-		d->container_node = Struct;
-
-		Struct->data_members.add(d);
-
-		return d;
-	};
-	auto append_value = [](BuiltinEnum &builtin, String name, s64 value) {
-		auto Enum = builtin.Enum;
-
-		auto d = AstDefinition::create();
-		d->location = name;
-		d->name = name;
-		d->type = type_int;
-		d->expression = make_integer(name, value, type_int);
-
-		add_to_scope(d, Enum->scope);
-		d->container_node = Enum;
-
-		return d;
-	};
-
-	add_member(builtin_u8 .Struct, builtin_u8 .ident, "min"str, make_integer({}, (u64)min_value<u8 >), true, INVALID_MEMBER_OFFSET);
-	add_member(builtin_u16.Struct, builtin_u16.ident, "min"str, make_integer({}, (u64)min_value<u16>), true, INVALID_MEMBER_OFFSET);
-	add_member(builtin_u32.Struct, builtin_u32.ident, "min"str, make_integer({}, (u64)min_value<u32>), true, INVALID_MEMBER_OFFSET);
-	add_member(builtin_u64.Struct, builtin_u64.ident, "min"str, make_integer({}, (u64)min_value<u64>), true, INVALID_MEMBER_OFFSET);
-	add_member(builtin_u8 .Struct, builtin_u8 .ident, "max"str, make_integer({}, (u64)max_value<u8 >), true, INVALID_MEMBER_OFFSET);
-	add_member(builtin_u16.Struct, builtin_u16.ident, "max"str, make_integer({}, (u64)max_value<u16>), true, INVALID_MEMBER_OFFSET);
-	add_member(builtin_u32.Struct, builtin_u32.ident, "max"str, make_integer({}, (u64)max_value<u32>), true, INVALID_MEMBER_OFFSET);
-	add_member(builtin_u64.Struct, builtin_u64.ident, "max"str, make_integer({}, (u64)max_value<u64>), true, INVALID_MEMBER_OFFSET);
-	add_member(builtin_s8 .Struct, builtin_s8 .ident, "min"str, make_integer({}, (s64)min_value<s8 >), true, INVALID_MEMBER_OFFSET);
-	add_member(builtin_s16.Struct, builtin_s16.ident, "min"str, make_integer({}, (s64)min_value<s16>), true, INVALID_MEMBER_OFFSET);
-	add_member(builtin_s32.Struct, builtin_s32.ident, "min"str, make_integer({}, (s64)min_value<s32>), true, INVALID_MEMBER_OFFSET);
-	add_member(builtin_s64.Struct, builtin_s64.ident, "min"str, make_integer({}, (s64)min_value<s64>), true, INVALID_MEMBER_OFFSET);
-	add_member(builtin_s8 .Struct, builtin_s8 .ident, "max"str, make_integer({}, (s64)max_value<s8 >), true, INVALID_MEMBER_OFFSET);
-	add_member(builtin_s16.Struct, builtin_s16.ident, "max"str, make_integer({}, (s64)max_value<s16>), true, INVALID_MEMBER_OFFSET);
-	add_member(builtin_s32.Struct, builtin_s32.ident, "max"str, make_integer({}, (s64)max_value<s32>), true, INVALID_MEMBER_OFFSET);
-	add_member(builtin_s64.Struct, builtin_s64.ident, "max"str, make_integer({}, (s64)max_value<s64>), true, INVALID_MEMBER_OFFSET);
-
-	// string
-	append_member(builtin_string, "data"str,  builtin_u8.pointer);
-	append_member(builtin_string, "count"str, type_int);
-
-	// type_kind
-	{
-		using enum TypeKind;
-		append_value(builtin_type_kind, "Void"str,    (s64)Void   );
-		append_value(builtin_type_kind, "Bool"str,    (s64)Bool   );
-		append_value(builtin_type_kind, "U8"str,      (s64)U8     );
-		append_value(builtin_type_kind, "U16"str,     (s64)U16    );
-		append_value(builtin_type_kind, "U32"str,     (s64)U32    );
-		append_value(builtin_type_kind, "U64"str,     (s64)U64    );
-		append_value(builtin_type_kind, "S8"str,      (s64)S8     );
-		append_value(builtin_type_kind, "S16"str,     (s64)S16    );
-		append_value(builtin_type_kind, "S32"str,     (s64)S32    );
-		append_value(builtin_type_kind, "S64"str,     (s64)S64    );
-		append_value(builtin_type_kind, "F32"str,     (s64)F32    );
-		append_value(builtin_type_kind, "F64"str,     (s64)F64    );
-		append_value(builtin_type_kind, "struct"str,  (s64)Struct );
-		append_value(builtin_type_kind, "enum"str,    (s64)Enum   );
-		append_value(builtin_type_kind, "pointer"str, (s64)Pointer);
-		append_value(builtin_type_kind, "span"str,    (s64)Span   );
-		append_value(builtin_type_kind, "array"str,   (s64)Array  );
-	}
-
-	// struct_member
-	append_member(builtin_struct_member, "name"str,   builtin_string.ident);
-	append_member(builtin_struct_member, "type"str,   builtin_typeinfo.pointer);
-	append_member(builtin_struct_member, "offset"str, type_int);
-
-	// enum_member
-	append_member(builtin_enum_member, "value"str, type_int);
-	append_member(builtin_enum_member, "name"str,  builtin_string.ident);
-
-	// typeinfo
-	append_member(builtin_typeinfo, "kind"str, builtin_type_kind.ident);
-	append_member(builtin_typeinfo, "name"str, builtin_string.ident);
-	append_member(builtin_typeinfo, "size"str, type_int);
-	append_member(builtin_typeinfo, "members"str, builtin_struct_member.span);
-	append_member(builtin_typeinfo, "pointee"str, builtin_typeinfo.pointer);
-	append_member(builtin_typeinfo, "array_count"str, type_int);
-	append_member(builtin_typeinfo, "enum_members"str, builtin_enum_member.span);
-	append_member(builtin_typeinfo, "parameters"str, make_span(builtin_typeinfo.pointer));
-
-	// any
-	append_member(builtin_any, "pointer"str, builtin_u8      .pointer);
-	append_member(builtin_any, "type"str,    builtin_typeinfo.pointer);
-
-	// range
-	// TODO: make this a template. might be useful for aabb
-	append_member(builtin_range, "min"str, type_int);
-	append_member(builtin_range, "max"str, type_int);
+	init_builtin_types();
 
 #if 1
 	integer_infos[0] = {builtin_u8 .Struct, 8 };
