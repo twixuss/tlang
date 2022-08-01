@@ -342,9 +342,6 @@ stringize :: (value: Any, state: *Void, callback: StringizeCallback): Int {
 		.\struct => {
 			if info.name == "String" {
 				return callback(state, *(value.pointer as *String))
-            } else if info.name.starts_with("Span(") {
-                span := *(value.pointer as *[]U8)
-		    	return stringize_span(span.data, span.count, info.members[0].type.pointee, state, callback)
 			} else {
                 bytes_written: Int
                 bytes_written += callback(state, "{")
@@ -364,7 +361,7 @@ stringize :: (value: Any, state: *Void, callback: StringizeCallback): Int {
 		.array => return stringize_span(value.pointer, info.array_count, info.pointee, state, callback)
 		.span => {
 			span := *(value.pointer as *[]U8)
-			return stringize_span(span.data, span.count, info.pointee, state, callback)
+			return stringize_span(span.data, span.count, info.members[0].type.pointee, state, callback)
 		}
 	}
 }

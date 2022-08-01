@@ -4103,7 +4103,11 @@ TypeKind get_type_kind(AstExpression *type) {
 	if (types_match(type, builtin_s64))  return S64;
 	if (types_match(type, builtin_f32))  return F32;
 	if (types_match(type, builtin_f64))  return F64;
-	if (direct_as<AstStruct>(type))      return Struct;
+	if (auto Struct = direct_as<AstStruct>(type)) {
+		if (Struct->is_span)
+			return Span;
+		return TypeKind::Struct;
+	}
 	if (direct_as<AstEnum>(type))        return Enum;
 	if (auto unop = direct_as<AstUnaryOperator>(type)) {
 		switch (unop->operation) {

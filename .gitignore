@@ -9,5 +9,4 @@ bin/*
 !bin/libs/
 !bin/fasm/
 !bin/nasm.exe
-!bin/tlang.exe
 devtest/
