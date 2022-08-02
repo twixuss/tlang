@@ -1,4 +1,4 @@
-import "wingdi.tl"
+import "tlang/wingdi.tl"
 
 #layout_c
 #stdcall

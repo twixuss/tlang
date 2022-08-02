@@ -48,6 +48,11 @@ memcpy :: (dst: *Void, src: *Void, size: UInt) #intrinsic
 debug_print_int :: (value: Int) #intrinsic
 mul128 :: (a: Int, b: Int): [2]Int #intrinsic
 mul128 :: (a: UInt, b: UInt): [2]UInt #intrinsic
+sqrt_F32 :: (a: F32): F32 #intrinsic
+sqrt_F64 :: (a: F64): F64 #intrinsic
+
+sqrt :: (a: F32) => sqrt_F32(a)
+sqrt :: (a: F64) => sqrt_F64(a)
 
 // RoundingMode :: enum {
 // 	to_negative_infinity
@@ -55,7 +60,7 @@ mul128 :: (a: UInt, b: UInt): [2]UInt #intrinsic
 // 	to_zero
 // 	to_closest_integer
 // }
-// 
+//
 // round :: (value: F64, mode: %RoundingMode): F64 #intrinsic
 // fraction :: (value: F64, mode: %RoundingMode) => value - round(value, mode)
 

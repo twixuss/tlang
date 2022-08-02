@@ -350,7 +350,10 @@ inline umm append_instruction(StringBuilder &builder, s64 idx, Instruction i) {
 		case and_mr: return append_format(builder, "and qword {}, {}", i.and_mr.d, i.and_mr.s);
 
 		case xor_rr: return append_format(builder, "xor {}, {}"        , i.xor_rr.d, i.xor_rr.s);
-		case xor_mr: return append_format(builder, "xor qword {}, {}", i.xor_mr.d, i.xor_mr.s);
+		case xor1_mr: return append_format(builder, "xor {},{}", i.xor1_mr.d, part1b(i.xor1_mr.s));
+		case xor2_mr: return append_format(builder, "xor {},{}", i.xor2_mr.d, part2b(i.xor2_mr.s));
+		case xor4_mr: return append_format(builder, "xor {},{}", i.xor4_mr.d, part4b(i.xor4_mr.s));
+		case xor8_mr: return append_format(builder, "xor {},{}", i.xor8_mr.d, part8b(i.xor8_mr.s));
 		case xor1_mc: return append_format(builder, "xor byte{},{}\n", i.xor1_mc.d, i.xor1_mc.s);
 		case xor2_mc: return append_format(builder, "xor word{},{}\n", i.xor2_mc.d, i.xor2_mc.s);
 		case xor4_mc: return append_format(builder, "xor dword{},{}\n", i.xor4_mc.d, i.xor4_mc.s);
@@ -372,7 +375,7 @@ inline umm append_instruction(StringBuilder &builder, s64 idx, Instruction i) {
 		case cmpu2: return append_format(builder, "xor {},{}\ncmp {},{}\nset{} {}", i.cmpu2.d, i.cmpu2.d, part2b(i.cmpu2.a), part2b(i.cmpu2.b), cmpu_string(i.cmpu2.c), part1b(i.cmpu2.d));
 		case cmpu4: return append_format(builder, "xor {},{}\ncmp {},{}\nset{} {}", i.cmpu4.d, i.cmpu4.d, part4b(i.cmpu4.a), part4b(i.cmpu4.b), cmpu_string(i.cmpu4.c), part1b(i.cmpu4.d));
 		case cmpu8: return append_format(builder, "xor {},{}\ncmp {},{}\nset{} {}", i.cmpu8.d, i.cmpu8.d, part8b(i.cmpu8.a), part8b(i.cmpu8.b), cmpu_string(i.cmpu8.c), part1b(i.cmpu8.d));
-		case cmpf4: return append_format(builder, "xor {},{}\nmovd xmm6,{}\nmovd xmm7,{}\ncomiss xmm6,xmm7\nset{} {}", i.cmpf4.d, i.cmpf4.d, part8b(i.cmpf4.a), part8b(i.cmpf4.b), cmpu_string(i.cmpf4.c), part1b(i.cmpf4.d));
+		case cmpf4: return append_format(builder, "xor {},{}\nmovd xmm6,{}\nmovd xmm7,{}\ncomiss xmm6,xmm7\nset{} {}", i.cmpf4.d, i.cmpf4.d, part4b(i.cmpf4.a), part4b(i.cmpf4.b), cmpu_string(i.cmpf4.c), part1b(i.cmpf4.d));
 		case cmpf8: return append_format(builder, "xor {},{}\nmovq xmm6,{}\nmovq xmm7,{}\ncomisd xmm6,xmm7\nset{} {}", i.cmpf8.d, i.cmpf8.d, part8b(i.cmpf8.a), part8b(i.cmpf8.b), cmpu_string(i.cmpf8.c), part1b(i.cmpf8.d));
 
 		case jz_cr:  { auto reg = part1b(i.jz_cr.reg); return append_format(builder, "test {}, {}\njz i{}", reg, reg, idx + i.jz_cr.offset); }
@@ -700,6 +703,9 @@ inline umm append_instruction(StringBuilder &builder, s64 idx, Instruction i) {
 	    case div8_ff: return append_format(builder, "movq xmm6, {}\nmovq xmm7, {}\ndivsd xmm6, xmm7\nmovq {}, xmm6", i.div8_ff.d, i.div8_ff.s, i.div8_ff.d);
 
 	    case xor_ff: return append_format(builder, "xorps {}, {}", i.xor_ff.d, i.xor_ff.s);
+
+		case sqrt4_f: return append_format(builder, "movd xmm7, {}\nsqrtss xmm7,xmm7\nmovd {}, xmm7", part4b(i.sqrt4_f.d), part4b(i.sqrt4_f.d));
+		case sqrt8_f: return append_format(builder, "movq xmm7, {}\nsqrtsd xmm7,xmm7\nmovq {}, xmm7", i.sqrt8_f.d, i.sqrt8_f.d);
 
 		case tobool_r:    { auto d = part1b(i.tobool_r.d);    return append_format(builder, "test {}, {}\nsetnz {}", d, d, d); }
 		case toboolnot_r: { auto d = part1b(i.toboolnot_r.d); return append_format(builder, "test {}, {}\nsetz {}" , d, d, d); }

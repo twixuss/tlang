@@ -1,4 +1,4 @@
-import "windows.tl"
+import "tlang/windows.tl"
 
 allocator :: struct {
     func:  (size: UInt, state: *Void): *Void #type

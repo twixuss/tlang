@@ -329,7 +329,7 @@ s64 get_align(AstExpression *type, bool check_struct) {
 		}
 		case Ast_Identifier: {
 			auto identifier = (AstIdentifier *)type;
-			return get_align(identifier->definition()->expression);
+			return get_align(identifier->definition()->expression, check_struct);
 		}
 		case Ast_UnaryOperator: {
 			auto unop = (AstUnaryOperator *)type;
@@ -342,7 +342,7 @@ s64 get_align(AstExpression *type, bool check_struct) {
 		}
 		case Ast_Subscript: {
 			auto subscript = (AstSubscript *)type;
-			return get_align(subscript->expression);
+			return get_align(subscript->expression, check_struct);
 		}
 		case Ast_LambdaType: {
 			return compiler.stack_word_size;

@@ -1,5 +1,5 @@
-import "windows.tl"
-import "allocator.tl"
+import "tlang/windows.tl"
+import "tlang/allocator.tl"
 
 merge :: (a: U8, b: U8): U16 =>
 	(a as U16 << 8) | b
@@ -162,6 +162,15 @@ is_nan :: (me: F64) {
 	return ((u & 0x7ff0000000000000) == 0x7ff0000000000000) && ((u & 0x000fffffffffffff) != 0)
 }
 
+is_infinity :: (me: F32) {
+    x: U32 = 0x7F800000
+    return x == *(&me as *U32)
+}
+is_infinity :: (me: F64) {
+    x: U64 = 0x7ff0000000000000
+    return x == *(&me as *U64)
+}
+
 stringize :: (_val: F64, state: *Void, callback: StringizeCallback) {
     bytes_written: Int
 
@@ -174,6 +183,10 @@ stringize :: (_val: F64, state: *Void, callback: StringizeCallback) {
     if val < 0 {
         val = -val
         bytes_written += callback(state, "-")
+    }
+
+    if val.is_infinity() {
+        return callback(state, "inf")
     }
 
     // CAPACITY :: 256
@@ -392,6 +405,8 @@ print :: (format: String, values: ..Any) {
 	write_to_stdout(b.to_string())
 	b.free()
 }
+
+println :: () => write_to_stdout('\n')
 
 println :: (value: Any) {
 	print(value)

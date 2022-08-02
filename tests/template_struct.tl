@@ -1,4 +1,4 @@
-import "std.tl"
+import "tlang/std.tl"
 main :: () {
 	Vector3 :: struct (T: Type) {
 		x: T

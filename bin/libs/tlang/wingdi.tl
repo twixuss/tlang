@@ -1,4 +1,4 @@
-import "windows.tl"
+import "tlang/windows.tl"
 
 #layout_c
 #stdcall

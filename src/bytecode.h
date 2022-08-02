@@ -1,3 +1,4 @@
+// FIXME: some instructions that use memory don't specify the size of the operand, it is assumed to be 64 bit always
 #pragma once
 #include "ast.h"
 
@@ -240,7 +241,10 @@ e(and, mr             , m(Address, d) m(Register, s)) \
 e(xor, rc             , m(Register, d) m(s64, s)) \
 e(xor, rr             , m(Register, d) m(Register, s)) \
 e(xor, rm             , m(Register, d) m(Address, s)) \
-e(xor, mr             , m(Address, d) m(Register, s)) \
+e(xor1, mr            , m(Address, d) m(Register, s)) \
+e(xor2, mr            , m(Address, d) m(Register, s)) \
+e(xor4, mr            , m(Address, d) m(Register, s)) \
+e(xor8, mr            , m(Address, d) m(Register, s)) \
 e(xor1, mc            , m(Address, d) m(s64, s)) \
 e(xor2, mc            , m(Address, d) m(s64, s)) \
 e(xor4, mc            , m(Address, d) m(s64, s)) \
@@ -314,6 +318,8 @@ e(round4, f           , m(Register, d) m(RoundingMode, mode)) \
 e(round8, f           , m(Register, d) m(RoundingMode, mode)) \
 e(tobool, r           , m(Register, d)) \
 e(toboolnot, r        , m(Register, d)) \
+e(sqrt4, f            , m(Register, d)) \
+e(sqrt8, f            , m(Register, d)) \
 w(jmp_label           , ) \
 w(noop                , ) \
 w(prepare_stack       , m(s64, byte_count)) \

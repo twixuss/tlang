@@ -580,7 +580,7 @@ struct Compiler {
 	List<utf8> where(SourceFileInfo *info, utf8 *location) {
 		if (location) {
 			if (info) {
-				return format(u8"{}:{}:{}", parse_path(info->path).name_and_extension(), get_line_number(info->lines, location), get_column_number(location));
+				return format(u8"{}:{}:{}", info->path, get_line_number(info->lines, location), get_column_number(location));
 			}
 		}
 		return {};

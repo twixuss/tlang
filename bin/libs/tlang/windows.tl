@@ -396,8 +396,8 @@ WM_CANCELJOURNAL                :: 0x004B
 	#if WINVER >= 0x0400 {
 		MDINEXTMENU :: struct {
 			hmenuIn:   HMENU
-			hmenuNext: HMENU  
-			hwndNext:  HWND 
+			hmenuNext: HMENU
+			hwndNext:  HWND
 		}
 		PMDINEXTMENU :: MDINEXTMENU
 		LPMDINEXTMENU :: MDINEXTMENU
@@ -853,7 +853,7 @@ RIM_TYPEHID      :: 2 // Raw input comes from some device that is not a keyboard
 
 
 RID_HEADER :: 0x10000005 // Get the header information from the RAWINPUT structure.
-RID_INPUT  :: 0x10000003 // Get the raw data from the RAWINPUT structure. 
+RID_INPUT  :: 0x10000003 // Get the raw data from the RAWINPUT structure.
 
 RI_MOUSE_LEFT_BUTTON_DOWN   :: 0x0001 // Left button changed to down.
 RI_MOUSE_LEFT_BUTTON_UP     :: 0x0002 // Left button changed to up.
@@ -948,8 +948,8 @@ DefWindowProcA :: (
 	hWnd   : HWND,
 	Msg    : UINT,
 	wParam : WPARAM,
-	lParam : LPARAM 
-): LRESULT 
+	lParam : LPARAM
+): LRESULT
 
 CreateWindowExA :: (
 	dwExStyle    : DWORD,
@@ -969,9 +969,9 @@ CreateWindowExA :: (
 PeekMessageA :: (
 	lpMsg         : LPMSG,
 	hWnd          : HWND,
-	wMsgFilterMin : UINT, 
-	wMsgFilterMax : UINT, 
-	wRemoveMsg    : UINT 
+	wMsgFilterMin : UINT,
+	wMsgFilterMax : UINT,
+	wRemoveMsg    : UINT
 ): BOOL
 
 TranslateMessage :: (
@@ -1012,3 +1012,7 @@ GetRawInputData :: (
   pcbSize:	    PUINT,
   cbSizeHeader: UINT
 ): UINT
+
+GetCursorPos :: (p: *POINT)
+
+ScreenToClient :: (window: HWND, p: *POINT)

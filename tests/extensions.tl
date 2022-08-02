@@ -1,4 +1,4 @@
-import "std.tl"
+import "tlang/std.tl"
 
 Foo :: struct {
     a: Int

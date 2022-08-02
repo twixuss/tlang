@@ -1,4 +1,4 @@
-import "windows.tl"
+import "tlang/windows.tl"
 main :: (): UInt {
     foo := WriteFile
     bar :: (a: HANDLE, b: *U8, c: U32, d: *DWORD, e: *Void) => WriteFile(a, b, c, d, e)

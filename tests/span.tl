@@ -1,5 +1,4 @@
-
-import "std.tl"
+import "tlang/std.tl"
 
 main :: () {
 	array: [3]Int
@@ -24,4 +23,6 @@ main :: () {
 	println(span[2])
 
 	println(span)
+
+	println(([]Int)(array.data, array.count))
 }

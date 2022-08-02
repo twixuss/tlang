@@ -1,5 +1,5 @@
-import "std.tl"
-import "opengl.tl"
+import "tlang/std.tl"
+import "tlang/opengl.tl"
 
 dc: HDC
 

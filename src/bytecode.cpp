@@ -2401,7 +2401,14 @@ void FrameBuilder::append(AstBinaryOperator *bin, RegisterOrAddress destination)
 					case modass:  if (::is_signed(bin->left->type)) I(mods_mr, Address(dst), src); else I(modu_mr, Address(dst), src); break;
 					case borass:  I( or_mr, Address(dst), src); break;
 					case bandass: I(and_mr, Address(dst), src); break;
-					case bxorass: I(xor_mr, Address(dst), src); break;
+					case bxorass:
+						switch (get_size(bin->right->type)) {
+							case 1: I(xor1_mr, Address(dst), src); break;
+							case 2: I(xor2_mr, Address(dst), src); break;
+							case 4: I(xor4_mr, Address(dst), src); break;
+							case 8: I(xor8_mr, Address(dst), src); break;
+						}
+						break;
 					case bslass:  I(shl_mr, Address(dst), src); break;
 					case bsrass:  I(shr_mr, Address(dst), src); break;
 					default: invalid_code_path();
@@ -2625,6 +2632,10 @@ void FrameBuilder::append(AstBinaryOperator *bin, RegisterOrAddress destination)
 						if (false) {}
 						else if (to == builtin_s64.Struct) { I(cvt_f64_s64, destination.reg); }
 						else { invalid_code_path(); }
+					} else if (from == builtin_f32.Struct) {
+						if (false) {}
+						else if (to == builtin_s32.Struct) { I(cvt_f32_s32, destination.reg); }
+						else { invalid_code_path(); }
 					} else {
 						invalid_code_path();
 					}
@@ -2636,6 +2647,12 @@ void FrameBuilder::append(AstBinaryOperator *bin, RegisterOrAddress destination)
 						else if (to == builtin_s64.Struct) { I(cvt_f64_s64, r0); }
 						else { invalid_code_path(); }
 						I(mov8_mr, destination.address, r0);
+					} else if (from == builtin_f32.Struct) {
+						I(mov4_rm, r0, destination.address);
+						if (false) {}
+						else if (to == builtin_s32.Struct) { I(cvt_f32_s32, r0); }
+						else { invalid_code_path(); }
+						I(mov4_mr, destination.address, r0);
 					} else {
 						invalid_code_path();
 					}
@@ -3490,6 +3507,7 @@ void FrameBuilder::append(AstCall *call, RegisterOrAddress destination) {
 		if (lambda->is_intrinsic) {
 			append_arguments();
 
+			assert(compiler.stack_word_size == 8);
 			auto name = lambda->definition->name;
 			if (name == "debug_break") {
 				I(debug_break);
@@ -3504,11 +3522,19 @@ void FrameBuilder::append(AstCall *call, RegisterOrAddress destination) {
 			} else if (name == "debug_print_int") {
 				I(mov8_rm, r0, Address(rs));
 				I(debug_print_int, r0);
-			} else if (name == "round") {
-				assert(types_match(call->sorted_arguments[0]->type, builtin_f64));
-				I(mov8_rm, r1, rs + 0);
-				I(mov8_rm, r0, rs + 8);
-				I(round8_f, r0, (RoundingMode)get_constant_integer(call->sorted_arguments[1]).value());
+			} else if (name == "sqrt_F32") {
+				I(mov4_rm, r0, rs + 0);
+				I(sqrt4_f, r0);
+				copy(destination, r0, 4, false);
+			} else if (name == "sqrt_F64") {
+				I(mov8_rm, r0, rs + 0);
+				I(sqrt8_f, r0);
+				copy(destination, r0, 8, false);
+			//} else if (name == "round") {
+			//	assert(types_match(call->sorted_arguments[0]->type, builtin_f64));
+			//	I(mov8_rm, r1, rs + 0);
+			//	I(mov8_rm, r0, rs + 8);
+			//	I(round8_f, r0, (RoundingMode)get_constant_integer(call->sorted_arguments[1]).value());
 			} else {
 				compiler.immediate_error(call->location, "Unknown intrinsic");
 				exit(1);

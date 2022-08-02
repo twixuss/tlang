@@ -676,6 +676,8 @@ struct AstFor : AstStatement, StatementPool<AstFor> {
 	Expression<> range = {};
 
 	Scope *scope;
+
+	bool by_pointer : 1 = false;
 };
 
 //#define e(name, token)
@@ -1024,7 +1026,7 @@ struct BuiltinStruct {
 	// reusable things
 	AstIdentifier    *ident;   // string
 	AstUnaryOperator *pointer; // *string
-	AstStruct        *span;	   // []string
+	AstIdentifier    *span;	   // []string
 };
 
 struct BuiltinEnum {
@@ -1036,7 +1038,7 @@ struct BuiltinEnum {
 	// reusable things
 	AstIdentifier    *ident;   // type_kind
 	AstUnaryOperator *pointer; // *type_kind
-	AstStruct        *span;	   // []type_kind
+	AstIdentifier    *span;	   // []type_kind
 };
 
 extern BuiltinStruct builtin_void;
@@ -1267,19 +1269,16 @@ bool is_addressable(AstExpression *expression);
 
 // :span hack:
 inline AstExpression *get_span_subtype(AstExpression *span) {
-	switch (span->kind) {
-		case Ast_Struct: {
-			auto Struct = (AstStruct *)span;
-			if (!Struct->is_span)
-				return 0;
+	if (auto Struct = direct_as<AstStruct>(span)) {
+		if (!Struct->is_span)
+			return 0;
 
-			auto def = (AstDefinition *)Struct->member_scope->statements[0];
-			assert(def->kind == Ast_Definition);
+		auto def = (AstDefinition *)Struct->member_scope->statements[0];
+		assert(def->kind == Ast_Definition);
 
-			auto pointer = as_pointer(def->type);
+		auto pointer = as_pointer(def->type);
 
-			return pointer->expression;
-		}
+		return pointer->expression;
 	}
 	return 0;
 }

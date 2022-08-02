@@ -1,4 +1,4 @@
-import "std.tl"
+import "tlang/std.tl"
 
 main :: (): Int {
     println(#file)

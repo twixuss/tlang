@@ -359,16 +359,17 @@ void print_lowered(AstExpression* expression) {
 }
 
 void print_lowered(AstNode *node) {
-	void print_lowered(AstExpression* expression);
-	void print_lowered(AstDefinition *node);
-	void print_lowered(AstReturn *node);
-	void print_lowered(AstIf *node);
-	void print_lowered(AstWhile *node);
-	void print_lowered(AstExpressionStatement *node);
-	void print_lowered(AstAssert*node);
-	void print_lowered(AstParse* parse);
-	void print_lowered(AstDefer * parse);
-	void print_lowered(AstBlock * parse);
+	void print_lowered(AstExpression *);
+	void print_lowered(AstDefinition  *);
+	void print_lowered(AstReturn  *);
+	void print_lowered(AstIf  *);
+	void print_lowered(AstWhile  *);
+	void print_lowered(AstExpressionStatement  *);
+	void print_lowered(AstAssert *);
+	void print_lowered(AstParse *);
+	void print_lowered(AstDefer  *);
+	void print_lowered(AstBlock  *);
+	void print_lowered(AstMatch  *);
 
 	print_tabbed("");
 	switch (node->kind) {
@@ -381,6 +382,7 @@ void print_lowered(AstNode *node) {
 		case Ast_Parse: return print_lowered((AstParse*)node);
 		case Ast_Defer: return print_lowered((AstDefer*)node);
 		case Ast_Block: return print_lowered((AstBlock*)node);
+		case Ast_Match: return print_lowered((AstMatch*)node);
 		case Ast_Lambda:
 		case Ast_LambdaType:
 		case Ast_Identifier:
@@ -400,6 +402,15 @@ void print_lowered(AstNode *node) {
 	}
 }
 
+void print_lowered(Scope *scope) {
+	print("{\n");
+	++tab_count;
+	for (auto statement : scope->statements) {
+		print_lowered(statement);
+	}
+	--tab_count;
+	print_tabbed("}\n");
+}
 void print_lowered(AstDefinition *definition) {
 	if (!definition) {
 		print("!null definition!");
@@ -497,8 +508,10 @@ void print_lowered(AstBinaryOperator *node) {
 	print(")");
 }
 void print_lowered(AstUnaryOperator *node) {
+	print('(');
 	print(node->operation);
 	print_lowered(node->expression);
+	print(')');
 }
 void print_lowered(AstLiteral *literal) {
 	switch (literal->literal_kind) {
@@ -653,21 +666,31 @@ void print_lowered(AstParse* parse) {
 	print(";\n");
 }
 void print_lowered(AstDefer *Defer) {
-	print("defer {\n");
-	++tab_count;
-	for (auto statement : Defer->scope->statements) {
-		print_lowered(statement);
-	}
-	--tab_count;
-	print_tabbed("}\n");
+	print("defer ");
+	print_lowered(Defer->scope);
 }
 void print_lowered(AstBlock *Block) {
+	print_lowered(Block->scope);
+}
+void print_lowered(AstMatch* match) {
+	print_tabbed("match ");
+	print_lowered(match->expression);
+
 	print("{\n");
-	++tab_count;
-	for (auto statement : Block->scope->statements) {
-		print_lowered(statement);
+	tab_count += 1;
+
+	for (auto Case : match->cases) {
+		if (Case.expression) {
+			print_tabbed();
+			print_lowered(Case.expression);
+		} else {
+			print_tabbed("else");
+		}
+		print(" => ");
+		print_lowered(Case.scope);
 	}
-	--tab_count;
+
+	tab_count -= 1;
 	print_tabbed("}\n");
 }
 

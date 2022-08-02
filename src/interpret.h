@@ -857,7 +857,10 @@ got_breaker_name:;
 					case mods_mr: { REDECLARE_REF(i, i.mods_mr); *MS8(i.d) %= RS8(i.s); break; }
 					case divu_mr: { REDECLARE_REF(i, i.divu_mr); *MU8(i.d) /= RU8(i.s); break; }
 					case modu_mr: { REDECLARE_REF(i, i.modu_mr); *MU8(i.d) %= RU8(i.s); break; }
-					case xor_mr: { REDECLARE_REF(i, i.xor_mr); *MS8(i.d) ^= RS8(i.s); break; }
+					case xor1_mr: { REDECLARE_REF(i, i.xor1_mr); *MS1(i.d) ^= RS1(i.s); break; }
+					case xor2_mr: { REDECLARE_REF(i, i.xor2_mr); *MS2(i.d) ^= RS2(i.s); break; }
+					case xor4_mr: { REDECLARE_REF(i, i.xor4_mr); *MS4(i.d) ^= RS4(i.s); break; }
+					case xor8_mr: { REDECLARE_REF(i, i.xor8_mr); *MS8(i.d) ^= RS8(i.s); break; }
 					case and_mr: { REDECLARE_REF(i, i.and_mr); *MS8(i.d) &= RS8(i.s); break; }
 					case  or_mr: { REDECLARE_REF(i, i. or_mr); *MS8(i.d) |= RS8(i.s); break; }
 					case shl_mr: { REDECLARE_REF(i, i.shl_mr); *MS8(i.d) <<= RS8(i.s); break; }

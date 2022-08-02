@@ -1,4 +1,4 @@
-import "std.tl"
+import "tlang/std.tl"
 
 main :: () {
     assert 999_999_999_999 + 999_999_999_999 == 1_999_999_999_998
@@ -18,7 +18,7 @@ main :: () {
     assert -99999999999999999999999999999999999999999 == -99999999999999999999999999999999999999999
     assert -99999999999999999999999999999999999999999 != -99999999999999999999999999999999999999998
     assert !0b10101010 as U8 == 0b01010101 as U8
-    
+
     // FIXME: implement missing conversions
     {
         a: S64 = 12
@@ -35,6 +35,28 @@ main :: () {
         //assert a as U16 == 12
         //assert a as U32 == 12
         //assert a as U64 == 12
+    }
+
+    {
+        a: F32 = 1.5
+        b: F32 = 2.6
+
+        assert a != b
+
+        assert a == a
+        assert b == b
+
+        assert a < b
+        assert b > a
+
+        assert a <= b
+        assert b >= a
+
+        assert a <= a
+        assert a >= a
+
+        assert b >= b
+        assert b <= b
     }
 }
 

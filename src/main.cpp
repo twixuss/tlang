@@ -1,4 +1,12 @@
-﻿#define TL_IMPL
+﻿// TODO: FIXME operator with literal is broken
+
+// TODO: default struct member values
+
+// TODO: FIXME constexpr literal math is broken
+
+// TODO: FIXME comparison with literal is broken
+
+#define TL_IMPL
 #include <common.h>
 #include <tl/main.h>
 #include <tl/cpu.h>
@@ -29,7 +37,7 @@ enum class TypecheckResult {
 
 void typecheck_global(struct CoroState *corostate, struct TypecheckState *state);
 
-void yield_debug_break(TypecheckResult result) {
+void yield_debugger(TypecheckResult result) {
 	if (result == TypecheckResult::fail) {
 		int x = 5;
 	}
@@ -47,7 +55,7 @@ bool throwing = false;
 // calling typecheck_global again, meaning that failed function's stack is not freed and not reused, just wasted memory. It can be solved by
 // using exceptions and stack unwinding, and i think it should be, because the stack is growing FAST. Note that this throw is executed only on fail, so it should not
 // slow down the typechecker that much.
-#define yield(x) (fiber_result = x, yield_debug_break(x), SWITCH_TO_FIBER(PARENT_FIBER), x == TypecheckResult::fail ? ((throwing = true, throw 0), 0) : 0)
+#define yield(x) (fiber_result = x, yield_debugger(x), SWITCH_TO_FIBER(PARENT_FIBER), x == TypecheckResult::fail ? ((throwing = true, throw 0), 0) : 0)
 #else
 #define YIELD_STATE state->coro
 // #define yield(x) (_ReadWriteBarrier(), ::tl::print("remaining stack size: {}\n", (u8 *)YIELD_STATE->sp - (u8 *)YIELD_STATE->buffer_base), ::coro_yield(YIELD_STATE, (size_t)x))
@@ -64,6 +72,7 @@ struct TypecheckState;
 
 static List<String> import_paths;
 
+bool ensure_addressable(Reporter *reporter, AstExpression *expression);
 AstDefinition *parse_definition(String name, String location, Parser *parser);
 AstDefinition *parse_definition(Parser *parser);
 bool parse_block_or_single_statement(Parser *parser, Scope *scope);
@@ -178,11 +187,6 @@ bool lexer_function(Lexer *lexer) {
 
 	auto push_token = [&] {
 		lexer->add(token);
-		//if (ends_with(get_source_path(token.string.data), u8"std.tl"str))
-		//	print("{}\n", token.string);
-		//
-		//if (token.string == u8"while"str)
-		//	debug_break();
 	};
 
 	auto skip_identifier_chars = [&] {
@@ -817,6 +821,30 @@ AstSubscript *make_subscript(AstExpression *expression, AstExpression *index_exp
 	s->expression = expression;
 	s->index_expression = index_expression;
 	return s;
+}
+
+bool signedness_matches(AstStruct *a, AstStruct *b) {
+	assert(::is_integer(a));
+	assert(::is_integer(b));
+	if (types_match(a, builtin_unsized_integer) ||
+		types_match(b, builtin_unsized_integer))
+		return true;
+
+	return ::is_signed(a) == ::is_signed(b);
+}
+
+AstUnaryOperator *make_address_of(Reporter *reporter, AstExpression *expression) {
+	if (!ensure_addressable(reporter, expression))
+		return 0;
+
+	using enum UnaryOperation;
+
+	auto result = AstUnaryOperator::create();
+	result->expression = expression;
+	result->operation = address_of;
+	result->location = expression->location;
+	result->type = make_pointer_type(expression->type);
+	return result;
 }
 
 AstStatement *parse_statement(Parser *parser);
@@ -1602,6 +1630,7 @@ AstExpression *parse_expression_0(Parser *parser) {
 			if (!If->condition)
 				return 0;
 
+			skip_newlines(parser);
 			if (parser->token->kind == Token_then)
 				parser->next_solid();
 
@@ -1710,7 +1739,7 @@ AstExpression *parse_expression_0(Parser *parser) {
 			}
 
 			auto start_token = parser->token->string;
-			if (!parser->next()) {
+			if (!parser->next_solid()) {
 				parser->reporter->error(parser->token->string, "Unexpected end of file. Unclosed ')'.");
 				return 0;
 			}
@@ -1720,6 +1749,8 @@ AstExpression *parse_expression_0(Parser *parser) {
 			if (!expression) {
 				return 0;
 			}
+
+			skip_newlines(parser);
 
 			if (parser->token->kind == ')') {
 				expression->is_parenthesized = true;
@@ -2471,7 +2502,7 @@ bool is_redefinable(AstDefinition *definition) {
 AstDefinition *parse_definition(String name, String location, Parser *parser) {
 	assert(parser->token->kind == ':');
 
-	parser->next();
+	parser->next_solid();
 
 	AstExpression *type = 0;
 	if (parser->token->kind != ':' && parser->token->kind != '=' ) {
@@ -2500,7 +2531,7 @@ AstDefinition *parse_definition(String name, String location, Parser *parser) {
 	// definition->add_to_scope(parser->current_scope);
 
 	if (has_expression) {
-		parser->next();
+		parser->next_solid();
 
 		auto expression = parse_expression(parser);
 		if (!expression)  return 0;
@@ -2600,7 +2631,7 @@ bool parse_block_or_single_statement(Parser *parser, Scope *scope) {
 	bool has_braces = parser->token->kind == '{';
 
 	if (has_braces) {
-		parser->next();
+		parser->next_solid();
 		while (parser->token->kind != '}') {
 			auto statement = parse_statement(parser);
 			if (!statement)
@@ -2781,16 +2812,23 @@ void parse_statement(Parser *parser, AstStatement *&result) {
 		case 'for': {
 			auto For = AstFor::create();
 			For->location = parser->token->string;
-			parser->next();
+			parser->next_solid();
+
+			if (parser->token->kind == '*') {
+				For->by_pointer = true;
+				parser->next_solid();
+			}
 
 			For->iterator_name = parse_identifier(parser);
 			if (For->iterator_name.is_empty())
 				return;
 
-			if (!parser->next_expect('in'))
+			parser->next_solid();
+
+			if (!parser->expect('in'))
 				return;
 
-			parser->next();
+			parser->next_solid();
 
 			For->range = parse_expression(parser);
 
@@ -3264,32 +3302,38 @@ Map<String, SourceFileContext *> parsed_files;
 
 u64 total_tokens_parsed;
 
+// TODO: replace \ with / in paths
 SourceFileContext *parse_file(String path) {
 	timed_function(compiler.profiler);
 
-	if (auto found = parsed_files.find(path)) {
+	String full_path = make_absolute_path(path);
+	if (!file_exists(full_path)) {
+		full_path = (String)concatenate(compiler.compiler_directory, "\\libs\\", path);
+	}
+
+	if (auto found = parsed_files.find(full_path)) {
 		return found->value;
 	}
 
-	// print("Parsing {}\n", path);
+	// print("Parsing {}\n", full_path);
 
-	auto compiler =
-	parsed_files.get_or_insert(path) =
+	auto context =
+	parsed_files.get_or_insert(full_path) =
 	default_allocator.allocate<SourceFileContext>();
 
-	compiler->lexer.source_buffer = read_entire_file(to_pathchars(path), {.extra_space_before=1, .extra_space_after=1});
-	if (!compiler->lexer.source_buffer.data) {
-		print("Failed to read '{}'. Exiting.\n", path);
-		compiler->result = ParseResult::read_error;
-		return compiler;
+	context->lexer.source_buffer = read_entire_file(full_path, {.extra_space_before=1, .extra_space_after=1});
+	if (!context->lexer.source_buffer.data) {
+		with(ConsoleColor::red, print("Failed to read '{}'.\n", full_path));
+		context->result = ParseResult::read_error;
+		return context;
 	}
 
-	String source = String(compiler->lexer.source_buffer);
+	String source = String(context->lexer.source_buffer);
 	source.data += 1;
 	source.count -= 2;
 
-	auto bom = Span(compiler->lexer.source_buffer.data + 1, (umm)3);
-	if (bom.end() <= compiler->lexer.source_buffer.end() && bom == "\xef\xbb\xbf"b) {
+	auto bom = Span(context->lexer.source_buffer.data + 1, (umm)3);
+	if (bom.end() <= context->lexer.source_buffer.end() && bom == "\xef\xbb\xbf"b) {
 		bom.back() = '\0';
 		source.data += 3;
 		source.count -= 3;
@@ -3315,15 +3359,15 @@ SourceFileContext *parse_file(String path) {
 		*source.end() = 0;
 	}
 
-	compiler->lexer.source = source;
+	context->lexer.source = source;
 
-	// compiler->scope->parent = &global_scope;
+	// context->scope->parent = &global_scope;
 
-	compiler->parser.lexer = &compiler->lexer;
-	compiler->parser.reporter = compiler->lexer.reporter = &compiler->reporter;
-	// compiler->parser.current_scope = &compiler->scope;
+	context->parser.lexer = &context->lexer;
+	context->parser.reporter = context->lexer.reporter = &context->reporter;
+	// context->parser.current_scope = &context->scope;
 
-	auto source_info = &::compiler.sources.add({path, source});
+	auto source_info = &::compiler.sources.add({full_path, source});
 
 	{
 		utf8 *line_start = source.data;
@@ -3342,33 +3386,33 @@ SourceFileContext *parse_file(String path) {
 		source_info->lines = lines;
 	}
 
-	compiler->lexer.source_info = source_info;
+	context->lexer.source_info = source_info;
 
 	constexpr auto max_token_count = (1*GiB)/sizeof(Token);
 
-	compiler->lexer.tokens_start = (Token *)VirtualAlloc(0, max_token_count*sizeof(Token), MEM_COMMIT|MEM_RESERVE, PAGE_READWRITE);
-	compiler->lexer.tokens_end = compiler->lexer.tokens_start + max_token_count;
-	compiler->lexer.token_cursor = compiler->lexer.tokens_start;
+	context->lexer.tokens_start = (Token *)VirtualAlloc(0, max_token_count*sizeof(Token), MEM_COMMIT|MEM_RESERVE, PAGE_READWRITE);
+	context->lexer.tokens_end = context->lexer.tokens_start + max_token_count;
+	context->lexer.token_cursor = context->lexer.tokens_start;
 
 	defer {
-		compiler->reporter.print_all();
+		context->reporter.print_all();
 	};
 
-	if (!lexer_function(&compiler->lexer)) {
-		atomic_set_if_equals(failed_lexer, &compiler->lexer, (Lexer *)0);
-		compiler->result = ParseResult::syntax_error;
-		return compiler;
+	if (!lexer_function(&context->lexer)) {
+		atomic_set_if_equals(failed_lexer, &context->lexer, (Lexer *)0);
+		context->result = ParseResult::syntax_error;
+		return context;
 	}
-	auto parse_result = parser_function(&compiler->parser);
+	auto parse_result = parser_function(&context->parser);
 	if (parse_result != ParseResult::ok) {
-		atomic_set_if_equals(failed_parser, &compiler->parser, (Parser *)0);
-		compiler->result = parse_result;
-		return compiler;
+		atomic_set_if_equals(failed_parser, &context->parser, (Parser *)0);
+		context->result = parse_result;
+		return context;
 	}
 
-	atomic_add(&total_tokens_parsed, compiler->lexer.token_cursor - compiler->lexer.tokens_start);
+	atomic_add(&total_tokens_parsed, context->lexer.token_cursor - context->lexer.tokens_start);
 
-	return compiler;
+	return context;
 }
 
 ParseResult parser_function(Parser *parser) {
@@ -3440,7 +3484,7 @@ ParseResult parser_function(Parser *parser) {
 				return ParseResult::syntax_error;
 			}
 			auto libname = unescaped.value_unchecked();
-			auto child = parse_file((String)concatenate(compiler.compiler_directory, "\\libs\\", libname));
+			auto child = parse_file(libname);
 			// global_scope.append(child->scope);
 			parser->next();
 		} else {
@@ -4155,6 +4199,16 @@ struct TypeinfoDefinition {
 
 List<TypeinfoDefinition> typeinfo_definitinos;
 AstUnaryOperator *get_typeinfo(TypecheckState *state, AstExpression *type, String location) {
+	// NOTE: Copypasted from typecheck(AstIdentifier)
+	while (!type->type) {
+		++state->no_progress_counter;
+		if (state->no_progress_counter == NO_PROGRESS_THRESHOLD) {
+			state->reporter.error(type->location, "Failed to resolve type.");
+			yield(TypecheckResult::fail);
+		}
+		yield(TypecheckResult::wait);
+	}
+
 	auto directed = direct(type);
 
 	auto found = find_if(typeinfo_definitinos, [&](auto definition) { return types_match(directed, definition.type); });
@@ -5148,13 +5202,12 @@ AstStatement *typecheck(TypecheckState *state, AstDefinition *definition) {
 						evaluate_and_put_definition_in_section(state, definition, definition->is_constant ? compiler.constant_section : compiler.data_section);
 					}
 				} else {
-					auto offset = compiler.zero_section_size;
+					// NOTE: get_align and get_size may yield, so they should happen before modifying compiler.zero_section_size
+					auto align = get_align(state, definition->type);
+					auto size = get_size(state, definition->type);
 
-					offset = ceil(offset, get_align(definition->type));
-					definition->offset = offset;
-					offset += get_size(definition->type);
-
-					compiler.zero_section_size = offset;
+					definition->offset = ceil(compiler.zero_section_size, align);
+					compiler.zero_section_size = definition->offset + size;
 				}
 				break;
 			}
@@ -5262,161 +5315,332 @@ AstStatement *typecheck(TypecheckState *state, AstWhile *While) {
 	return While;
 }
 AstStatement *typecheck(TypecheckState *state, AstFor *For) {
+	//
+	// Copypasted 6 times? Not bad.
+	//
+	// FIXME:
+
 	typecheck(state, For->range);
 
 	Reporter reporter;
-	if (implicitly_cast(state, &reporter, &For->range, builtin_range.ident)) {
-		auto replacement_block = AstBlock::create();
-		replacement_block->scope->parent = state->current_scope;
 
-		auto range_definition = AstDefinition::create();
-		range_definition->name = "\\range"str;
-		range_definition->container_node = state->current_lambda_or_struct_or_enum;
-		range_definition->definition_location = LambdaDefinitionLocation::body;
-		range_definition->expression = For->range;
-		range_definition->type = range_definition->expression->type;
-		range_definition->typechecked = true;
-		set_local_offset(state, range_definition, state->current_lambda);
-		add_to_scope(range_definition, replacement_block->scope);
+	if (For->by_pointer) {
+		if (implicitly_cast(state, &reporter, &For->range, builtin_range.ident)) {
+			not_implemented();
+			auto replacement_block = AstBlock::create();
+			replacement_block->scope->parent = state->current_scope;
 
-		auto it1 = AstDefinition::create();
-		it1->name = "\\it"str;
-		it1->container_node = state->current_lambda_or_struct_or_enum;
-		it1->definition_location = LambdaDefinitionLocation::body;
-		it1->expression = make_binop(BinaryOperation::dot, make_identifier(range_definition->name), make_identifier("min"str));
-		add_to_scope(it1, replacement_block->scope);
+			auto range_definition = AstDefinition::create();
+			range_definition->name = "\\range"str;
+			range_definition->container_node = state->current_lambda_or_struct_or_enum;
+			range_definition->definition_location = LambdaDefinitionLocation::body;
+			range_definition->expression = For->range;
+			range_definition->type = range_definition->expression->type;
+			range_definition->typechecked = true;
+			set_local_offset(state, range_definition, state->current_lambda);
+			add_to_scope(range_definition, replacement_block->scope);
 
-		auto While = AstWhile::create();
-		While->condition = make_binop(BinaryOperation::lt, make_identifier(it1->name), make_binop(BinaryOperation::dot, make_identifier(range_definition->name), make_identifier("max"str)));
-		While->scope->parent = replacement_block->scope;
-		add_to_scope(While, replacement_block->scope);
+			auto it1 = AstDefinition::create();
+			it1->name = "\\it"str;
+			it1->container_node = state->current_lambda_or_struct_or_enum;
+			it1->definition_location = LambdaDefinitionLocation::body;
+			it1->expression = make_binop(BinaryOperation::dot, make_identifier(range_definition->name), make_identifier("min"str));
+			add_to_scope(it1, replacement_block->scope);
 
-		auto it2 = AstDefinition::create();
-		it2->name = For->iterator_name;
-		it2->container_node = state->current_lambda_or_struct_or_enum;
-		it2->definition_location = LambdaDefinitionLocation::body;
-		it2->expression = make_identifier(it1->name);
-		add_to_scope(it2, While->scope);
+			auto While = AstWhile::create();
+			While->condition = make_binop(BinaryOperation::lt, make_identifier(it1->name), make_binop(BinaryOperation::dot, make_identifier(range_definition->name), make_identifier("max"str)));
+			While->scope->parent = replacement_block->scope;
+			add_to_scope(While, replacement_block->scope);
 
-		auto inner = AstBlock::create();
-		inner->scope = For->scope;
-		inner->scope->parent = While->scope;
-		add_to_scope(inner, While->scope);
+			auto it2 = AstDefinition::create();
+			it2->name = For->iterator_name;
+			it2->container_node = state->current_lambda_or_struct_or_enum;
+			it2->definition_location = LambdaDefinitionLocation::body;
+			it2->expression = make_identifier(it1->name);
+			add_to_scope(it2, While->scope);
 
-		auto inc = make_binop(BinaryOperation::addass, make_identifier(it1->name), make_integer(""str, 1ll));
-		add_to_scope(make_statement(inc), While->scope);
+			auto inner = AstBlock::create();
+			inner->scope = For->scope;
+			inner->scope->parent = While->scope;
+			add_to_scope(inner, While->scope);
 
-		typecheck(state, replacement_block);
-		return replacement_block;
-	} else if (auto subtype = get_span_subtype(For->range->type)) {
-		auto replacement_block = AstBlock::create();
-		replacement_block->scope->parent = state->current_scope;
+			auto inc = make_binop(BinaryOperation::addass, make_identifier(it1->name), make_integer(""str, 1ll));
+			add_to_scope(make_statement(inc), While->scope);
 
-		auto range_definition = AstDefinition::create();
-		range_definition->name = "\\span"str;
-		range_definition->container_node = state->current_lambda_or_struct_or_enum;
-		range_definition->definition_location = LambdaDefinitionLocation::body;
-		range_definition->expression = For->range;
-		range_definition->type = range_definition->expression->type;
-		range_definition->typechecked = true;
-		set_local_offset(state, range_definition, state->current_lambda);
-		add_to_scope(range_definition, replacement_block->scope);
+			typecheck(state, replacement_block);
+			return replacement_block;
+		} else if (auto subtype = get_span_subtype(For->range->type)) {
+			auto replacement_block = AstBlock::create();
+			replacement_block->scope->parent = state->current_scope;
 
-		auto it1 = AstDefinition::create();
-		it1->name = "\\it"str;
-		it1->container_node = state->current_lambda_or_struct_or_enum;
-		it1->definition_location = LambdaDefinitionLocation::body;
-		it1->expression = make_binop(BinaryOperation::dot, make_identifier(range_definition->name), make_identifier("data"str));
-		add_to_scope(it1, replacement_block->scope);
+			auto range_definition = AstDefinition::create();
+			range_definition->name = "\\span"str;
+			range_definition->container_node = state->current_lambda_or_struct_or_enum;
+			range_definition->definition_location = LambdaDefinitionLocation::body;
+			range_definition->expression = For->range;
+			range_definition->type = range_definition->expression->type;
+			range_definition->typechecked = true;
+			set_local_offset(state, range_definition, state->current_lambda);
+			add_to_scope(range_definition, replacement_block->scope);
 
-		auto end = AstDefinition::create();
-		end->name = "\\end"str;
-		end->container_node = state->current_lambda_or_struct_or_enum;
-		end->definition_location = LambdaDefinitionLocation::body;
-		end->expression = make_binop(BinaryOperation::add,
-			make_binop(BinaryOperation::dot, make_identifier(range_definition->name), make_identifier("data"str)),
-			make_binop(BinaryOperation::dot, make_identifier(range_definition->name), make_identifier("count"str))
-		);
-		add_to_scope(end, replacement_block->scope);
+			auto it1 = AstDefinition::create();
+			it1->name = "\\it"str;
+			it1->container_node = state->current_lambda_or_struct_or_enum;
+			it1->definition_location = LambdaDefinitionLocation::body;
+			it1->expression = make_binop(BinaryOperation::dot, make_identifier(range_definition->name), make_identifier("data"str));
+			add_to_scope(it1, replacement_block->scope);
 
-		auto While = AstWhile::create();
-		While->condition = make_binop(BinaryOperation::lt, make_identifier(it1->name), make_identifier(end->name));
-		While->scope->parent = replacement_block->scope;
-		add_to_scope(While, replacement_block->scope);
+			auto end = AstDefinition::create();
+			end->name = "\\end"str;
+			end->container_node = state->current_lambda_or_struct_or_enum;
+			end->definition_location = LambdaDefinitionLocation::body;
+			end->expression = make_binop(BinaryOperation::add,
+				make_binop(BinaryOperation::dot, make_identifier(range_definition->name), make_identifier("data"str)),
+				make_binop(BinaryOperation::dot, make_identifier(range_definition->name), make_identifier("count"str))
+			);
+			add_to_scope(end, replacement_block->scope);
 
-		auto it2 = AstDefinition::create();
-		it2->name = For->iterator_name;
-		it2->container_node = state->current_lambda_or_struct_or_enum;
-		it2->definition_location = LambdaDefinitionLocation::body;
-		it2->expression = make_unary(UnaryOperation::pointer_or_dereference_or_unwrap, make_identifier(it1->name));
-		add_to_scope(it2, While->scope);
+			auto While = AstWhile::create();
+			While->condition = make_binop(BinaryOperation::lt, make_identifier(it1->name), make_identifier(end->name));
+			While->scope->parent = replacement_block->scope;
+			add_to_scope(While, replacement_block->scope);
 
-		auto inner = AstBlock::create();
-		inner->scope = For->scope;
-		inner->scope->parent = While->scope;
-		add_to_scope(inner, While->scope);
+			auto it2 = AstDefinition::create();
+			it2->name = For->iterator_name;
+			it2->container_node = state->current_lambda_or_struct_or_enum;
+			it2->definition_location = LambdaDefinitionLocation::body;
+			it2->expression = make_identifier(it1->name);
+			add_to_scope(it2, While->scope);
 
-		auto inc = make_binop(BinaryOperation::addass, make_identifier(it1->name), make_integer(""str, 1ll));
-		add_to_scope(make_statement(inc), While->scope);
+			auto inner = AstBlock::create();
+			inner->scope = For->scope;
+			inner->scope->parent = While->scope;
+			add_to_scope(inner, While->scope);
 
-		typecheck(state, replacement_block);
-		return replacement_block;
-	} else if (auto arr = direct_as<AstSubscript>(For->range->type)) {
-		auto replacement_block = AstBlock::create();
-		replacement_block->scope->parent = state->current_scope;
+			auto inc = make_binop(BinaryOperation::addass, make_identifier(it1->name), make_integer(""str, 1ll));
+			add_to_scope(make_statement(inc), While->scope);
 
-		auto range_definition = AstDefinition::create();
-		range_definition->name = "\\arr"str;
-		range_definition->container_node = state->current_lambda_or_struct_or_enum;
-		range_definition->definition_location = LambdaDefinitionLocation::body;
-		range_definition->expression = For->range;
-		range_definition->type = range_definition->expression->type;
-		range_definition->typechecked = true;
-		set_local_offset(state, range_definition, state->current_lambda);
-		add_to_scope(range_definition, replacement_block->scope);
+			typecheck(state, replacement_block);
+			return replacement_block;
+		} else if (auto arr = direct_as<AstSubscript>(For->range->type)) {
+			auto replacement_block = AstBlock::create();
+			replacement_block->scope->parent = state->current_scope;
 
-		auto it1 = AstDefinition::create();
-		it1->name = "\\it"str;
-		it1->container_node = state->current_lambda_or_struct_or_enum;
-		it1->definition_location = LambdaDefinitionLocation::body;
-		it1->expression = make_unary(UnaryOperation::address_of, make_subscript(make_identifier(range_definition->name), make_integer(""str, 0ll)));
-		add_to_scope(it1, replacement_block->scope);
+			auto range_definition = AstDefinition::create();
+			range_definition->name = "\\arr"str;
+			range_definition->container_node = state->current_lambda_or_struct_or_enum;
+			range_definition->definition_location = LambdaDefinitionLocation::body;
+			if (is_addressable(For->range)) {
+				range_definition->expression = make_address_of(&reporter, For->range);
+			} else {
+				range_definition->expression = For->range;
+			}
+			range_definition->type = range_definition->expression->type;
+			range_definition->typechecked = true;
+			set_local_offset(state, range_definition, state->current_lambda);
+			add_to_scope(range_definition, replacement_block->scope);
 
-		auto end = AstDefinition::create();
-		end->name = "\\end"str;
-		end->container_node = state->current_lambda_or_struct_or_enum;
-		end->definition_location = LambdaDefinitionLocation::body;
-		end->expression = make_binop(BinaryOperation::add,
-			make_identifier(it1->name),
-			make_binop(BinaryOperation::dot, make_identifier(range_definition->name), make_identifier("count"str))
-		);
-		add_to_scope(end, replacement_block->scope);
+			auto it1 = AstDefinition::create();
+			it1->name = "\\it"str;
+			it1->container_node = state->current_lambda_or_struct_or_enum;
+			it1->definition_location = LambdaDefinitionLocation::body;
+			it1->expression = make_unary(UnaryOperation::address_of, make_subscript(make_unary(UnaryOperation::pointer_or_dereference_or_unwrap, make_identifier(range_definition->name)), make_integer(""str, 0ll)));
+			add_to_scope(it1, replacement_block->scope);
 
-		auto While = AstWhile::create();
-		While->condition = make_binop(BinaryOperation::lt, make_identifier(it1->name), make_identifier(end->name));
-		While->scope->parent = replacement_block->scope;
-		add_to_scope(While, replacement_block->scope);
+			auto end = AstDefinition::create();
+			end->name = "\\end"str;
+			end->container_node = state->current_lambda_or_struct_or_enum;
+			end->definition_location = LambdaDefinitionLocation::body;
+			end->expression = make_binop(BinaryOperation::add,
+				make_identifier(it1->name),
+				make_binop(BinaryOperation::dot, make_unary(UnaryOperation::pointer_or_dereference_or_unwrap, make_identifier(range_definition->name)), make_identifier("count"str))
+			);
+			add_to_scope(end, replacement_block->scope);
 
-		auto it2 = AstDefinition::create();
-		it2->name = For->iterator_name;
-		it2->container_node = state->current_lambda_or_struct_or_enum;
-		it2->definition_location = LambdaDefinitionLocation::body;
-		it2->expression = make_unary(UnaryOperation::pointer_or_dereference_or_unwrap, make_identifier(it1->name));
-		add_to_scope(it2, While->scope);
+			auto While = AstWhile::create();
+			While->condition = make_binop(BinaryOperation::lt, make_identifier(it1->name), make_identifier(end->name));
+			While->scope->parent = replacement_block->scope;
+			add_to_scope(While, replacement_block->scope);
 
-		auto inner = AstBlock::create();
-		inner->scope = For->scope;
-		inner->scope->parent = While->scope;
-		add_to_scope(inner, While->scope);
+			auto it2 = AstDefinition::create();
+			it2->name = For->iterator_name;
+			it2->container_node = state->current_lambda_or_struct_or_enum;
+			it2->definition_location = LambdaDefinitionLocation::body;
+			it2->expression = make_identifier(it1->name);
+			add_to_scope(it2, While->scope);
 
-		auto inc = make_binop(BinaryOperation::addass, make_identifier(it1->name), make_integer(""str, 1ll));
-		add_to_scope(make_statement(inc), While->scope);
+			auto inner = AstBlock::create();
+			inner->scope = For->scope;
+			inner->scope->parent = While->scope;
+			add_to_scope(inner, While->scope);
 
-		typecheck(state, replacement_block);
-		return replacement_block;
+			auto inc = make_binop(BinaryOperation::addass, make_identifier(it1->name), make_integer(""str, 1ll));
+			add_to_scope(make_statement(inc), While->scope);
+
+			typecheck(state, replacement_block);
+			return replacement_block;
+		} else {
+			state->reporter.error(For->range->location, "This expression is not iterable. Right now you can iterate over ranges (e.g. 0..5), spans and arrays");
+			yield(TypecheckResult::fail);
+		}
 	} else {
-		state->reporter.error(For->range->location, "This expression is not iterable. Right now you can iterate over ranges (e.g. 0..5), spans and arrays");
-		yield(TypecheckResult::fail);
+		if (implicitly_cast(state, &reporter, &For->range, builtin_range.ident)) {
+			auto replacement_block = AstBlock::create();
+			replacement_block->scope->parent = state->current_scope;
+
+			auto range_definition = AstDefinition::create();
+			range_definition->name = "\\range"str;
+			range_definition->container_node = state->current_lambda_or_struct_or_enum;
+			range_definition->definition_location = LambdaDefinitionLocation::body;
+			range_definition->expression = For->range;
+			range_definition->type = range_definition->expression->type;
+			range_definition->typechecked = true;
+			set_local_offset(state, range_definition, state->current_lambda);
+			add_to_scope(range_definition, replacement_block->scope);
+
+			auto it1 = AstDefinition::create();
+			it1->name = "\\it"str;
+			it1->container_node = state->current_lambda_or_struct_or_enum;
+			it1->definition_location = LambdaDefinitionLocation::body;
+			it1->expression = make_binop(BinaryOperation::dot, make_identifier(range_definition->name), make_identifier("min"str));
+			add_to_scope(it1, replacement_block->scope);
+
+			auto While = AstWhile::create();
+			While->condition = make_binop(BinaryOperation::lt, make_identifier(it1->name), make_binop(BinaryOperation::dot, make_identifier(range_definition->name), make_identifier("max"str)));
+			While->scope->parent = replacement_block->scope;
+			add_to_scope(While, replacement_block->scope);
+
+			auto it2 = AstDefinition::create();
+			it2->name = For->iterator_name;
+			it2->container_node = state->current_lambda_or_struct_or_enum;
+			it2->definition_location = LambdaDefinitionLocation::body;
+			it2->expression = make_identifier(it1->name);
+			add_to_scope(it2, While->scope);
+
+			auto inner = AstBlock::create();
+			inner->scope = For->scope;
+			inner->scope->parent = While->scope;
+			add_to_scope(inner, While->scope);
+
+			auto inc = make_binop(BinaryOperation::addass, make_identifier(it1->name), make_integer(""str, 1ll));
+			add_to_scope(make_statement(inc), While->scope);
+
+			typecheck(state, replacement_block);
+			return replacement_block;
+		} else if (auto subtype = get_span_subtype(For->range->type)) {
+			auto replacement_block = AstBlock::create();
+			replacement_block->scope->parent = state->current_scope;
+
+			auto range_definition = AstDefinition::create();
+			range_definition->name = "\\span"str;
+			range_definition->container_node = state->current_lambda_or_struct_or_enum;
+			range_definition->definition_location = LambdaDefinitionLocation::body;
+			range_definition->expression = For->range;
+			range_definition->type = range_definition->expression->type;
+			range_definition->typechecked = true;
+			set_local_offset(state, range_definition, state->current_lambda);
+			add_to_scope(range_definition, replacement_block->scope);
+
+			auto it1 = AstDefinition::create();
+			it1->name = "\\it"str;
+			it1->container_node = state->current_lambda_or_struct_or_enum;
+			it1->definition_location = LambdaDefinitionLocation::body;
+			it1->expression = make_binop(BinaryOperation::dot, make_identifier(range_definition->name), make_identifier("data"str));
+			add_to_scope(it1, replacement_block->scope);
+
+			auto end = AstDefinition::create();
+			end->name = "\\end"str;
+			end->container_node = state->current_lambda_or_struct_or_enum;
+			end->definition_location = LambdaDefinitionLocation::body;
+			end->expression = make_binop(BinaryOperation::add,
+				make_binop(BinaryOperation::dot, make_identifier(range_definition->name), make_identifier("data"str)),
+				make_binop(BinaryOperation::dot, make_identifier(range_definition->name), make_identifier("count"str))
+			);
+			add_to_scope(end, replacement_block->scope);
+
+			auto While = AstWhile::create();
+			While->condition = make_binop(BinaryOperation::lt, make_identifier(it1->name), make_identifier(end->name));
+			While->scope->parent = replacement_block->scope;
+			add_to_scope(While, replacement_block->scope);
+
+			auto it2 = AstDefinition::create();
+			it2->name = For->iterator_name;
+			it2->container_node = state->current_lambda_or_struct_or_enum;
+			it2->definition_location = LambdaDefinitionLocation::body;
+			it2->expression = make_unary(UnaryOperation::pointer_or_dereference_or_unwrap, make_identifier(it1->name));
+			add_to_scope(it2, While->scope);
+
+			auto inner = AstBlock::create();
+			inner->scope = For->scope;
+			inner->scope->parent = While->scope;
+			add_to_scope(inner, While->scope);
+
+			auto inc = make_binop(BinaryOperation::addass, make_identifier(it1->name), make_integer(""str, 1ll));
+			add_to_scope(make_statement(inc), While->scope);
+
+			typecheck(state, replacement_block);
+			return replacement_block;
+		} else if (auto arr = direct_as<AstSubscript>(For->range->type)) {
+			auto replacement_block = AstBlock::create();
+			replacement_block->scope->parent = state->current_scope;
+
+			auto range_definition = AstDefinition::create();
+			range_definition->name = "\\arr"str;
+			range_definition->container_node = state->current_lambda_or_struct_or_enum;
+			range_definition->definition_location = LambdaDefinitionLocation::body;
+			if (is_addressable(For->range)) {
+				range_definition->expression = make_address_of(&reporter, For->range);
+			} else {
+				range_definition->expression = For->range;
+			}
+			range_definition->type = range_definition->expression->type;
+			range_definition->typechecked = true;
+			set_local_offset(state, range_definition, state->current_lambda);
+			add_to_scope(range_definition, replacement_block->scope);
+
+			auto it1 = AstDefinition::create();
+			it1->name = "\\it"str;
+			it1->container_node = state->current_lambda_or_struct_or_enum;
+			it1->definition_location = LambdaDefinitionLocation::body;
+			it1->expression = make_unary(UnaryOperation::address_of, make_subscript(make_unary(UnaryOperation::pointer_or_dereference_or_unwrap, make_identifier(range_definition->name)), make_integer(""str, 0ll)));
+			add_to_scope(it1, replacement_block->scope);
+
+			auto end = AstDefinition::create();
+			end->name = "\\end"str;
+			end->container_node = state->current_lambda_or_struct_or_enum;
+			end->definition_location = LambdaDefinitionLocation::body;
+			end->expression = make_binop(BinaryOperation::add,
+				make_identifier(it1->name),
+				make_binop(BinaryOperation::dot, make_unary(UnaryOperation::pointer_or_dereference_or_unwrap, make_identifier(range_definition->name)), make_identifier("count"str))
+			);
+			add_to_scope(end, replacement_block->scope);
+
+			auto While = AstWhile::create();
+			While->condition = make_binop(BinaryOperation::lt, make_identifier(it1->name), make_identifier(end->name));
+			While->scope->parent = replacement_block->scope;
+			add_to_scope(While, replacement_block->scope);
+
+			auto it2 = AstDefinition::create();
+			it2->name = For->iterator_name;
+			it2->container_node = state->current_lambda_or_struct_or_enum;
+			it2->definition_location = LambdaDefinitionLocation::body;
+			it2->expression = make_unary(UnaryOperation::pointer_or_dereference_or_unwrap, make_identifier(it1->name));
+			add_to_scope(it2, While->scope);
+
+			auto inner = AstBlock::create();
+			inner->scope = For->scope;
+			inner->scope->parent = While->scope;
+			add_to_scope(inner, While->scope);
+
+			auto inc = make_binop(BinaryOperation::addass, make_identifier(it1->name), make_integer(""str, 1ll));
+			add_to_scope(make_statement(inc), While->scope);
+
+			typecheck(state, replacement_block);
+			return replacement_block;
+		} else {
+			state->reporter.error(For->range->location, "This expression is not iterable. Right now you can iterate over ranges (e.g. 0..5), spans and arrays");
+			yield(TypecheckResult::fail);
+		}
 	}
 }
 AstStatement *typecheck(TypecheckState *state, AstExpressionStatement *ExpressionStatement) {
@@ -5639,30 +5863,7 @@ void typecheck(TypecheckState *state, AstStatement *&statement) {
 	}
 }
 
-bool signedness_matches(AstStruct *a, AstStruct *b) {
-	assert(::is_integer(a));
-	assert(::is_integer(b));
-	if (types_match(a, builtin_unsized_integer) ||
-		types_match(b, builtin_unsized_integer))
-		return true;
-
-	return ::is_signed(a) == ::is_signed(b);
-}
-
-AstUnaryOperator *make_address_of(Reporter *reporter, AstExpression *expression) {
-	if (!ensure_addressable(reporter, expression))
-		return 0;
-
-	using enum UnaryOperation;
-
-	auto result = AstUnaryOperator::create();
-	result->expression = expression;
-	result->operation = address_of;
-	result->location = expression->location;
-	result->type = make_pointer_type(expression->type);
-	return result;
-}
-
+// TODO: handle implicit casts and multiple matches
 AstLambda *find_user_defined_binary_operator(TypecheckState *state, BinaryOperation operation, AstExpression *left_type, AstExpression *right_type) {
 	while (state->no_progress_counter != NO_PROGRESS_THRESHOLD) {
 		auto found = binary_operators.find(operation);
@@ -6280,7 +6481,7 @@ HashMap<BinaryTypecheckerKey, AstExpression *(*)(TypecheckState *, AstBinaryOper
 
 // :span hack:
 // FIXME: this is just hardcoded template.
-AstStruct *instantiate_span(AstExpression *subtype) {
+AstIdentifier *instantiate_span(AstExpression *subtype, String location) {
 	auto &instantiation = span_instantiations.get_or_insert(subtype);
 	if (!instantiation) {
 		auto instantiation_definition = AstDefinition::create();
@@ -6290,6 +6491,7 @@ AstStruct *instantiate_span(AstExpression *subtype) {
 		instantiation_definition->name = format("Span({})"str, type_to_string(subtype));
 		instantiation_definition->parent_scope = &global_scope;
 		instantiation_definition->is_constant = true;
+		instantiation_definition->type = builtin_type.ident;
 
 		instantiation->layout = StructLayout::tlang;
 		instantiation->definition = instantiation_definition;
@@ -6314,7 +6516,14 @@ AstStruct *instantiate_span(AstExpression *subtype) {
 		add_to_scope(count, instantiation->member_scope);
 		instantiation->data_members.add(count);
 	}
-	return instantiation;
+
+	auto ident = AstIdentifier::create();
+	ident->possible_definitions.set(instantiation->definition);
+	ident->location = location;
+	ident->type = instantiation->definition->type;
+	ident->name = instantiation->definition->name;
+	ident->directed = instantiation;
+	return ident;
 }
 
 AstExpression *typecheck(TypecheckState *state, AstIdentifier *identifier) {
@@ -6476,7 +6685,7 @@ AstExpression *typecheck(TypecheckState *state, AstIdentifier *identifier) {
 	if (definitions.count == 1) {
 		auto definition = definitions[0];
 		assert(definition->type);
-#if 1
+#if 0
 		if (!definition->type->type) {
 			// This is probably due to errors while typecheching definition.
 			yield(TypecheckResult::fail);
@@ -6558,6 +6767,11 @@ AstExpression *typecheck(TypecheckState *state, AstCall *call) {
 			break;
 		}
 		case Ast_Struct: {
+			auto Struct = (AstStruct *)call->callable;
+			overloads.add({
+				.type = Struct,
+				.definition = Struct->definition,
+			});
 			break;
 		}
 		default: {
@@ -6672,20 +6886,9 @@ AstExpression *typecheck(TypecheckState *state, AstCall *call) {
 					resolution.packs.resize(lambda->parameters.count);
 
 					while (1) {
-						if (argument_index == arguments.count) {
-							while (1) {
-								if (parameter_index == lambda->parameters.count) {
-									goto break_outer;
-								}
-								if (lambda->parameters[parameter_index]->is_pack) {
-									++parameter_index;
-									continue;
-								}
-							}
-						}
-						if (parameter_index == lambda->parameters.count) {
-							goto break_outer;
-						}
+						if (argument_index == arguments.count || parameter_index == lambda->parameters.count)
+							break;
+
 						auto &argument = arguments[argument_index];
 						auto &parameter = lambda->parameters[parameter_index];
 
@@ -6715,10 +6918,22 @@ AstExpression *typecheck(TypecheckState *state, AstCall *call) {
 						}
 					}
 				break_outer:;
+
 					if (argument_index != arguments.count) {
 						reporter.error(call->location, "Not enough arguments.");
 						continue;
 					}
+
+					while (1) {
+						if (parameter_index == lambda->parameters.count)
+							break;
+
+						if (!lambda->parameters[parameter_index]->is_pack)
+							break;
+
+						parameter_index += 1;
+					}
+
 					if (parameter_index != lambda->parameters.count) {
 						reporter.error(call->location, "Too many arguments.");
 						continue;
@@ -6902,8 +7117,8 @@ AstExpression *typecheck(TypecheckState *state, AstCall *call) {
 	}
 	Resolution *match = 0;
 	if (matches.count == 0) {
+		state->reporter.error(call->location, "No match was found for {}", call->callable->location);
 		if (overloads.count) {
-			state->reporter.error(call->location, "No match was found for {}", call->callable->location);
 			if (overloads.count > 1) {
 				//state->reporter.info("Here is the list of possible overloads:");
 				//for (auto definition : overloads) {
@@ -6934,8 +7149,6 @@ AstExpression *typecheck(TypecheckState *state, AstCall *call) {
 					state->reporter.info(definition ? definition->location : call->callable->location, "Couldn't match this:");
 				}
 			}
-		} else {
-			state->reporter.error(call->location, "Lambda or struct with that name was not defined");
 		}
 		yield(TypecheckResult::fail);
 	} else if (matches.count == 1) {
@@ -7493,6 +7706,29 @@ AstExpression *typecheck(TypecheckState *state, AstBinaryOperator *bin) {
 						break;
 					}
 				}
+
+				do {
+					for (auto lambda : explicit_casts) {
+						if (types_match(lambda->return_parameter->type, dst_type) && types_match(lambda->parameters[0]->type, src_type)) {
+							auto call = AstCall::create();
+							call->location = cast->location;
+							call->callable = lambda;
+							call->unsorted_arguments.set({{}, cast->left});
+							call->sorted_arguments.set(cast->left);
+							call->type = dst_type;
+							assert(lambda->type->kind == Ast_LambdaType);
+							call->lambda_type = (AstLambdaType *)lambda->type;
+							state->no_progress_counter = 0;
+							return call;
+						}
+					}
+					if (untypechecked_implicit_casts_count == 0) {
+						break;
+					}
+
+					++state->no_progress_counter;
+					yield(TypecheckResult::wait);
+				} while (state->no_progress_counter != NO_PROGRESS_THRESHOLD);
 
 				state->reporter.error(
 					cast->location,
@@ -8204,8 +8440,7 @@ AstExpression *typecheck(TypecheckState *state, AstSpan *span) {
 
 	auto subtype = direct(span->expression);
 
-	// TODO: maybe return a new identifier instead of struct?
-	return instantiate_span(subtype);
+	return instantiate_span(subtype, span->location);
 }
 AstExpression *typecheck(TypecheckState *state, AstIfx *If) {
 	typecheck(state, If->condition);
@@ -8418,6 +8653,16 @@ void typecheck(TypecheckState *state, CExpression auto &expression) {
 			if (!simplify(&state->reporter, &expression))
 				yield(TypecheckResult::fail);
 			assert(expression->type);
+
+			// NOTE: Copypasted from typecheck(AstIdentifier)
+			while (!expression->type->type) {
+				++state->no_progress_counter;
+				if (state->no_progress_counter == NO_PROGRESS_THRESHOLD) {
+					state->reporter.error(expression->location, "Failed to resolve type of type of this expression.");
+					yield(TypecheckResult::fail);
+				}
+				yield(TypecheckResult::wait);
+			}
 
 			if (!direct(expression->type))
 				yield(TypecheckResult::fail);
@@ -9055,7 +9300,7 @@ void init_builtin_types() {
 		// NOTE: not every builtin struct requires this, but i'd rather
 		// not have to debug for an hour because i forgot to do this.
 		builtin.pointer = make_pointer_type(builtin.ident);
-		builtin.span = instantiate_span(builtin.ident);
+		builtin.span = instantiate_span(builtin.ident, {});
 	};
 	auto init_struct = [&](BuiltinStruct &type, String name, s64 size, s64 align) {
 		type.Struct->size = size;
@@ -9707,7 +9952,7 @@ restart_main:
 
 		scoped_phase("Parsing");
 
-		auto parsed = parse_file(concatenate(compiler.compiler_directory, "\\libs\\preload.tl"str));
+		auto parsed = parse_file("tlang/preload.tl"str);
 		assert_always(parsed->result != ParseResult::read_error);
 		// global_scope.append(parsed->scope);
 
