@@ -780,12 +780,21 @@ AstLiteral *make_integer(String location, BigInteger value, AstExpression *type 
 	i->location = location;
 	return i;
 }
-
 AstLiteral *make_integer(String location, u64 value, AstExpression *type = builtin_unsized_integer.ident) {
 	return make_integer(location, make_big_int<BigInteger>(value), type);
 }
 AstLiteral *make_integer(String location, s64 value, AstExpression *type = builtin_unsized_integer.ident) {
 	return make_integer(location, make_big_int<BigInteger>(value), type);
+}
+
+inline AstLiteral *make_integer(BigInteger value, AstExpression *type = builtin_unsized_integer.ident) {
+	return make_integer({}, value, type);
+}
+inline AstLiteral *make_integer(u64 value, AstExpression *type = builtin_unsized_integer.ident) {
+	return make_integer({}, make_big_int<BigInteger>(value), type);
+}
+inline AstLiteral *make_integer(s64 value, AstExpression *type = builtin_unsized_integer.ident) {
+	return make_integer({}, make_big_int<BigInteger>(value), type);
 }
 
 AstLiteral *make_bool(bool val) {
@@ -1688,7 +1697,7 @@ AstExpression *parse_expression_0(Parser *parser) {
 
 					previous_counter += (u64)1;
 
-					definition->expression = make_integer(name, copy(previous_counter), Enum);
+					definition->expression = make_integer(name_location, copy(previous_counter), Enum);
 
 					add_to_scope(definition, Enum->scope);
 				} else {
@@ -2139,7 +2148,7 @@ bool simplify(Reporter *reporter, CExpression auto *_expression) {
 								if (binop->right->kind == Ast_Identifier) {
 									auto right = (AstIdentifier *)binop->right;
 									if (right->name == "count"str) {
-										expression = make_integer(binop->location, (u64)left->string.count, right->type);
+										expression = make_integer((u64)left->string.count, right->type);
 									}
 								}
 							}
@@ -2173,35 +2182,38 @@ bool simplify(Reporter *reporter, CExpression auto *_expression) {
 							BigInteger value;
 
 							switch (binop->operation) {
-								case add: expression = make_integer({}, left + right, binop->type); return true;
-								case sub: expression = make_integer({}, left - right, binop->type); return true;
-								case mul: expression = make_integer({}, left * right, binop->type); return true;
+								case add: expression = make_integer(left + right, binop->type); return true;
+								case sub: expression = make_integer(left - right, binop->type); return true;
+								case mul: expression = make_integer(left * right, binop->type); return true;
 								case div:
+								case mod:
 									if (right == 0) {
 										reporter->error(expression->location, "Integer division by zero.");
 										expression = 0;
 										return false;
 									}
-									expression = make_integer({}, left / right, binop->type);
+									switch (binop->operation) {
+										case div: expression = make_integer(left / right, binop->type); break;
+										case mod: expression = make_integer(left % right, binop->type); break;
+									}
 									return true;
-								case mod: expression = make_integer({}, left % right, binop->type); return true;
-								case band: expression = make_integer({}, left & right, binop->type); return true;
-								case bor: expression = make_integer({}, left | right, binop->type); return true;
-								case bxor: expression = make_integer({}, left ^ right, binop->type); return true;
-								case bsl:
-									if (right.msb) {
-										reporter->error(expression->location, "Can't shift left by negative amount.");
+								case band: expression = make_integer(left & right, binop->type); return true;
+								case bor:  expression = make_integer(left | right, binop->type); return true;
+								case bxor: expression = make_integer(left ^ right, binop->type); return true;
+								case bsl: {
+									constexpr u64 bytes_threshold = 1*MiB;
+									auto result = copy(left);
+									if (!result.shift_left(right, bytes_threshold,
+										[&] { reporter->error(expression->location, "Can't shift left by negative amount."); },
+										[&] (BigInteger required_bytes) { reporter->error(expression->location, "Resulting number of this operation will take up more than {}, which is more than allowed amount of {}.", format_bytes(required_bytes), format_bytes(bytes_threshold)); }
+									)) {
 										expression = 0;
 										return false;
 									}
-									if (right.parts.count > 1) {
-										reporter->error(expression->location, "Can't shift left by amount that big. Resulting number will not fit in memory.");
-										expression = 0;
-										return false;
-									}
-									expression = make_integer({}, left << right, binop->type);
+									expression = make_integer(result, binop->type);
 									return true;
-								case bsr: expression = make_integer({}, left >> right, binop->type); return true;
+								}
+								case bsr: expression = make_integer(left >> right, binop->type); return true;
 								case lt:  expression = make_bool(left < right); return true;
 								case gt:  expression = make_bool(left > right); return true;
 								case le: expression = make_bool(left <= right); return true;
@@ -2211,6 +2223,48 @@ bool simplify(Reporter *reporter, CExpression auto *_expression) {
 								default: invalid_code_path(); break;
 							}
 						}
+
+						bool do_float = false;
+						f64 l, r;
+						if (left_literal->literal_kind == LiteralKind::Float) {
+							l = left_literal->Float;
+							if (right_literal->literal_kind == LiteralKind::Float) {
+								r = right_literal->Float;
+								do_float = true;
+							} else if (right_literal->literal_kind == LiteralKind::integer) {
+								r = (f64)right_literal->integer;
+								do_float = true;
+							}
+						} else if (right_literal->literal_kind == LiteralKind::integer) {
+							r = (f64)right_literal->integer;
+							if (left_literal->literal_kind == LiteralKind::Float) {
+								l = left_literal->Float;
+								do_float = true;
+							} else if (left_literal->literal_kind == LiteralKind::integer) {
+								invalid_code_path();
+							}
+						}
+
+						if (do_float) {
+							switch (binop->operation) {
+								case add: expression = make_float(l + r, binop->type); return true;
+								case sub: expression = make_float(l - r, binop->type); return true;
+								case mul: expression = make_float(l * r, binop->type); return true;
+								case div: expression = make_float(l / r, binop->type); return true;
+								// case mod: expression = make_float(l % r, binop->type); return true;
+								// case band: expression = make_float(l & r, binop->type); return true;
+								// case bor: expression = make_float(l | r, binop->type); return true;
+								// case bxor: expression = make_float(l ^ r, binop->type); return true;
+								case lt: expression = make_bool(l < r); return true;
+								case gt: expression = make_bool(l > r); return true;
+								case le: expression = make_bool(l <= r); return true;
+								case ge: expression = make_bool(l >= r); return true;
+								case ne: expression = make_bool(l != r); return true;
+								case eq: expression = make_bool(l == r); return true;
+								default: invalid_code_path(); break;
+							}
+						}
+
 						break;
 					}
 					case as: {
@@ -2259,11 +2313,30 @@ bool simplify(Reporter *reporter, CExpression auto *_expression) {
 								result.parts.resize(1);
 								result.msb = result.parts.data[0] & 0x8000000000000000;
 							} else {
-								invalid_code_path();
+								not_implemented();
 							}
-							expression = make_integer({}, result, binop->right);
-						} else {
-							invalid_code_path();
+							expression = make_integer(result, binop->right);
+						} else if (literal->literal_kind == LiteralKind::Float) {
+							// FIXME: this relies on c++ conversion rules.
+							if (types_match(binop->right, builtin_s8)) {
+								expression = make_integer((s64)(s8)literal->Float, binop->right);
+							} else if (types_match(binop->right, builtin_s16)) {
+								expression = make_integer((s64)(s16)literal->Float, binop->right);
+							} else if (types_match(binop->right, builtin_s32)) {
+								expression = make_integer((s64)(s32)literal->Float, binop->right);
+							} else if (types_match(binop->right, builtin_s64)) {
+								expression = make_integer((s64)literal->Float, binop->right);
+							} else if (types_match(binop->right, builtin_u8)) {
+								expression = make_integer((u64)(u8)literal->Float, binop->right);
+							} else if (types_match(binop->right, builtin_u16)) {
+								expression = make_integer((u64)(u16)literal->Float, binop->right);
+							} else if (types_match(binop->right, builtin_u32)) {
+								expression = make_integer((u64)(u32)literal->Float, binop->right);
+							} else if (types_match(binop->right, builtin_u64)) {
+								expression = make_integer((u64)literal->Float, binop->right);
+							} else {
+								not_implemented();
+							}
 						}
 						break;
 					}
@@ -2324,8 +2397,8 @@ bool simplify(Reporter *reporter, CExpression auto *_expression) {
 							auto integer = literal->integer;
 							switch (unop->operation) {
 								case plus: return true;
-								case minus: expression = make_integer({}, -integer); return true;
-								case bnot:  expression = make_integer({}, ~integer); return true;
+								case minus: expression = make_integer(-integer); return true;
+								case bnot:  expression = make_integer(~integer); return true;
 								case autocast: return true;
 
 								default:
@@ -3761,7 +3834,7 @@ AstLiteral *evaluate(TypecheckState *state, AstExpression *expression) {
 					assert(l->literal_kind == r->literal_kind);
 					switch (l->literal_kind) {
 						using enum LiteralKind;
-						case integer: return make_integer({}, l->integer + r->integer, bin->type);
+						case integer: return make_integer(l->integer + r->integer, bin->type);
 						case Float:   return make_float  (l->Float   + r->Float  , bin->type);
 						default: invalid_code_path();
 					}
@@ -3770,7 +3843,7 @@ AstLiteral *evaluate(TypecheckState *state, AstExpression *expression) {
 					assert(l->literal_kind == r->literal_kind);
 					switch (l->literal_kind) {
 						using enum LiteralKind;
-						case integer: return make_integer({}, l->integer - r->integer, bin->type);
+						case integer: return make_integer(l->integer - r->integer, bin->type);
 						case Float:   return make_float  (l->Float   - r->Float  , bin->type);
 						default: invalid_code_path();
 					}
@@ -3779,7 +3852,7 @@ AstLiteral *evaluate(TypecheckState *state, AstExpression *expression) {
 					assert(l->literal_kind == r->literal_kind);
 					switch (l->literal_kind) {
 						using enum LiteralKind;
-						case integer: return make_integer({}, l->integer * r->integer, bin->type);
+						case integer: return make_integer(l->integer * r->integer, bin->type);
 						case Float:   return make_float  (l->Float   * r->Float  , bin->type);
 						default: invalid_code_path();
 					}
@@ -3788,7 +3861,7 @@ AstLiteral *evaluate(TypecheckState *state, AstExpression *expression) {
 					assert(l->literal_kind == r->literal_kind);
 					switch (l->literal_kind) {
 						using enum LiteralKind;
-						case integer: return make_integer({}, l->integer / r->integer, bin->type);
+						case integer: return make_integer(l->integer / r->integer, bin->type);
 						case Float:   return make_float  (l->Float   / r->Float  , bin->type);
 						default: invalid_code_path();
 					}
@@ -7226,7 +7299,7 @@ AstExpression *typecheck(TypecheckState *state, AstCall *call) {
 
 					auto type = AstSubscript::create();
 					type->expression = elem_type;
-					type->index_expression = make_integer({}, (u64)pack->expressions.count);
+					type->index_expression = make_integer((u64)pack->expressions.count);
 					type->location = pack->location;
 					type->type = builtin_type.ident;
 
@@ -7668,23 +7741,24 @@ AstExpression *typecheck(TypecheckState *state, AstBinaryOperator *bin) {
 
 				auto found_built_in = find(built_in_casts, {direct_as<AstStruct>(src_type), direct_as<AstStruct>(dst_type)});
 				if (found_built_in) {
-					//cast->cast_kind = found_built_in->kind;
 					break;
 				}
 
 				if (::is_integer(src_type)) {
 					if (types_match(src_type, builtin_unsized_integer)) {
 						if (::is_pointer(dst_type) || ::is_integer(dst_type)) {
-							// Just replace cast with literal
-							// expression = cast->left;
-							// expression->type = dst_type;
 							break;
 						}
 					} else {
 						if (::is_pointer(dst_type)) {
 							auto built_in_cast = find_if(built_in_casts, [&](auto c) { return types_match(c.from, src_type); });
 							assert(built_in_cast);
-							//cast->cast_kind = built_in_cast->kind;
+							break;
+						}
+					}
+				} else if (::is_float(src_type)) {
+					if (types_match(src_type, builtin_unsized_float)) {
+						if (::is_integer(dst_type)) {
 							break;
 						}
 					}
@@ -7694,7 +7768,6 @@ AstExpression *typecheck(TypecheckState *state, AstBinaryOperator *bin) {
 						return cast->left;
 					} else if (::is_integer(dst_type)) {
 						if (get_size(dst_type) == 8) {
-							//cast->cast_kind = CastKind::no_op;
 							break;
 						}
 
@@ -7702,7 +7775,6 @@ AstExpression *typecheck(TypecheckState *state, AstBinaryOperator *bin) {
 							return types_match(c.from, builtin_u64) && types_match(c.to, dst_type);
 						});
 						assert(built_in_cast);
-						//cast->cast_kind = built_in_cast->kind;
 						break;
 					}
 				}
@@ -9439,22 +9511,22 @@ void init_builtin_types() {
 		return d;
 	};
 
-	add_member(builtin_u8 .Struct, builtin_u8 .ident, "min"str, make_integer({}, (u64)min_value<u8 >), true, INVALID_MEMBER_OFFSET);
-	add_member(builtin_u16.Struct, builtin_u16.ident, "min"str, make_integer({}, (u64)min_value<u16>), true, INVALID_MEMBER_OFFSET);
-	add_member(builtin_u32.Struct, builtin_u32.ident, "min"str, make_integer({}, (u64)min_value<u32>), true, INVALID_MEMBER_OFFSET);
-	add_member(builtin_u64.Struct, builtin_u64.ident, "min"str, make_integer({}, (u64)min_value<u64>), true, INVALID_MEMBER_OFFSET);
-	add_member(builtin_u8 .Struct, builtin_u8 .ident, "max"str, make_integer({}, (u64)max_value<u8 >), true, INVALID_MEMBER_OFFSET);
-	add_member(builtin_u16.Struct, builtin_u16.ident, "max"str, make_integer({}, (u64)max_value<u16>), true, INVALID_MEMBER_OFFSET);
-	add_member(builtin_u32.Struct, builtin_u32.ident, "max"str, make_integer({}, (u64)max_value<u32>), true, INVALID_MEMBER_OFFSET);
-	add_member(builtin_u64.Struct, builtin_u64.ident, "max"str, make_integer({}, (u64)max_value<u64>), true, INVALID_MEMBER_OFFSET);
-	add_member(builtin_s8 .Struct, builtin_s8 .ident, "min"str, make_integer({}, (s64)min_value<s8 >), true, INVALID_MEMBER_OFFSET);
-	add_member(builtin_s16.Struct, builtin_s16.ident, "min"str, make_integer({}, (s64)min_value<s16>), true, INVALID_MEMBER_OFFSET);
-	add_member(builtin_s32.Struct, builtin_s32.ident, "min"str, make_integer({}, (s64)min_value<s32>), true, INVALID_MEMBER_OFFSET);
-	add_member(builtin_s64.Struct, builtin_s64.ident, "min"str, make_integer({}, (s64)min_value<s64>), true, INVALID_MEMBER_OFFSET);
-	add_member(builtin_s8 .Struct, builtin_s8 .ident, "max"str, make_integer({}, (s64)max_value<s8 >), true, INVALID_MEMBER_OFFSET);
-	add_member(builtin_s16.Struct, builtin_s16.ident, "max"str, make_integer({}, (s64)max_value<s16>), true, INVALID_MEMBER_OFFSET);
-	add_member(builtin_s32.Struct, builtin_s32.ident, "max"str, make_integer({}, (s64)max_value<s32>), true, INVALID_MEMBER_OFFSET);
-	add_member(builtin_s64.Struct, builtin_s64.ident, "max"str, make_integer({}, (s64)max_value<s64>), true, INVALID_MEMBER_OFFSET);
+	add_member(builtin_u8 .Struct, builtin_u8 .ident, "min"str, make_integer((u64)min_value<u8 >), true, INVALID_MEMBER_OFFSET);
+	add_member(builtin_u16.Struct, builtin_u16.ident, "min"str, make_integer((u64)min_value<u16>), true, INVALID_MEMBER_OFFSET);
+	add_member(builtin_u32.Struct, builtin_u32.ident, "min"str, make_integer((u64)min_value<u32>), true, INVALID_MEMBER_OFFSET);
+	add_member(builtin_u64.Struct, builtin_u64.ident, "min"str, make_integer((u64)min_value<u64>), true, INVALID_MEMBER_OFFSET);
+	add_member(builtin_u8 .Struct, builtin_u8 .ident, "max"str, make_integer((u64)max_value<u8 >), true, INVALID_MEMBER_OFFSET);
+	add_member(builtin_u16.Struct, builtin_u16.ident, "max"str, make_integer((u64)max_value<u16>), true, INVALID_MEMBER_OFFSET);
+	add_member(builtin_u32.Struct, builtin_u32.ident, "max"str, make_integer((u64)max_value<u32>), true, INVALID_MEMBER_OFFSET);
+	add_member(builtin_u64.Struct, builtin_u64.ident, "max"str, make_integer((u64)max_value<u64>), true, INVALID_MEMBER_OFFSET);
+	add_member(builtin_s8 .Struct, builtin_s8 .ident, "min"str, make_integer((s64)min_value<s8 >), true, INVALID_MEMBER_OFFSET);
+	add_member(builtin_s16.Struct, builtin_s16.ident, "min"str, make_integer((s64)min_value<s16>), true, INVALID_MEMBER_OFFSET);
+	add_member(builtin_s32.Struct, builtin_s32.ident, "min"str, make_integer((s64)min_value<s32>), true, INVALID_MEMBER_OFFSET);
+	add_member(builtin_s64.Struct, builtin_s64.ident, "min"str, make_integer((s64)min_value<s64>), true, INVALID_MEMBER_OFFSET);
+	add_member(builtin_s8 .Struct, builtin_s8 .ident, "max"str, make_integer((s64)max_value<s8 >), true, INVALID_MEMBER_OFFSET);
+	add_member(builtin_s16.Struct, builtin_s16.ident, "max"str, make_integer((s64)max_value<s16>), true, INVALID_MEMBER_OFFSET);
+	add_member(builtin_s32.Struct, builtin_s32.ident, "max"str, make_integer((s64)max_value<s32>), true, INVALID_MEMBER_OFFSET);
+	add_member(builtin_s64.Struct, builtin_s64.ident, "max"str, make_integer((s64)max_value<s64>), true, INVALID_MEMBER_OFFSET);
 
 	// string
 	append_member(builtin_string, "data"str,  builtin_u8.pointer);
@@ -9908,34 +9980,53 @@ restart_main:
 	BINOP(le, unsized_integer, f64) { return cmp_f64_unsized_integer(state, bin); };
 	BINOP(ge, unsized_integer, f64) { return cmp_f64_unsized_integer(state, bin); };
 
-	static auto cmp_f64_unsized_float = [](TypecheckState *state, AstBinaryOperator *bin) -> AstExpression * {
-		AstExpression **se;
-		AstExpression **ue;
+	static auto unsized_float = [](TypecheckState *state, AstBinaryOperator *bin) -> AstExpression * {
+		AstExpression *sized;
+		AstExpression *unsized;
 		if (types_match(bin->left->type, builtin_unsized_float)) {
-			ue = &bin->left;
-			se = &bin->right;
+			unsized = bin->left;
+			sized   = bin->right;
 		} else {
-			ue = &bin->right;
-			se = &bin->left;
+			unsized = bin->right;
+			sized   = bin->left;
 		}
-		(*ue)->type = (*se)->type;
-		bin->type = builtin_bool.ident;
+		unsized->type = sized->type;
+		switch (bin->operation) {
+			using enum BinaryOperation;
+
+			case eq:
+			case ne:
+			case lt:
+			case gt:
+			case le:
+			case ge:
+				bin->type = builtin_bool.ident;
+				break;
+			default:
+				bin->type = sized->type;
+				break;
+		}
 		return bin;
 	};
 
-	BINOP(eq, f64, unsized_float) { return cmp_f64_unsized_float(state, bin); };
-	BINOP(ne, f64, unsized_float) { return cmp_f64_unsized_float(state, bin); };
-	BINOP(lt, f64, unsized_float) { return cmp_f64_unsized_float(state, bin); };
-	BINOP(gt, f64, unsized_float) { return cmp_f64_unsized_float(state, bin); };
-	BINOP(le, f64, unsized_float) { return cmp_f64_unsized_float(state, bin); };
-	BINOP(ge, f64, unsized_float) { return cmp_f64_unsized_float(state, bin); };
+#define FLOAT_BINOP_0(add, sized_type) \
+	BINOP(add, sized_type, unsized_float) { return unsized_float(state, bin); };  \
+	BINOP(add, unsized_float, sized_type) { return unsized_float(state, bin); };  \
 
-	BINOP(eq, unsized_float, f64) { return cmp_f64_unsized_float(state, bin); };
-	BINOP(ne, unsized_float, f64) { return cmp_f64_unsized_float(state, bin); };
-	BINOP(lt, unsized_float, f64) { return cmp_f64_unsized_float(state, bin); };
-	BINOP(gt, unsized_float, f64) { return cmp_f64_unsized_float(state, bin); };
-	BINOP(le, unsized_float, f64) { return cmp_f64_unsized_float(state, bin); };
-	BINOP(ge, unsized_float, f64) { return cmp_f64_unsized_float(state, bin); };
+#define FLOAT_BINOP(sized_type) \
+	FLOAT_BINOP_0(add, sized_type) \
+	FLOAT_BINOP_0(sub, sized_type) \
+	FLOAT_BINOP_0(mul, sized_type) \
+	FLOAT_BINOP_0(div, sized_type) \
+	FLOAT_BINOP_0(eq, sized_type) \
+	FLOAT_BINOP_0(ne, sized_type) \
+	FLOAT_BINOP_0(lt, sized_type) \
+	FLOAT_BINOP_0(gt, sized_type) \
+	FLOAT_BINOP_0(le, sized_type) \
+	FLOAT_BINOP_0(ge, sized_type) \
+
+	FLOAT_BINOP(f32)
+	FLOAT_BINOP(f64)
 
 #undef BINOP
 
