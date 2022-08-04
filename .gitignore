@@ -10,3 +10,4 @@ bin/*
 !bin/fasm/
 !bin/nasm.exe
 devtest/
+*.args.json
