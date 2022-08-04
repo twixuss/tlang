@@ -21,7 +21,7 @@ my_counter: Int = 42
 ```
 ## Blocks
 Block is a statement that contains a list of other statements.
-It is the same thing as in many other languages. 
+It is the same thing as in many other languages.
 ```java
 a := 1
 {
@@ -70,6 +70,17 @@ String :: struct {
 }
 ```
 Note that string literals are null terminated, but the terminator is not included in the count.
+
+Structs can have default values:
+```java
+Thing :: struct {
+  value: Int = 42
+}
+
+thing: Thing
+println(thing) // prints 42
+println(Thing()) // also prints 42
+```
 ## Arrays
 Array types are made like this:
 ```java
@@ -185,7 +196,7 @@ import "windows.tl"
 ```
 `windows.tl` is a file in `libs` directory of the compiler. It defines basic win32 functions, like printing to console or creating a window. If it doesn't have one that you need, you can always add it yourself:
 ```java
-#extern_library "kernel32.lib" 
+#extern_library "kernel32.lib"
 OpenFile :: (...): ... #stdcall
 // functions without a body will be searched for in extern libraries.
 ```
@@ -235,7 +246,7 @@ array[0] = 12
 // number of elements is array.count
 ```
 ## Span
-Span is just a pointer to an array and the number of elements. 
+Span is just a pointer to an array and the number of elements.
 Span does not have to cover an entire array, it can point at a portion of it.
 ```java
 span: []Int
@@ -243,14 +254,14 @@ span: []Int
   array: [4]Int
   span = array
   // now span covers the entire array.
-  
+
   span[0] = 14
   print(array[0]) // prints 14
 
   span.data = &array[1]
   span.count = 2
   // now span includes only elements [1] and [2].
-  
+
   span[0] = 12
   print(array[1]) // prints 12
 }
@@ -410,38 +421,43 @@ ptr : * #type (): Int
 // ambiguous if it's a type or a lambda without a body.
 // So to distinguish between them we have to use #type directive.
 ```
-## Static functions
-```java
-Thing :: struct {
-  static_function :: (...): ... {
-    ...
-  }
-}
-
-something := Thing.static_function(...)
-```
-Static functions can be inserted into a struct from outside.
-```java
-create :: (this :: Thing, param: Int): Thing { ... }
-```
 ## Member functions
+To create a member function, name it's first parameter `me`:
 ```java
-Thing :: struct {
-  member_function :: (this, ...): ... {
-    ...
-  }
+Vector :: struct {
+  x: Float32
+  y: Float32
 }
 
-thing: Thing
-something := thing.member_function(...)
+dot :: (me: Vector, b: Vector) =>
+  x * b.x + y * b.y // Note that `me` has implicit `using`, so you don't have to write `me.x` all the time
+
+a := Vector(1, 2)
+b := Vector(3, 4)
+
+// Then you can call it like member or normal function:
+print(a.dot(b))
+print(dot(a, b))
 ```
-### TODO
-Like static functions, member functions also can be inserted into a struct from outside.
+In the above example parameter `me` has type `Vector`, which means that it is not modifyable.
+To change this, just make the type a pointer to vector:
 ```java
-create :: (this: Thing, param: Int): Thing { ... } // Note only single colon after `this`
+normalize :: (me: *Vector) {
+  f := 1.0 / me.length()
+  x *= f
+  y *= f
+}
+
+a := Vector(1, 2)
+a.normalize()
+```
+Note that even though the function accepts a pointer, you can pass arbitrary expressions to it:
+```java
+println(Vector2(1, 2).normalize()) // Vector2(1, 2) is not addressable, but it works.
+// See "Temporary space" section for more details.
 ```
 # Temporary space
-This language provides a lot of implicit conversions to simplify things, 
+This language provides a lot of implicit conversions to simplify things,
 for example from array to span, or from any type to `Any` type, etc.
 These conversions require taking a pointer to something, which is fine if
 that something is for example a stack variable, just take it's address.
@@ -455,7 +471,7 @@ foo(get_thing())
 ```
 In this case, you can't just take an address of `get_thing()`.
 For that case compiler puts the value returned by `get_thing()` in the temporary region of the stack
-and passes the pointer to `Any`. That temporary region is untouched until the scope is closed. 
+and passes the pointer to `Any`. That temporary region is untouched until the scope is closed.
 After that that temporary region may be overwritten by subsequent users of the temporary space.
 
 This makes doing something like this possible without much trouble:
@@ -499,7 +515,7 @@ Vector2 :: struct {
 
 println(Vector2(1, 2))
 ```
-Yes, you don't have to print each member manually, everything is printable by default. 
+Yes, you don't have to print each member manually, everything is printable by default.
 # Other things
 * All variables are initialized to zero by default.
 * Compile time execution (only basic operations are supported for now)
