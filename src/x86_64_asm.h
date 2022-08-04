@@ -206,87 +206,21 @@ inline umm append_instruction(StringBuilder &builder, s64 idx, Instruction i) {
 
 		case shl_rc: return append_format(builder, "shl {},{}", i.shl_rc.d, i.shl_rc.s);
 		case shl_rr: return append_format(builder, "mov cl,{}\nshl {},cl", part1b(i.shl_rr.s), i.shl_rr.d);
-		case shl_mr: return append_format(builder, "mov cl,{}\nshl qword{},cl", part1b(i.shl_mr.s), i.shl_mr.d);
 
 		case shr_rc: return append_format(builder, "shr {}, {}", i.shr_rc.d, i.shr_rc.s);
 		case shr_rr: return append_format(builder, "mov cl, {}\nshr {}, cl", part1b(i.shr_rr.s), i.shr_rr.d);
-		case shr_mr: return append_format(builder, "mov cl, {}\nshr qword {}, cl", part1b(i.shr_mr.s), i.shr_mr.d);
 
 		case add_rc: return append_format(builder, "add {},{}"      , i.add_rc.d, i.add_rc.s);
 		case add_rr: return append_format(builder, "add {},{}"      , i.add_rr.d, i.add_rr.s);
-		case add_mc: return append_format(builder, "add qword {},{}", i.add_mc.d, i.add_mc.s);
-		case add_mr: return append_format(builder, "add qword {},{}", i.add_mr.d, i.add_mr.s);
 
 		case sub_rc: return append_format(builder, "sub {},{}"      , i.sub_rc.d, i.sub_rc.s);
 		case sub_rr: return append_format(builder, "sub {},{}"      , i.sub_rr.d, i.sub_rr.s);
-		case sub_mc: return append_format(builder, "sub qword {},{}", i.sub_mc.d, i.sub_mc.s);
-		case sub_mr: return append_format(builder, "sub qword {},{}", i.sub_mr.d, i.sub_mr.s);
 
 		case mul_rc: return append_format(builder, "imul {}, {}", i.mul_rc.d, i.mul_rc.s);
 		case mul_rr: return append_format(builder, "imul {}, {}", i.mul_rr.d, i.mul_rr.s);
-		case mul_mr: return append_format(builder, "imul {}, qword {}\nmov qword {}, {}", i.mul_mr.s, i.mul_mr.d, i.mul_mr.d, i.mul_mr.s);
 
 			//  DIV - Unsigned divide RDX:RAX by r/m64, with result stored in RAX - Quotient, RDX - Remainder.
 			// IDIV -   Signed divide RDX:RAX by r/m64, with result stored in RAX - Quotient, RDX - Remainder.
-		case divu_mr:
-			if (to_x86_register(i.divu_mr.s) == rdx) {
-				return append_format(builder,
-"mov rbx, rdx\n"
-"xor rdx, rdx\n"
-"mov rax, qword {}\n"
-"div rbx\n"
-"mov qword {}, rax\n"
-"mov rdx, rbx", i.divu_mr.d, i.divu_mr.d);
-			} else {
-				return append_format(builder,
-"mov rbx, rdx\n"
-"xor rdx, rdx\n"
-"mov rax, qword {}\n"
-"div {}\n"
-"mov qword {}, rax\n"
-"mov rdx, rbx", i.divu_mr.d, i.divu_mr.s, i.divu_mr.d);
-			}
-			break;
-		case divs_mr:
-			if (to_x86_register(i.divs_mr.s) == rdx) {
-				return append_format(builder,
-"mov rbx, rdx\n"
-"mov rax, qword {}\n"
-"cqo\n"
-"div rbx\n"
-"mov qword {}, rax\n"
-"mov rdx, rbx", i.divs_mr.d, i.divs_mr.d);
-			} else {
-				return append_format(builder,
-"mov rbx, rdx\n"
-"mov rax, qword {}\n"
-"cqo\n"
-"div {}\n"
-"mov qword {}, rax\n"
-"mov rdx, rbx", i.divs_mr.d, i.divs_mr.s, i.divs_mr.d);
-			}
-			break;
-		case modu_mr:
-			if (to_x86_register(i.modu_mr.s) == rdx) {
-				return append_format(builder,
-"mov rbx, rdx\n"
-"xor rdx, rdx\n"
-"mov rax, qword {}\n"
-"div rbx\n"
-"mov qword {}, rdx\n"
-"mov rdx, rbx", i.modu_mr.d, i.modu_mr.d);
-			} else {
-				return append_format(builder,
-"mov rbx, rdx\n"
-"xor rdx, rdx\n"
-"mov rax, qword {}\n"
-"div {}\n"
-"mov qword {}, rdx\n"
-"mov rdx, rbx", i.modu_mr.d, i.modu_mr.s, i.modu_mr.d);
-			}
-			break;
-
-
 		case divu_rr:
 			return append_format(builder,
 "push rdx\n"
@@ -327,45 +261,21 @@ inline umm append_instruction(StringBuilder &builder, s64 idx, Instruction i) {
 "pop rdx", i.mods_rr.d, i.mods_rr.s, i.mods_rr.d);
 			break;
 
-		case negi_r: return append_format(builder, "neg {}", i.negi_r.d);
-		case negi8_m:  return append_format(builder, "neg byte {}",  i.negi8_m.d);
-		case negi16_m: return append_format(builder, "neg word {}",  i.negi16_m.d);
-		case negi32_m: return append_format(builder, "neg dword {}", i.negi32_m.d);
-		case negi64_m: return append_format(builder, "neg qword {}", i.negi64_m.d);
 
+		case or_rc: return append_format(builder, "or {},{}", i.or_rc.d, i.or_rc.s);
 		case or_rr: return append_format(builder, "or {},{}", i. or_rr.d, i. or_rr.s);
-		case or_mr: return append_format(builder, "or qword{},{}", i. or_mr.d, i. or_mr.s);
 
 		case and_rc: return append_format(builder, "and {},{}", i.and_rc.d, i.and_rc.s);
 		case and_rr: return append_format(builder, "and {},{}", i.and_rr.d, i.and_rr.s);
-		case and_mc: {
-			REDECLARE_REF(i, i.and_mc);
-			auto l = (s32)i.s;
-			auto h = (s32)((u64)i.s >> 32);
-			umm ch = 0;
-			if (l != ~0) ch += append_format(builder, "xor dword{},{}\n", i.d, l);
-			if (h != ~0) ch += append_format(builder, "xor dword{},{}", i.d + 4, h);
-			return ch;
-		}
-		case and_mr: return append_format(builder, "and qword {}, {}", i.and_mr.d, i.and_mr.s);
 
-		case xor_rr: return append_format(builder, "xor {}, {}"        , i.xor_rr.d, i.xor_rr.s);
-		case xor1_mr: return append_format(builder, "xor {},{}", i.xor1_mr.d, part1b(i.xor1_mr.s));
-		case xor2_mr: return append_format(builder, "xor {},{}", i.xor2_mr.d, part2b(i.xor2_mr.s));
-		case xor4_mr: return append_format(builder, "xor {},{}", i.xor4_mr.d, part4b(i.xor4_mr.s));
-		case xor8_mr: return append_format(builder, "xor {},{}", i.xor8_mr.d, part8b(i.xor8_mr.s));
-		case xor1_mc: return append_format(builder, "xor byte{},{}\n", i.xor1_mc.d, i.xor1_mc.s);
-		case xor2_mc: return append_format(builder, "xor word{},{}\n", i.xor2_mc.d, i.xor2_mc.s);
-		case xor4_mc: return append_format(builder, "xor dword{},{}\n", i.xor4_mc.d, i.xor4_mc.s);
-		case xor8_mc: {
-			REDECLARE_REF(i, i.xor8_mc);
-			auto l = (s32)i.s;
-			auto h = (s32)((u64)i.s >> 32);
-			umm ch = 0;
-			if (l) ch += append_format(builder, "xor dword{},{}\n", i.d, l);
-			if (h) ch += append_format(builder, "xor dword{},{}", i.d + 4, h);
-			return ch;
-		}
+		case xor_rc: return append_format(builder, "xor {},{}", i.xor_rc.d, i.xor_rc.s);
+		case xor_rr: return append_format(builder, "xor {},{}", i.xor_rr.d, i.xor_rr.s);
+
+		case sbxor_rc: return append_format(builder, "btc {},{}", i.sbxor_rc.d, i.sbxor_rc.s);
+		case sbxor_rr: return append_format(builder, "btc {},{}", i.sbxor_rr.d, i.sbxor_rr.s);
+
+		case not_r: return append_format(builder, "not {}", i.not_r.d);
+		case negi_r: return append_format(builder, "neg {}", i.negi_r.d);
 
 		case cmps1: return append_format(builder, "xor {},{}\ncmp {},{}\nset{} {}", i.cmps1.d, i.cmps1.d, part1b(i.cmps1.a), part1b(i.cmps1.b), cmps_string(i.cmps1.c), part1b(i.cmps1.d));
 		case cmps2: return append_format(builder, "xor {},{}\ncmp {},{}\nset{} {}", i.cmps2.d, i.cmps2.d, part2b(i.cmps2.a), part2b(i.cmps2.b), cmps_string(i.cmps2.c), part1b(i.cmps2.d));
@@ -709,8 +619,6 @@ inline umm append_instruction(StringBuilder &builder, s64 idx, Instruction i) {
 
 		case tobool_r:    { auto d = part1b(i.tobool_r.d);    return append_format(builder, "test {}, {}\nsetnz {}", d, d, d); }
 		case toboolnot_r: { auto d = part1b(i.toboolnot_r.d); return append_format(builder, "test {}, {}\nsetz {}" , d, d, d); }
-		case not_r: return append_format(builder, "not {}", i.not_r.d);
-		case not_m: return append_format(builder, "not {}", i.not_m.d);
 		case jmp_label:
 		case noop:
 			return 0;

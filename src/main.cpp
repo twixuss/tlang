@@ -1,10 +1,6 @@
-﻿// TODO: FIXME operator with literal is broken
+﻿// TODO: default struct member values
 
-// TODO: default struct member values
-
-// TODO: FIXME constexpr literal math is broken
-
-// TODO: FIXME comparison with literal is broken
+// TODO: unsized floats use only 64 bits
 
 #define TL_IMPL
 #include <common.h>
@@ -3709,7 +3705,6 @@ void put_arrays_in_section(AstLiteral *literal, Section &section) {
 			for (auto val : literal->struct_values)
 				put_arrays_in_section(val, section);
 
-			literal->struct_offset = section.buffer.count;
 			for (auto val : literal->struct_values)
 				put_arrays_in_section(val, section);
 			break;
@@ -3767,6 +3762,7 @@ u32 put_in_section(AstLiteral *literal, Section &section) {
 			assert(alignment);
 			section.align(alignment);
 
+			literal->struct_offset = section.buffer.count;
 			auto result = section.buffer.count;
 
 			for (auto member : literal->struct_values) {
@@ -4240,29 +4236,27 @@ TypeKind get_type_kind(AstExpression *type) {
 	invalid_code_path();
 }
 
-AstCall *make_struct_initializer(AstExpression *type, std::initializer_list<AstExpression *> arguments, String location) {
+AstCall *make_struct_initializer(AstExpression *type, Span<AstExpression *> arguments, String location) {
 	auto Struct = direct_as<AstStruct>(type);
 	assert(Struct);
 
-	auto create_initializer = [&]() {
-		auto initializer = AstCall::create();
-		initializer->callable = type;
-		initializer->sorted_arguments.resize(Struct->data_members.count);
-		initializer->type = type;
-		initializer->location = location;
-		return initializer;
-	};
+	auto initializer = AstCall::create();
+	initializer->callable = type;
+	initializer->sorted_arguments.resize(Struct->data_members.count);
+	initializer->type = type;
+	initializer->location = location;
 
-	auto initializer = create_initializer();
+	assert(arguments.count == Struct->data_members.count);
 
-	assert(arguments.size() == initializer->sorted_arguments.count);
-
-	for (umm i = 0; i < arguments.size(); ++i) {
-		initializer->sorted_arguments[i] = arguments.begin()[i];
-		assert(types_match(arguments.begin()[i]->type, Struct->data_members[i]->type));
+	for (umm i = 0; i < arguments.count; ++i) {
+		initializer->sorted_arguments[i] = arguments.data[i];
+		assert(types_match(arguments.data[i]->type, Struct->data_members[i]->type));
 	}
 
 	return initializer;
+}
+AstCall *make_struct_initializer(AstExpression *type, std::initializer_list<AstExpression *> arguments, String location) {
+	return make_struct_initializer(type, {arguments.begin(), arguments.end()}, location);
 }
 
 struct TypeinfoDefinition {
@@ -7436,7 +7430,15 @@ AstExpression *typecheck(TypecheckState *state, AstCall *call) {
 						yield(TypecheckResult::fail);
 					}
 				} else {
-					argument = make_null(member->type, call->location);
+					if (member->expression) {
+						argument = evaluate(state, member->expression);
+					} else {
+						if (auto member_struct = direct_as<AstStruct>(member->type); member_struct && member_struct->default_value) {
+							argument = member_struct->default_value;
+						} else {
+							argument = make_null(member->type, call->location);
+						}
+					}
 				}
 			}
 			call->type = call->callable;
@@ -7873,7 +7875,12 @@ AstExpression *typecheck(TypecheckState *state, AstBinaryOperator *bin) {
 			auto r = direct(bin->right->type);
 
 			if (auto found = binary_typecheckers.find({bin->operation, l, r})) {
-				return found->value(state, bin);
+				auto result = found->value(state, bin);
+				if (result)
+					return result;
+
+				report_type_mismatch();
+				return 0;
 			}
 
 			bool li = ::is_integer(l);
@@ -8392,6 +8399,8 @@ AstExpression *typecheck(TypecheckState *state, AstStruct *Struct) {
 			}
 		}
 
+		bool has_default_initialized_members = false;
+
 		for (auto _member : members) {
 			auto &member = *_member;
 			//if (member->is_constant && member->expression && member->expression->kind == Ast_Lambda) {
@@ -8399,14 +8408,21 @@ AstExpression *typecheck(TypecheckState *state, AstStruct *Struct) {
 			typecheck(state, member);
 			//}
 
-			if (!member->is_constant && member->expression) {
-				state->reporter.error(member->location, "Default values for struct members are not implemented yet.");
-				yield(TypecheckResult::fail);
-			}
-
 			if (types_match(member->type, builtin_void)) {
 				state->reporter.error(member->location, "Can't use member of type Void in a struct.");
 				yield(TypecheckResult::fail);
+			}
+		}
+
+		for (auto member : Struct->data_members) {
+			if (member->expression) {
+				has_default_initialized_members = true;
+			}
+
+			if (auto member_struct = direct_as<AstStruct>(member->type)) {
+				if (member_struct->default_value) {
+					has_default_initialized_members = true;
+				}
 			}
 		}
 
@@ -8450,6 +8466,24 @@ AstExpression *typecheck(TypecheckState *state, AstStruct *Struct) {
 		}
 		Struct->alignment = struct_alignment;
 		Struct->size = max(1, ceil(struct_size, struct_alignment));
+
+		if (has_default_initialized_members) {
+			List<AstExpression *> values;
+			for (auto member : Struct->data_members) {
+				if (member->expression) {
+					values.add(member->expression);
+				} else {
+					if (auto member_struct = direct_as<AstStruct>(member->type); member_struct && member_struct->default_value)
+						values.add(member_struct->default_value);
+					else
+						values.add(make_null(member->type, {}));
+				}
+			}
+
+			auto initializer = make_struct_initializer(Struct, values, Struct->location);
+			Struct->default_value = evaluate(state, initializer);
+			put_in_section(Struct->default_value, compiler.constant_section);
+		}
 	}
 	return Struct;
 }
@@ -9870,6 +9904,7 @@ restart_main:
 	integer_infos[7] = {builtin_s64.Struct, -make_big_int<BigInteger>((u64)0xffffffffffffffff), make_big_int<BigInteger>((u64)0xffffffffffffffff)};
 #endif
 
+	// Int to Int
 	built_in_casts.insert({builtin_u8 .Struct, builtin_s8 .Struct, /*CastKind::u8_s8  , */false});
 	built_in_casts.insert({builtin_u8 .Struct, builtin_s16.Struct, /*CastKind::u8_s16 , */true});
 	built_in_casts.insert({builtin_u8 .Struct, builtin_s32.Struct, /*CastKind::u8_s32 , */true});
@@ -9927,12 +9962,35 @@ restart_main:
 	built_in_casts.insert({builtin_s64.Struct, builtin_u32.Struct, /*CastKind::s64_u32, */false});
 	built_in_casts.insert({builtin_s64.Struct, builtin_u64.Struct, /*CastKind::s64_u64, */false});
 
-	built_in_casts.insert({builtin_f32.Struct, builtin_s32.Struct, false});
-	built_in_casts.insert({builtin_s32.Struct, builtin_f32.Struct, false});
+	// Bool to Int
+	built_in_casts.insert({builtin_bool.Struct, builtin_s8 .Struct, false});
+	built_in_casts.insert({builtin_bool.Struct, builtin_s16.Struct, false});
+	built_in_casts.insert({builtin_bool.Struct, builtin_s32.Struct, false});
+	built_in_casts.insert({builtin_bool.Struct, builtin_s64.Struct, false});
+	built_in_casts.insert({builtin_bool.Struct, builtin_u8 .Struct, false});
+	built_in_casts.insert({builtin_bool.Struct, builtin_u16.Struct, false});
+	built_in_casts.insert({builtin_bool.Struct, builtin_u32.Struct, false});
+	built_in_casts.insert({builtin_bool.Struct, builtin_u64.Struct, false});
 
+	// Int to Bool
+	built_in_casts.insert({builtin_s8 .Struct, builtin_bool.Struct, false});
+	built_in_casts.insert({builtin_s16.Struct, builtin_bool.Struct, false});
+	built_in_casts.insert({builtin_s32.Struct, builtin_bool.Struct, false});
+	built_in_casts.insert({builtin_s64.Struct, builtin_bool.Struct, false});
+	built_in_casts.insert({builtin_u8 .Struct, builtin_bool.Struct, false});
+	built_in_casts.insert({builtin_u16.Struct, builtin_bool.Struct, false});
+	built_in_casts.insert({builtin_u32.Struct, builtin_bool.Struct, false});
+	built_in_casts.insert({builtin_u64.Struct, builtin_bool.Struct, false});
+
+	// Float to Int
+	built_in_casts.insert({builtin_f32.Struct, builtin_s32.Struct, false});
 	built_in_casts.insert({builtin_f64.Struct, builtin_s64.Struct, false});
+
+	// Int to Float
+	built_in_casts.insert({builtin_s32.Struct, builtin_f32.Struct, false});
 	built_in_casts.insert({builtin_s64.Struct, builtin_f64.Struct, false});
 
+	// Float to Float
 	built_in_casts.insert({builtin_f32.Struct, builtin_f64.Struct, true});
 	built_in_casts.insert({builtin_f64.Struct, builtin_f32.Struct, false});
 
@@ -9940,95 +9998,162 @@ restart_main:
 
 	construct(binary_typecheckers);
 
-#define BINOP(op, l, r) \
-	binary_typecheckers.get_or_insert({BinaryOperation::op, builtin_##l.Struct, builtin_##r.Struct}) = [](TypecheckState *state, AstBinaryOperator *bin) -> AstExpression *
+	{
 
-	static auto cmp_f64_unsized_integer = [](TypecheckState *state, AstBinaryOperator *bin) -> AstExpression * {
-		AstExpression **fe;
-		AstExpression **ie;
-		if (types_match(bin->left->type, builtin_unsized_integer)) {
-			ie = &bin->left;
-			fe = &bin->right;
-		} else {
-			ie = &bin->right;
-			fe = &bin->left;
-		}
-		if (auto literal = as<AstLiteral>(*ie)) {
-			assert(literal->literal_kind == LiteralKind::integer);
+#define BINOP(op, l, r) \
+	binary_typecheckers.get_or_insert({BinaryOperation::op, builtin_##l.Struct, builtin_##r.Struct})
+
+		static auto float_and_unsized_integer = [](TypecheckState *state, AstBinaryOperator *bin) -> AstExpression * {
+			auto left_is_unsized_integer = types_match(bin->left->type, builtin_unsized_integer);
+
+			AstExpression *&sized_float     = left_is_unsized_integer ? bin->right : bin->left;
+			AstExpression *&unsized_integer = left_is_unsized_integer ? bin->left  : bin->right;
+
+			AstLiteral *literal = 0;
+
+			if (literal = as<AstLiteral>(unsized_integer)) {
+				assert(literal->literal_kind == LiteralKind::integer);
+			} else {
+				literal = deep_copy(get_literal(unsized_integer));
+			}
+
 			literal->literal_kind = LiteralKind::Float;
 			literal->Float = (f64)literal->integer;
-			literal->type = builtin_f64.ident;
-		} else {
-			not_implemented("FIXME: replace expression with literal");
-			// *ie = make_cast(*ie, builtin_f64.ident);
-		}
-		bin->type = builtin_bool.ident;
-		return bin;
-	};
+			literal->type = sized_float->type;
 
-	BINOP(eq, f64, unsized_integer) { return cmp_f64_unsized_integer(state, bin); };
-	BINOP(ne, f64, unsized_integer) { return cmp_f64_unsized_integer(state, bin); };
-	BINOP(lt, f64, unsized_integer) { return cmp_f64_unsized_integer(state, bin); };
-	BINOP(gt, f64, unsized_integer) { return cmp_f64_unsized_integer(state, bin); };
-	BINOP(le, f64, unsized_integer) { return cmp_f64_unsized_integer(state, bin); };
-	BINOP(ge, f64, unsized_integer) { return cmp_f64_unsized_integer(state, bin); };
+			switch (bin->operation) {
+				using enum BinaryOperation;
 
-	BINOP(eq, unsized_integer, f64) { return cmp_f64_unsized_integer(state, bin); };
-	BINOP(ne, unsized_integer, f64) { return cmp_f64_unsized_integer(state, bin); };
-	BINOP(lt, unsized_integer, f64) { return cmp_f64_unsized_integer(state, bin); };
-	BINOP(gt, unsized_integer, f64) { return cmp_f64_unsized_integer(state, bin); };
-	BINOP(le, unsized_integer, f64) { return cmp_f64_unsized_integer(state, bin); };
-	BINOP(ge, unsized_integer, f64) { return cmp_f64_unsized_integer(state, bin); };
+				case eq:
+				case ne:
+				case lt:
+				case gt:
+				case le:
+				case ge:
+					bin->type = builtin_bool.ident;
+					break;
+				default:
+					bin->type = sized_float->type;
+					break;
+			}
+			return bin;
+		};
 
-	static auto unsized_float = [](TypecheckState *state, AstBinaryOperator *bin) -> AstExpression * {
-		AstExpression *sized;
-		AstExpression *unsized;
-		if (types_match(bin->left->type, builtin_unsized_float)) {
-			unsized = bin->left;
-			sized   = bin->right;
-		} else {
-			unsized = bin->right;
-			sized   = bin->left;
-		}
-		unsized->type = sized->type;
-		switch (bin->operation) {
-			using enum BinaryOperation;
+		static auto float_and_unsized_float = [](TypecheckState *state, AstBinaryOperator *bin) -> AstExpression * {
+			AstExpression *sized;
+			AstExpression *unsized;
+			if (types_match(bin->left->type, builtin_unsized_float)) {
+				unsized = bin->left;
+				sized   = bin->right;
+			} else {
+				unsized = bin->right;
+				sized   = bin->left;
+			}
+			unsized->type = sized->type;
+			switch (bin->operation) {
+				using enum BinaryOperation;
 
-			case eq:
-			case ne:
-			case lt:
-			case gt:
-			case le:
-			case ge:
-				bin->type = builtin_bool.ident;
-				break;
-			default:
-				bin->type = sized->type;
-				break;
-		}
-		return bin;
-	};
+				case eq:
+				case ne:
+				case lt:
+				case gt:
+				case le:
+				case ge:
+					bin->type = builtin_bool.ident;
+					break;
+				default:
+					bin->type = sized->type;
+					break;
+			}
+			return bin;
+		};
 
-#define FLOAT_BINOP_0(add, sized_type) \
-	BINOP(add, sized_type, unsized_float) { return unsized_float(state, bin); };  \
-	BINOP(add, unsized_float, sized_type) { return unsized_float(state, bin); };  \
+#define UNSIZED_FLOAT_BINOP_0(operation, other_type) \
+	BINOP(operation, other_type, unsized_float) = float_and_unsized_float;  \
+	BINOP(operation, unsized_float, other_type) = float_and_unsized_float;  \
+	BINOP(operation, other_type, unsized_integer) = float_and_unsized_integer;  \
+	BINOP(operation, unsized_integer, other_type) = float_and_unsized_integer;  \
 
-#define FLOAT_BINOP(sized_type) \
-	FLOAT_BINOP_0(add, sized_type) \
-	FLOAT_BINOP_0(sub, sized_type) \
-	FLOAT_BINOP_0(mul, sized_type) \
-	FLOAT_BINOP_0(div, sized_type) \
-	FLOAT_BINOP_0(eq, sized_type) \
-	FLOAT_BINOP_0(ne, sized_type) \
-	FLOAT_BINOP_0(lt, sized_type) \
-	FLOAT_BINOP_0(gt, sized_type) \
-	FLOAT_BINOP_0(le, sized_type) \
-	FLOAT_BINOP_0(ge, sized_type) \
+#define UNSIZED_FLOAT_BINOP(other_type) \
+	UNSIZED_FLOAT_BINOP_0(add, other_type) \
+	UNSIZED_FLOAT_BINOP_0(sub, other_type) \
+	UNSIZED_FLOAT_BINOP_0(mul, other_type) \
+	UNSIZED_FLOAT_BINOP_0(div, other_type) \
+	UNSIZED_FLOAT_BINOP_0(eq, other_type) \
+	UNSIZED_FLOAT_BINOP_0(ne, other_type) \
+	UNSIZED_FLOAT_BINOP_0(lt, other_type) \
+	UNSIZED_FLOAT_BINOP_0(gt, other_type) \
+	UNSIZED_FLOAT_BINOP_0(le, other_type) \
+	UNSIZED_FLOAT_BINOP_0(ge, other_type) \
 
-	FLOAT_BINOP(f32)
-	FLOAT_BINOP(f64)
+		UNSIZED_FLOAT_BINOP(f32)
+		UNSIZED_FLOAT_BINOP(f64)
+
+#undef UNSIZED_FLOAT_BINOP
+#undef UNSIZED_FLOAT_BINOP_0
+
+		static auto unsized_float_and_unsized_integer = [](TypecheckState *state, AstBinaryOperator *bin) -> AstExpression * {
+			auto left_is_float = types_match(bin->left->type, builtin_unsized_float);
+
+			auto left_literal  = get_literal(bin->left);
+			auto right_literal = get_literal(bin->right);
+
+			f64 a = left_is_float ? left_literal->Float : (f64)left_literal->integer;
+			f64 b = left_is_float ? (f64)right_literal->integer : right_literal->Float;
+
+			auto result = AstLiteral::create();
+			switch (bin->operation) {
+				using enum BinaryOperation;
+
+				case eq:
+				case ne:
+				case lt:
+				case gt:
+				case le:
+				case ge:
+					result->literal_kind = LiteralKind::boolean;
+					result->type = builtin_bool.ident;
+					switch (bin->operation) {
+						case eq: result->Bool = a == b; break;
+						case ne: result->Bool = a != b; break;
+						case lt: result->Bool = a <  b; break;
+						case gt: result->Bool = a >  b; break;
+						case le: result->Bool = a <= b; break;
+						case ge: result->Bool = a >= b; break;
+					}
+					break;
+				default:
+					result->literal_kind = LiteralKind::Float;
+					result->type = builtin_unsized_float.ident;
+					switch (bin->operation) {
+						case add: result->Float = a + b; break;
+						case sub: result->Float = a - b; break;
+						case mul: result->Float = a * b; break;
+						case div: result->Float = a / b; break;
+						default: return 0;
+					}
+					break;
+			}
+			return result;
+		};
+
+#define UNSIZED_FLOAT_AND_UNSIZED_INT_BINOP(operation) \
+	BINOP(operation, unsized_float, unsized_integer) = unsized_float_and_unsized_integer;  \
+	BINOP(operation, unsized_integer, unsized_float) = unsized_float_and_unsized_integer;  \
+
+		UNSIZED_FLOAT_AND_UNSIZED_INT_BINOP(add)
+		UNSIZED_FLOAT_AND_UNSIZED_INT_BINOP(sub)
+		UNSIZED_FLOAT_AND_UNSIZED_INT_BINOP(mul)
+		UNSIZED_FLOAT_AND_UNSIZED_INT_BINOP(div)
+		UNSIZED_FLOAT_AND_UNSIZED_INT_BINOP(eq)
+		UNSIZED_FLOAT_AND_UNSIZED_INT_BINOP(ne)
+		UNSIZED_FLOAT_AND_UNSIZED_INT_BINOP(lt)
+		UNSIZED_FLOAT_AND_UNSIZED_INT_BINOP(gt)
+		UNSIZED_FLOAT_AND_UNSIZED_INT_BINOP(le)
+		UNSIZED_FLOAT_AND_UNSIZED_INT_BINOP(ge)
 
 #undef BINOP
+	}
 
 	current_printer = standard_output_printer;
 

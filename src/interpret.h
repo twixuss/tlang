@@ -9,10 +9,9 @@
 #include <iostream>
 #include <string>
 
-using enum Register;
-
 inline umm append(StringBuilder &builder, Register r) {
 	switch (r) {
+		using enum Register;
 		case rs: return append(builder, "rs");
 		case rb: return append(builder, "rb");
 		case parameters       : return append(builder, "parameters");
@@ -74,6 +73,8 @@ inline umm append(StringBuilder &builder, Address a) {
 }
 
 inline void run_bytecode(Compiler &compiler, Span<Instruction> _instructions_, AstLambda *main_lambda, ExternLibraries extern_libraries) {
+	using enum Register;
+
 	assert(main_lambda->location_in_bytecode != -1);
 
 	timed_function(compiler.profiler);
@@ -850,38 +851,6 @@ got_breaker_name:;
 					case shl_rr: { REDECLARE_REF(i, i.shl_rr); RS8(i.d) <<= RS8(i.s); break; }
 					case shr_rr: { REDECLARE_REF(i, i.shr_rr); RS8(i.d) >>= RS8(i.s); break; }
 
-					case add_mr: { REDECLARE_REF(i, i.add_mr); *MS8(i.d) += RS8(i.s); break; }
-					case sub_mr: { REDECLARE_REF(i, i.sub_mr); *MS8(i.d) -= RS8(i.s); break; }
-					case mul_mr: { REDECLARE_REF(i, i.mul_mr); *MS8(i.d) *= RS8(i.s); break; }
-					case divs_mr: { REDECLARE_REF(i, i.divs_mr); *MS8(i.d) /= RS8(i.s); break; }
-					case mods_mr: { REDECLARE_REF(i, i.mods_mr); *MS8(i.d) %= RS8(i.s); break; }
-					case divu_mr: { REDECLARE_REF(i, i.divu_mr); *MU8(i.d) /= RU8(i.s); break; }
-					case modu_mr: { REDECLARE_REF(i, i.modu_mr); *MU8(i.d) %= RU8(i.s); break; }
-					case xor1_mr: { REDECLARE_REF(i, i.xor1_mr); *MS1(i.d) ^= RS1(i.s); break; }
-					case xor2_mr: { REDECLARE_REF(i, i.xor2_mr); *MS2(i.d) ^= RS2(i.s); break; }
-					case xor4_mr: { REDECLARE_REF(i, i.xor4_mr); *MS4(i.d) ^= RS4(i.s); break; }
-					case xor8_mr: { REDECLARE_REF(i, i.xor8_mr); *MS8(i.d) ^= RS8(i.s); break; }
-					case and_mr: { REDECLARE_REF(i, i.and_mr); *MS8(i.d) &= RS8(i.s); break; }
-					case  or_mr: { REDECLARE_REF(i, i. or_mr); *MS8(i.d) |= RS8(i.s); break; }
-					case shl_mr: { REDECLARE_REF(i, i.shl_mr); *MS8(i.d) <<= RS8(i.s); break; }
-					case shr_mr: { REDECLARE_REF(i, i.shr_mr); *MS8(i.d) >>= RS8(i.s); break; }
-
-					case add_mc: { REDECLARE_REF(i, i.add_mc); *MS8(i.d) += (s64)i.s; break; }
-					case sub_mc: { REDECLARE_REF(i, i.sub_mc); *MS8(i.d) -= (s64)i.s; break; }
-					case mul_mc: { REDECLARE_REF(i, i.mul_mc); *MS8(i.d) *= (s64)i.s; break; }
-					case divs_mc: { REDECLARE_REF(i, i.divs_mc); *MS8(i.d) /= (s64)i.s; break; }
-					case mods_mc: { REDECLARE_REF(i, i.mods_mc); *MS8(i.d) %= (s64)i.s; break; }
-					case divu_mc: { REDECLARE_REF(i, i.divu_mc); *MU8(i.d) /= (u64)i.s; break; }
-					case modu_mc: { REDECLARE_REF(i, i.modu_mc); *MU8(i.d) %= (u64)i.s; break; }
-					case xor1_mc: { REDECLARE_REF(i, i.xor1_mc); *MS1(i.d) ^= (s8 )i.s; break; }
-					case xor2_mc: { REDECLARE_REF(i, i.xor2_mc); *MS2(i.d) ^= (s16)i.s; break; }
-					case xor4_mc: { REDECLARE_REF(i, i.xor4_mc); *MS4(i.d) ^= (s32)i.s; break; }
-					case xor8_mc: { REDECLARE_REF(i, i.xor8_mc); *MS8(i.d) ^= (s64)i.s; break; }
-					case and_mc: { REDECLARE_REF(i, i.and_mc); *MS8(i.d) &= (s64)i.s; break; }
-					case  or_mc: { REDECLARE_REF(i, i. or_mc); *MS8(i.d) |= (s64)i.s; break; }
-					case shl_mc: { REDECLARE_REF(i, i.shl_mc); *MS8(i.d) <<= (s64)i.s; break; }
-					case shr_mc: { REDECLARE_REF(i, i.shr_mc); *MS8(i.d) >>= (s64)i.s; break; }
-
 					case movzx21_rr: { REDECLARE_REF(i, i.movzx21_rr); RU2(i.d) = RU1(i.s); break; }
 					case movzx41_rr: { REDECLARE_REF(i, i.movzx41_rr); RU4(i.d) = RU1(i.s); break; }
 					case movzx81_rr: { REDECLARE_REF(i, i.movzx81_rr); RU8(i.d) = RU1(i.s); break; }
@@ -913,11 +882,6 @@ got_breaker_name:;
 					case cvt_s64_f64: { REDECLARE_REF(i, i.cvt_s64_f64); RF8(i.d) = RS8(i.d); break; }
 					case cvt_f32_f64: { REDECLARE_REF(i, i.cvt_f32_f64); RF8(i.d) = RF4(i.d); break; }
 					case cvt_f64_f32: { REDECLARE_REF(i, i.cvt_f64_f32); RF4(i.d) = RF8(i.d); break; }
-
-					case negi8_m : { REDECLARE_REF(i, i.negi8_m ); *MS1(i.d) = -*MS1(i.d); break; }
-					case negi16_m: { REDECLARE_REF(i, i.negi16_m); *MS2(i.d) = -*MS2(i.d); break; }
-					case negi32_m: { REDECLARE_REF(i, i.negi32_m); *MS4(i.d) = -*MS4(i.d); break; }
-					case negi64_m: { REDECLARE_REF(i, i.negi64_m); *MS8(i.d) = -*MS8(i.d); break; }
 
 					case debug_print_int: with(ConsoleColor::cyan, print("{}\n", RS8(i.debug_print_int.r))); break;
 

@@ -622,6 +622,8 @@ struct AstStruct : AstExpression, ExpressionPool<AstStruct> {
 
 	Expression<AstStruct> instantiated_from = {};
 
+	Expression<AstLiteral> default_value = {};
+
 	s64 size = -1;
 	s64 alignment = -1;
 

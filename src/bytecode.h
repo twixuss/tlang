@@ -1,4 +1,3 @@
-// FIXME: some instructions that use memory don't specify the size of the operand, it is assumed to be 64 bit always
 #pragma once
 #include "ast.h"
 
@@ -178,82 +177,34 @@ e(pop, m              , m(Address, d)) \
 w(ret                 , ) \
 e(shr, rc             , m(Register, d) m(s64, s)) \
 e(shr, rr             , m(Register, d) m(Register, s)) \
-e(shr, rm             , m(Register, d) m(Address, s)) \
-e(shr, mc             , m(Address, d) m(s64, s)) \
-e(shr, mr             , m(Address, d) m(Register, s)) \
 e(shl, rc             , m(Register, d) m(s64, s)) \
 e(shl, rr             , m(Register, d) m(Register, s)) \
-e(shl, rm             , m(Register, d) m(Address, s)) \
-e(shl, mc             , m(Address, d) m(s64, s)) \
-e(shl, mr             , m(Address, d) m(Register, s)) \
 e(add, rc             , m(Register, d) m(s64, s)) \
 e(add, rr             , m(Register, d) m(Register, s)) \
-e(add, rm             , m(Register, d) m(Address, s)) \
-e(add, mc             , m(Address, d) m(s64, s)) \
-e(add, mr             , m(Address, d) m(Register, s)) \
 e(sub, rc             , m(Register, d) m(s64, s)) \
 e(sub, rr             , m(Register, d) m(Register, s)) \
-e(sub, rm             , m(Register, d) m(Address, s)) \
-e(sub, mc             , m(Address, d) m(s64, s)) \
-e(sub, mr             , m(Address, d) m(Register, s)) \
 e(mul, rc             , m(Register, d) m(s64, s)) \
 e(mul, rr             , m(Register, d) m(Register, s)) \
-e(mul, rm             , m(Register, d) m(Address, s)) \
-e(mul, mc             , m(Address, d) m(s64, s)) \
-e(mul, mr             , m(Address, d) m(Register, s)) \
 e(divs, rc             , m(Register, d) m(s64, s)) \
 e(divs, rr             , m(Register, d) m(Register, s)) \
-e(divs, rm             , m(Register, d) m(Address, s)) \
-e(divs, mc             , m(Address, d) m(s64, s)) \
-e(divs, mr             , m(Address, d) m(Register, s)) \
 e(mods, rc             , m(Register, d) m(s64, s)) \
 e(mods, rr             , m(Register, d) m(Register, s)) \
-e(mods, rm             , m(Register, d) m(Address, s)) \
-e(mods, mc             , m(Address, d) m(s64, s)) \
-e(mods, mr             , m(Address, d) m(Register, s)) \
 e(divu, rc             , m(Register, d) m(s64, s)) \
 e(divu, rr             , m(Register, d) m(Register, s)) \
-e(divu, rm             , m(Register, d) m(Address, s)) \
-e(divu, mc             , m(Address, d) m(s64, s)) \
-e(divu, mr             , m(Address, d) m(Register, s)) \
 e(modu, rc             , m(Register, d) m(s64, s)) \
 e(modu, rr             , m(Register, d) m(Register, s)) \
-e(modu, rm             , m(Register, d) m(Address, s)) \
-e(modu, mc             , m(Address, d) m(s64, s)) \
-e(modu, mr             , m(Address, d) m(Register, s)) \
 e(rotl, rc            , m(Register, d) m(s64, s)) \
 e(rotr, rc            , m(Register, d) m(s64, s)) \
 e(not, r              , m(Register, d)) \
-e(not, m              , m(Address, d)) \
 e(or, rc              , m(Register, d) m(s64, s)) \
 e(or, rr              , m(Register, d) m(Register, s)) \
-e(or1, rm             , m(Register, d) m(Address, s)) \
-e(or2, rm             , m(Register, d) m(Address, s)) \
-e(or4, rm             , m(Register, d) m(Address, s)) \
-e(or8, rm             , m(Register, d) m(Address, s)) \
-e(or, mc              , m(Address, d) m(s64, s)) \
-e(or, mr              , m(Address, d) m(Register, s)) \
 e(and, rc             , m(Register, d) m(s64, s)) \
 e(and, rr             , m(Register, d) m(Register, s)) \
-e(and, rm             , m(Register, d) m(Address, s)) \
-e(and, mc             , m(Address, d) m(s64, s)) \
-e(and, mr             , m(Address, d) m(Register, s)) \
 e(xor, rc             , m(Register, d) m(s64, s)) \
 e(xor, rr             , m(Register, d) m(Register, s)) \
-e(xor, rm             , m(Register, d) m(Address, s)) \
-e(xor1, mr            , m(Address, d) m(Register, s)) \
-e(xor2, mr            , m(Address, d) m(Register, s)) \
-e(xor4, mr            , m(Address, d) m(Register, s)) \
-e(xor8, mr            , m(Address, d) m(Register, s)) \
-e(xor1, mc            , m(Address, d) m(s64, s)) \
-e(xor2, mc            , m(Address, d) m(s64, s)) \
-e(xor4, mc            , m(Address, d) m(s64, s)) \
-e(xor8, mc            , m(Address, d) m(s64, s)) \
+e(sbxor, rc           , m(Register, d) m(s64, s)) \
+e(sbxor, rr           , m(Register, d) m(Register, s)) \
 e(negi, r             , m(Register, d)) \
-e(negi8, m            , m(Address, d)) \
-e(negi16, m           , m(Address, d)) \
-e(negi32, m           , m(Address, d)) \
-e(negi64, m           , m(Address, d)) \
 /* Comparison with destination */ \
 /* Unsigned integers */ \
 w(cmpu1              , m(Register, d) m(Register, a) m(Register, b) m(Comparison, c)) \

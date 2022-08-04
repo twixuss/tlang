@@ -7,9 +7,6 @@
 // TODO: Figure this out.
 #define OPTIMIZE_BYTECODE 0
 
-using enum Register;
-using enum XRegister;
-
 struct Relocation {
 	umm instruction_index;
 	AstLambda *lambda;
@@ -62,12 +59,24 @@ struct DefinitionAddress {
 	};
 };
 
+#if BYTECODE_DEBUG
+#define MI(_kind, ...) (Instruction{._kind={__VA_ARGS__}, .kind = InstructionKind::_kind, .line=(u64)__LINE__,})
+#else
+#define MI(_kind, ...) {._kind={__VA_ARGS__}, .kind = InstructionKind::_kind}
+#endif
+
+#define II(kind, ...) add_instruction(MI(kind, __VA_ARGS__))
+#define I(kind, ...) (&add_instruction(MI(kind, __VA_ARGS__))->kind)
+
+constexpr umm temporary_register_count = 3;
+
 struct FrameBuilder {
 	InstructionList instructions;
 
 	RegisterSet available_registers;
 	RegisterSet initial_available_registers;
 	RegisterSet used_registers;
+	BitSet<temporary_register_count> temporary_register_set;
 
 	s64 temporary_cursor = 0;
 	s64 temporary_size = 0;
@@ -94,6 +103,10 @@ struct FrameBuilder {
 			available_registers.set(i);
 		}
 		initial_available_registers = available_registers;
+
+		temporary_register_set.set(0);
+		temporary_register_set.set(1);
+		temporary_register_set.set(2);
 	}
 	void free() {}
 
@@ -108,11 +121,28 @@ struct FrameBuilder {
 		available_registers.set((umm)reg);
 	}
 
+	Register allocate_temporary_register() {
+		auto result = temporary_register_set.pop().value_or([] {
+			compiler.immediate_error("INTERNAL ERROR: attempt to use too many temporary registers.");
+			exit(1);
+			return 0;
+		});
+		assert(result < temporary_register_count);
+		return (Register)result;
+	}
+	void free_temporary_register(Register reg) {
+		assert((umm)reg < temporary_register_count);
+		assert(!temporary_register_set.get((umm)reg));
+		temporary_register_set.set((umm)reg);
+	}
+
 	Address allocate_temporary_space(s64 size) {
 		size = ceil(size, 16ll);
 		defer { temporary_cursor += size; };
-		return temporary + temporary_cursor;
+		return Register::temporary + temporary_cursor;
 	}
+
+#define tmpreg(t) auto t = allocate_temporary_register(); defer { free_temporary_register(t); }
 
 	RegisterOrAddress allocate_register_or_temporary(u64 size) {
 		if (size <= compiler.stack_word_size) {
@@ -168,13 +198,170 @@ struct FrameBuilder {
 	void append_memory_set(Address d, s64 s, s64 size);
 	void append_struct_initializer(AstStruct *Struct, SmallList<AstExpression *> values, RegisterOrAddress destination);
 
-	void mov_mc(s64 size, Address dst, s64 src);
-	void mov_mr(s64 size, Address dst, Register src);
-	void mov_rm(s64 size, Register dst, Address src);
+	inline void mov_mr(s64 size, Address dst, Register src) {
+		assert(size <= 8);
+		switch (size) {
+			case 1: I(mov1_mr, dst, src); break;
+			case 2: I(mov2_mr, dst, src); break;
+			case 4: I(mov4_mr, dst, src); break;
+			case 8: I(mov8_mr, dst, src); break;
+			case 3:
+				I(mov2_mr, dst, src);
+				I(rotr_rc, src, 2*8);
+				I(mov1_mr, dst + 2, src);
+				I(rotl_rc, src, 2*8);
+				break;
+			case 5:
+				I(mov4_mr, dst, src);
+				I(rotr_rc, src, 4*8);
+				I(mov1_mr, dst + 4, src);
+				I(rotl_rc, src, 4*8);
+				break;
+			case 6:
+				I(mov4_mr, dst, src);
+				I(rotr_rc, src, 4*8);
+				I(mov2_mr, dst + 4, src);
+				I(rotl_rc, src, 4*8);
+				break;
+			case 7:
+				I(mov4_mr, dst, src);
+				I(rotr_rc, src, 4*8);
+				I(mov2_mr, dst + 4, src);
+				I(rotr_rc, src, 2*8);
+				I(mov1_mr, dst + 6, src);
+				I(rotl_rc, src, 6*8);
+				break;
+		}
+	}
+	inline void mov_mc(s64 size, Address dst, s64 src) {
+		assert(size <= 8);
+		switch (size) {
+			case 1: I(mov1_mc, dst, src); break;
+			case 2: I(mov2_mc, dst, src); break;
+			case 4: I(mov4_mc, dst, src); break;
+			case 8: I(mov8_mc, dst, src); break;
+			case 3:
+				I(mov2_mc, dst, src);
+				I(mov1_mc, dst + 2, src >> (2*8));
+				break;
+			case 5:
+				I(mov4_mc, dst, src);
+				I(mov1_mc, dst + 4, src >> (4*8));
+				break;
+			case 6:
+				I(mov4_mc, dst, src);
+				I(mov2_mc, dst + 4, src >> (4*8));
+				break;
+			case 7:
+				I(mov4_mc, dst, src);
+				I(mov2_mc, dst + 4, src >> (4*8));
+				I(mov1_mc, dst + 6, src >> (6*8));
+				break;
+		}
+	}
+	inline void mov_rm(s64 size, Register dst, Address src) {
+		assert(size <= 8);
+		switch (size) {
+			case 1: I(mov1_rm, dst, src); break;
+			case 2: I(mov2_rm, dst, src); break;
+			case 4: I(mov4_rm, dst, src); break;
+			case 8: I(mov8_rm, dst, src); break;
+	#if 1
+			default: not_implemented();
+	#else
+			case 3:
+				I(xor_rr, dst, dst);
+				I(mov1_rm, dst, src + 2);
+				I(shl_rc, dst, 2);
+				I(or2_rm, dst, src);
+				break;
+			case 5:
+				I(xor_rr, dst, dst);
+				I(mov1_rm, dst, src + 4);
+				I(shl_rc, dst, 4);
+				I(or4_rm, dst, src);
+				break;
+			case 6:
+				I(xor_rr, dst, dst);
+				I(mov2_rm, dst, src + 4);
+				I(shl_rc, dst, 4);
+				I(or4_rm, dst, src);
+				break;
+			case 7:
+				I(xor_rr, dst, dst);
+				I(mov1_rm, dst, src + 6);
+				I(shl_rc, dst, 2);
+				I(or2_rm, dst, src + 4);
+				I(shl_rc, dst, 4);
+				I(or4_rm, dst, src);
+				break;
+	#endif
+
+		}
+	}
 
 	inline void mov_mc(Address dst, s64 src) { return mov_mc(compiler.stack_word_size, dst, src); }
 	inline void mov_mr(Address dst, Register src) { return mov_mr(compiler.stack_word_size, dst, src); }
 	inline void mov_rm(Register dst, Address src) { return mov_rm(compiler.stack_word_size, dst, src); }
+
+	inline void add_mc  (s64 size, Address d, s64 s) { tmpreg(t); mov_rm(size, t, d); I(add_rc,   t, s); mov_mr(size, d, t); }
+	inline void sub_mc  (s64 size, Address d, s64 s) { tmpreg(t); mov_rm(size, t, d); I(sub_rc,   t, s); mov_mr(size, d, t); }
+	inline void mul_mc  (s64 size, Address d, s64 s) { tmpreg(t); mov_rm(size, t, d); I(mul_rc,   t, s); mov_mr(size, d, t); }
+	inline void divs_mc (s64 size, Address d, s64 s) { tmpreg(t); mov_rm(size, t, d); I(divs_rc,  t, s); mov_mr(size, d, t); }
+	inline void divu_mc (s64 size, Address d, s64 s) { tmpreg(t); mov_rm(size, t, d); I(divu_rc,  t, s); mov_mr(size, d, t); }
+	inline void mods_mc (s64 size, Address d, s64 s) { tmpreg(t); mov_rm(size, t, d); I(mods_rc,  t, s); mov_mr(size, d, t); }
+	inline void modu_mc (s64 size, Address d, s64 s) { tmpreg(t); mov_rm(size, t, d); I(modu_rc,  t, s); mov_mr(size, d, t); }
+	inline void xor_mc  (s64 size, Address d, s64 s) { tmpreg(t); mov_rm(size, t, d); I(xor_rc,   t, s); mov_mr(size, d, t); }
+	inline void and_mc  (s64 size, Address d, s64 s) { tmpreg(t); mov_rm(size, t, d); I(and_rc,   t, s); mov_mr(size, d, t); }
+	inline void  or_mc  (s64 size, Address d, s64 s) { tmpreg(t); mov_rm(size, t, d); I( or_rc,   t, s); mov_mr(size, d, t); }
+	inline void shl_mc  (s64 size, Address d, s64 s) { tmpreg(t); mov_rm(size, t, d); I(shl_rc,   t, s); mov_mr(size, d, t); }
+	inline void shr_mc  (s64 size, Address d, s64 s) { tmpreg(t); mov_rm(size, t, d); I(shr_rc,   t, s); mov_mr(size, d, t); }
+	inline void sbxor_mc(s64 size, Address d, s64 s) { tmpreg(t); mov_rm(size, t, d); I(sbxor_rc, t, s); mov_mr(size, d, t); }
+
+	inline void add_mr  (s64 size, Address d, Register s) { tmpreg(t); mov_rm(size, t, d); I(add_rr,   t, s); mov_mr(size, d, t); }
+	inline void sub_mr  (s64 size, Address d, Register s) { tmpreg(t); mov_rm(size, t, d); I(sub_rr,   t, s); mov_mr(size, d, t); }
+	inline void mul_mr  (s64 size, Address d, Register s) { tmpreg(t); mov_rm(size, t, d); I(mul_rr,   t, s); mov_mr(size, d, t); }
+	inline void divs_mr (s64 size, Address d, Register s) { tmpreg(t); mov_rm(size, t, d); I(divs_rr,  t, s); mov_mr(size, d, t); }
+	inline void divu_mr (s64 size, Address d, Register s) { tmpreg(t); mov_rm(size, t, d); I(divu_rr,  t, s); mov_mr(size, d, t); }
+	inline void mods_mr (s64 size, Address d, Register s) { tmpreg(t); mov_rm(size, t, d); I(mods_rr,  t, s); mov_mr(size, d, t); }
+	inline void modu_mr (s64 size, Address d, Register s) { tmpreg(t); mov_rm(size, t, d); I(modu_rr,  t, s); mov_mr(size, d, t); }
+	inline void xor_mr  (s64 size, Address d, Register s) { tmpreg(t); mov_rm(size, t, d); I(xor_rr,   t, s); mov_mr(size, d, t); }
+	inline void and_mr  (s64 size, Address d, Register s) { tmpreg(t); mov_rm(size, t, d); I(and_rr,   t, s); mov_mr(size, d, t); }
+	inline void  or_mr  (s64 size, Address d, Register s) { tmpreg(t); mov_rm(size, t, d); I( or_rr,   t, s); mov_mr(size, d, t); }
+	inline void shl_mr  (s64 size, Address d, Register s) { tmpreg(t); mov_rm(size, t, d); I(shl_rr,   t, s); mov_mr(size, d, t); }
+	inline void shr_mr  (s64 size, Address d, Register s) { tmpreg(t); mov_rm(size, t, d); I(shr_rr,   t, s); mov_mr(size, d, t); }
+	inline void sbxor_mr(s64 size, Address d, Register s) { tmpreg(t); mov_rm(size, t, d); I(sbxor_rr, t, s); mov_mr(size, d, t); }
+
+	inline void add_mc  (Address d, s64 s) { add_mc  (compiler.stack_word_size, d, s); }
+	inline void sub_mc  (Address d, s64 s) { sub_mc  (compiler.stack_word_size, d, s); }
+	inline void mul_mc  (Address d, s64 s) { mul_mc  (compiler.stack_word_size, d, s); }
+	inline void divs_mc (Address d, s64 s) { divs_mc (compiler.stack_word_size, d, s); }
+	inline void divu_mc (Address d, s64 s) { divu_mc (compiler.stack_word_size, d, s); }
+	inline void mods_mc (Address d, s64 s) { mods_mc (compiler.stack_word_size, d, s); }
+	inline void modu_mc (Address d, s64 s) { modu_mc (compiler.stack_word_size, d, s); }
+	inline void xor_mc  (Address d, s64 s) { xor_mc  (compiler.stack_word_size, d, s); }
+	inline void and_mc  (Address d, s64 s) { and_mc  (compiler.stack_word_size, d, s); }
+	inline void  or_mc  (Address d, s64 s) {  or_mc  (compiler.stack_word_size, d, s); }
+	inline void shl_mc  (Address d, s64 s) { shl_mc  (compiler.stack_word_size, d, s); }
+	inline void shr_mc  (Address d, s64 s) { shr_mc  (compiler.stack_word_size, d, s); }
+	inline void sbxor_mc(Address d, s64 s) { sbxor_mc(compiler.stack_word_size, d, s); }
+
+	inline void add_mr  (Address d, Register s) { add_mr  (compiler.stack_word_size, d, s); }
+	inline void sub_mr  (Address d, Register s) { sub_mr  (compiler.stack_word_size, d, s); }
+	inline void mul_mr  (Address d, Register s) { mul_mr  (compiler.stack_word_size, d, s); }
+	inline void divs_mr (Address d, Register s) { divs_mr (compiler.stack_word_size, d, s); }
+	inline void divu_mr (Address d, Register s) { divu_mr (compiler.stack_word_size, d, s); }
+	inline void mods_mr (Address d, Register s) { mods_mr (compiler.stack_word_size, d, s); }
+	inline void modu_mr (Address d, Register s) { modu_mr (compiler.stack_word_size, d, s); }
+	inline void xor_mc  (Address d, Register s) { xor_mr  (compiler.stack_word_size, d, s); }
+	inline void and_mc  (Address d, Register s) { and_mr  (compiler.stack_word_size, d, s); }
+	inline void  or_mc  (Address d, Register s) {  or_mr  (compiler.stack_word_size, d, s); }
+	inline void shl_mc  (Address d, Register s) { shl_mr  (compiler.stack_word_size, d, s); }
+	inline void shr_mc  (Address d, Register s) { shr_mr  (compiler.stack_word_size, d, s); }
+	inline void sbxor_mr(Address d, Register s) { sbxor_mr(compiler.stack_word_size, d, s); }
+
+	inline void not_m(s64 size, Address d) { tmpreg(t); mov_rm(size, t, d); I(not_r, t); mov_mr(size, d, t); }
+	inline void negi_m(s64 size, Address d) { tmpreg(t); mov_rm(size, t, d); I(negi_r, t); mov_mr(size, d, t); }
 
 	void copy(RegisterOrAddress dst, RegisterOrAddress src, s64 size, bool reverse);
 
@@ -195,14 +382,10 @@ struct FrameBuilder {
 		}
 	}
 
-#define MI(_kind, ...) (Instruction{._kind={__VA_ARGS__}, .kind = InstructionKind::_kind, .line=(u64)__LINE__,})
-
 #else
 
 #define set_comment(...)
 #define push_comment(...)
-
-#define MI(_kind, ...) {._kind={__VA_ARGS__}, .kind = InstructionKind::_kind}
 
 #endif
 };
@@ -236,9 +419,6 @@ struct BytecodeBuilder {
 };
 
 
-#define II(kind, ...) add_instruction(MI(kind, __VA_ARGS__))
-#define I(kind, ...) (&add_instruction(MI(kind, __VA_ARGS__))->kind)
-
 #if 0
 #if BYTECODE_DEBUG
 void remove_last_instruction(BytecodeBuilder &builder) {
@@ -259,133 +439,62 @@ void remove_last_instruction(BytecodeBuilder &builder) {
 #endif
 #endif
 
-#define LOAD_ADDRESS_INTO_REGISTER(name, source, fallback) \
+#define LOAD_ADDRESS_INTO_REGISTER(name, source) \
 	auto _reg_or_addr = load_address_of(source); \
 	defer { \
 		if (_reg_or_addr.is_in_register) { \
 			free_register(_reg_or_addr.reg); \
 		} \
 	}; \
-	Register name = fallback; \
+	Register name; \
+	defer { if ((umm)name < temporary_register_count) free_temporary_register(name); }; \
 	if (_reg_or_addr.is_in_register) { \
 		name = _reg_or_addr.reg; \
 	} else { \
+		name = allocate_temporary_register(); \
 		mov_rm(name, _reg_or_addr.address); \
 	}
 
-#define APPEND_INTO_REGISTER(name, source, fallback) \
+#define APPEND_INTO_REGISTER(name, source) \
 	assert(get_size(source->type) <= compiler.stack_word_size); \
 	auto CONCAT(_, __LINE__) = append(source); \
 	defer { \
-		if (CONCAT(_, __LINE__).is_in_register) { \
-			free_register(CONCAT(_, __LINE__).reg); \
-		} \
+		if (CONCAT(_, __LINE__).is_in_register) { free_register(CONCAT(_, __LINE__).reg); } \
 	}; \
-	Register name = fallback; \
+	Register name; \
+	defer { if ((umm)name < temporary_register_count) free_temporary_register(name); }; \
 	if (CONCAT(_, __LINE__).is_in_register) { \
 		name = CONCAT(_, __LINE__).reg; \
 	} else { \
+		name = allocate_temporary_register(); \
 		mov_rm(get_size(source->type), name, CONCAT(_, __LINE__).address); \
 	}
 
-void FrameBuilder::mov_mr(s64 size, Address dst, Register src) {
-	assert(size <= 8);
-	switch (size) {
-		case 1: I(mov1_mr, dst, src); break;
-		case 2: I(mov2_mr, dst, src); break;
-		case 4: I(mov4_mr, dst, src); break;
-		case 8: I(mov8_mr, dst, src); break;
-		case 3:
-			I(mov2_mr, dst, src);
-			I(rotr_rc, src, 2*8);
-			I(mov1_mr, dst + 2, src);
-			I(rotl_rc, src, 2*8);
-			break;
-		case 5:
-			I(mov4_mr, dst, src);
-			I(rotr_rc, src, 4*8);
-			I(mov1_mr, dst + 4, src);
-			I(rotl_rc, src, 4*8);
-			break;
-		case 6:
-			I(mov4_mr, dst, src);
-			I(rotr_rc, src, 4*8);
-			I(mov2_mr, dst + 4, src);
-			I(rotl_rc, src, 4*8);
-			break;
-		case 7:
-			I(mov4_mr, dst, src);
-			I(rotr_rc, src, 4*8);
-			I(mov2_mr, dst + 4, src);
-			I(rotr_rc, src, 2*8);
-			I(mov1_mr, dst + 6, src);
-			I(rotl_rc, src, 6*8);
-			break;
+#define APPEND2(name1, append1, source1, name2, append2, source2) \
+	if constexpr (#append1##s == "append"s) assert(get_size(source1->type) <= compiler.stack_word_size); \
+	if constexpr (#append2##s == "append"s) assert(get_size(source2->type) <= compiler.stack_word_size); \
+	auto CONCAT(_1, __LINE__) = append1(source1); \
+	auto CONCAT(_2, __LINE__) = append2(source2); \
+	defer { \
+		if (CONCAT(_1, __LINE__).is_in_register) { free_register(CONCAT(_1, __LINE__).reg); } \
+		if (CONCAT(_2, __LINE__).is_in_register) { free_register(CONCAT(_2, __LINE__).reg); } \
+	}; \
+	Register name1; \
+	Register name2; \
+	defer { if ((umm)name1 < temporary_register_count) free_temporary_register(name1); }; \
+	defer { if ((umm)name2 < temporary_register_count) free_temporary_register(name2); }; \
+	if (CONCAT(_1, __LINE__).is_in_register) { \
+		name1 = CONCAT(_1, __LINE__).reg; \
+	} else { \
+		name1 = allocate_temporary_register(); \
+		mov_rm(get_size(source1->type), name1, CONCAT(_1, __LINE__).address); \
+	} \
+	if (CONCAT(_2, __LINE__).is_in_register) { \
+		name2 = CONCAT(_2, __LINE__).reg; \
+	} else { \
+		name2 = allocate_temporary_register(); \
+		mov_rm(get_size(source2->type), name2, CONCAT(_2, __LINE__).address); \
 	}
-}
-void FrameBuilder::mov_mc(s64 size, Address dst, s64 src) {
-	assert(size <= 8);
-	switch (size) {
-		case 1: I(mov1_mc, dst, src); break;
-		case 2: I(mov2_mc, dst, src); break;
-		case 4: I(mov4_mc, dst, src); break;
-		case 8: I(mov8_mc, dst, src); break;
-		case 3:
-			I(mov2_mc, dst, src);
-			I(mov1_mc, dst + 2, src >> (2*8));
-			break;
-		case 5:
-			I(mov4_mc, dst, src);
-			I(mov1_mc, dst + 4, src >> (4*8));
-			break;
-		case 6:
-			I(mov4_mc, dst, src);
-			I(mov2_mc, dst + 4, src >> (4*8));
-			break;
-		case 7:
-			I(mov4_mc, dst, src);
-			I(mov2_mc, dst + 4, src >> (4*8));
-			I(mov1_mc, dst + 6, src >> (6*8));
-			break;
-	}
-}
-void FrameBuilder::mov_rm(s64 size, Register dst, Address src) {
-	assert(size <= 8);
-	switch (size) {
-		case 1: I(mov1_rm, dst, src); break;
-		case 2: I(mov2_rm, dst, src); break;
-		case 4: I(mov4_rm, dst, src); break;
-		case 8: I(mov8_rm, dst, src); break;
-
-		case 3:
-			I(xor_rr, dst, dst);
-			I(mov1_rm, dst, src + 2);
-			I(shl_rc, dst, 2);
-			I(or2_rm, dst, src);
-			break;
-		case 5:
-			I(xor_rr, dst, dst);
-			I(mov1_rm, dst, src + 4);
-			I(shl_rc, dst, 4);
-			I(or4_rm, dst, src);
-			break;
-		case 6:
-			I(xor_rr, dst, dst);
-			I(mov2_rm, dst, src + 4);
-			I(shl_rc, dst, 4);
-			I(or4_rm, dst, src);
-			break;
-		case 7:
-			I(xor_rr, dst, dst);
-			I(mov1_rm, dst, src + 6);
-			I(shl_rc, dst, 2);
-			I(or2_rm, dst, src + 4);
-			I(shl_rc, dst, 4);
-			I(or4_rm, dst, src);
-			break;
-
-	}
-}
 
 void FrameBuilder::copy(RegisterOrAddress dst, RegisterOrAddress src, s64 size, bool reverse) {
 	if (size == 0)
@@ -404,21 +513,7 @@ void FrameBuilder::copy(RegisterOrAddress dst, RegisterOrAddress src, s64 size, 
 			REDECLARE_VAL(src, src.address);
 			REDECLARE_VAL(dst, dst.address);
 
-			StaticSet<Register, 3> set;
-			set.get_or_insert(r0);
-			set.get_or_insert(r1);
-			set.get_or_insert(r2);
-
-			auto remove_from_set = [&](Address address) {
-				set.remove(address.base);
-				if (address.r1_scale_index) set.remove(address.r1);
-				if (address.r2_scale)       set.remove(address.r2);
-			};
-
-			remove_from_set(dst);
-			remove_from_set(src);
-
-			auto intermediary = set.pop().value();
+			tmpreg(intermediary);
 
 			if (size <= 16) {
 				s64 copied = 0;
@@ -1050,11 +1145,11 @@ inline umm append(StringBuilder &b, LambdaDefinitionLocation d) {
 
 void check_destination(RegisterOrAddress destination) {
 	if (destination.is_in_register) {
-		assert(destination.reg != r0);
-		assert(destination.reg != r1);
-		assert(destination.reg != r2);
+		assert(destination.reg != Register::r0);
+		assert(destination.reg != Register::r1);
+		assert(destination.reg != Register::r2);
 	} else {
-		assert(destination.address.base != r0);
+		assert(destination.address.base != Register::r0);
 		assert(destination.address.r1_scale_index == 0);
 		assert(destination.address.r2_scale == 0);
 	}
@@ -1124,13 +1219,13 @@ Address get_known_address_of(AstDefinition *definition) {
 
 				switch (definition->definition_location) {
 					case LambdaDefinitionLocation::return_parameter:
-						return Address(return_parameters);
+						return Address(Register::return_parameters);
 
 					case LambdaDefinitionLocation::parameter:
-						return parameters + definition->offset;
+						return Register::parameters + definition->offset;
 
 					case LambdaDefinitionLocation::body: {
-						return locals + definition->offset;
+						return Register::locals + definition->offset;
 					}
 					default: invalid_code_path();
 				}
@@ -1146,12 +1241,12 @@ Address get_known_address_of(AstDefinition *definition) {
 			return Register::instructions + offset;
 
 		if (definition->is_constant)
-			return constants + offset;
+			return Register::constants + offset;
 
 		if (definition->expression) {
-			return rwdata + offset;
+			return Register::rwdata + offset;
 		} else {
-			return zeros + offset;
+			return Register::zeros + offset;
 		}
 	}
 }
@@ -1170,8 +1265,9 @@ void FrameBuilder::load_address_of(AstDefinition *definition, RegisterOrAddress 
 						if (destination.is_in_register) {
 							I(lea, destination.reg, addr);
 						} else {
-							I(lea, r0, addr);
-							mov_mr(destination.address, r0);
+							tmpreg(tmp);
+							I(lea, tmp, addr);
+							mov_mr(destination.address, tmp);
 						}
 						break;
 					}
@@ -1182,16 +1278,18 @@ void FrameBuilder::load_address_of(AstDefinition *definition, RegisterOrAddress 
 							if (destination.is_in_register) {
 								I(lea, destination.reg, addr);
 							} else {
-								I(lea, r0, addr);
-								mov_mr(destination.address, r0);
+								tmpreg(tmp);
+								I(lea, tmp, addr);
+								mov_mr(destination.address, tmp);
 							}
 						} else {
 							if (destination.is_in_register) {
 								I(lea, destination.reg, addr);
 								I(mov8_rm, destination.reg, Address(destination.reg));
 							} else {
-								I(mov8_rm, r0, addr);
-								mov_mr(destination.address, r0);
+								tmpreg(tmp);
+								I(mov8_rm, tmp, addr);
+								mov_mr(destination.address, tmp);
 							}
 						}
 						break;
@@ -1207,8 +1305,9 @@ void FrameBuilder::load_address_of(AstDefinition *definition, RegisterOrAddress 
 		if (destination.is_in_register) {
 			I(lea, destination.reg, addr);
 		} else {
-			I(lea, r0, addr);
-			mov_mr(destination.address, r0);
+			tmpreg(tmp);
+			I(lea, tmp, addr);
+			mov_mr(destination.address, tmp);
 		}
 	}
 }
@@ -1228,8 +1327,13 @@ void FrameBuilder::load_address_of(AstExpression *expression, RegisterOrAddress 
 
 			if (lambda->has_body) {
 				Instruction *instr = 0;
-				if (destination.is_in_register) { instr = II(lea, destination.reg, Address(Register::instructions)); }
-				else                            { instr = II(lea, r0, Address(Register::instructions)); mov_mr(destination.address, r0); }
+				if (destination.is_in_register) {
+					instr = II(lea, destination.reg, Address(Register::instructions));
+				} else {
+					tmpreg(tmp);
+					instr = II(lea, tmp, Address(Register::instructions));
+					mov_mr(destination.address, tmp);
+				}
 
 				instructions_that_reference_lambdas.add({.instruction=instr, .lambda=lambda});
 			} else {
@@ -1237,8 +1341,9 @@ void FrameBuilder::load_address_of(AstExpression *expression, RegisterOrAddress 
 				if (destination.is_in_register) {
 					I(mov_re, destination.reg, (String)lambda->definition->name);
 				} else {
-					I(mov_re, r0, (String)lambda->definition->name);
-					mov_mr(destination.address, r0);
+					tmpreg(tmp);
+					I(mov_re, tmp, (String)lambda->definition->name);
+					mov_mr(destination.address, tmp);
 				}
 			}
 			break;
@@ -1278,8 +1383,11 @@ void FrameBuilder::load_address_of(AstExpression *expression, RegisterOrAddress 
 				load_address_of(binop->left, destination);
 
 			if (offset) {
-				if (destination.is_in_register) I(add_rc, destination.reg, offset);
-				else                         I(add_mc, destination.address, offset);
+				if (destination.is_in_register) {
+					I(add_rc, destination.reg, offset);
+				} else {
+					add_mc(destination.address, offset);
+				}
 			}
 
 			break;
@@ -1295,50 +1403,42 @@ void FrameBuilder::load_address_of(AstExpression *expression, RegisterOrAddress 
 				if (destination.is_in_register) {
 					mov_rm(destination.reg, Address(destination.reg));
 				} else {
-					mov_rm(r0, destination.address);
-					mov_rm(r0, Address(r0));
-					mov_mr(destination.address, r0);
+					tmpreg(tmp);
+					mov_rm(tmp, destination.address);
+					mov_rm(tmp, Address(tmp));
+					mov_mr(destination.address, tmp);
 				}
 
-				APPEND_INTO_REGISTER(index, subscript->index_expression, r0);
+				APPEND_INTO_REGISTER(index, subscript->index_expression);
 
 				I(mul_rc, index, get_size(subscript->type));
 
-				if (destination.is_in_register)
+				if (destination.is_in_register) {
 					I(add_rr, destination.reg, index);
-				else
-					I(add_mr, destination.address, index);
+				} else {
+					add_mr(destination.address, index);
+				}
 			} else if (auto pointer_type = as_pointer(subscript->expression->type)) {
 				append(subscript->expression, destination);
 
-				APPEND_INTO_REGISTER(index, subscript->index_expression, r0);
+				APPEND_INTO_REGISTER(index, subscript->index_expression);
 
 				I(mul_rc, index, get_size(subscript->type));
 
-				if (destination.is_in_register)
+				if (destination.is_in_register) {
 					I(add_rr, destination.reg, index);
-				else
-					I(add_mr, destination.address, index);
+				} else {
+					add_mr(destination.address, index);
+				}
 			} else if (types_match(subscript->expression->type, builtin_string)) {
 				assert(get_size(subscript->index_expression->type) <= compiler.stack_word_size);
 
-				auto _reg_or_addr1 = load_address_of(subscript->expression);
-				auto _reg_or_addr2 = append(subscript->index_expression);
-				defer {
-					if (_reg_or_addr1.is_in_register) free_register(_reg_or_addr1.reg);
-					if (_reg_or_addr2.is_in_register) free_register(_reg_or_addr2.reg);
-				};
+				APPEND2(
+					string, load_address_of, subscript->expression,
+					index, append, subscript->index_expression
+				);
 
-				Register string = r0;
-				Register index = r1;
-
-				if (_reg_or_addr1.is_in_register) string = _reg_or_addr1.reg;
-				else                           mov_rm(string, _reg_or_addr1.address);
-
-				if (_reg_or_addr2.is_in_register) index = _reg_or_addr2.reg;
-				else                           mov_rm(index, _reg_or_addr2.address);
-
-				auto count = r2;
+				tmpreg(count);
 
 				mov_rm(count, string + compiler.stack_word_size);
 				mov_rm(string, Address(string));
@@ -1364,14 +1464,15 @@ void FrameBuilder::load_address_of(AstExpression *expression, RegisterOrAddress 
 				assert(direct_as<AstSubscript>(subscript->expression->type));
 				load_address_of(subscript->expression, destination);
 
-				APPEND_INTO_REGISTER(index, subscript->index_expression, r0);
+				APPEND_INTO_REGISTER(index, subscript->index_expression);
 
 				I(mul_rc, index, get_size(subscript->type));
 
-				if (destination.is_in_register)
+				if (destination.is_in_register) {
 					I(add_rr, destination.reg, index);
-				else
-					I(add_mr, destination.address, index);
+				} else {
+					add_mr(destination.address, index);
+				}
 			}
 
 			break;
@@ -1467,8 +1568,9 @@ DefinitionAddress FrameBuilder::get_address_of(AstDefinition *definition) {
 								I(lea, destination.reg, addr);
 								mov_rm(destination.reg, Address(destination.reg));
 							} else {
-								mov_rm(r0, addr);
-								mov_mr(destination.address, r0);
+								tmpreg(tmp);
+								mov_rm(tmp, addr);
+								mov_mr(destination.address, tmp);
 							}
 							return {
 								.is_known = false,
@@ -1634,12 +1736,16 @@ void FrameBuilder::append(AstDefinition *definition) {
 						assert((definition->offset & 0xf) == 0);
 						// push_comment(format("(__int64*)(rbp+{}),{}"str, definition->offset, ceil(get_size(definition->type),16ll)/16ll));
 
-						auto addr = locals + definition->offset;
+						auto addr = Register::locals + definition->offset;
 
 						if (definition->expression) {
 							append(definition->expression, addr);
 						} else {
-							append_memory_set(addr, 0, get_size(definition->type));
+							if (auto Struct = direct_as<AstStruct>(definition->type); Struct && Struct->default_value) {
+								copy(addr, Register::constants + Struct->default_value->struct_offset, get_size(definition->type), false);
+							} else {
+								append_memory_set(addr, 0, get_size(definition->type));
+							}
 						}
 						break;
 					}
@@ -1809,7 +1915,7 @@ void FrameBuilder::append(AstIf *If) {
 
 	decltype(Instruction::jz_cr) *jz;
 	{
-		APPEND_INTO_REGISTER(condition_register, If->condition, r0);
+		APPEND_INTO_REGISTER(condition_register, If->condition);
 		jz = I(jz_cr, 0, condition_register);
 	}
 
@@ -1835,7 +1941,7 @@ void FrameBuilder::append(AstWhile *While) {
 
 	decltype(Instruction::jz_cr) *jz;
 	{
-		APPEND_INTO_REGISTER(condition_register, While->condition, r0);
+		APPEND_INTO_REGISTER(condition_register, While->condition);
 		jz = I(jz_cr, 0, condition_register);
 	}
 
@@ -1882,7 +1988,7 @@ void FrameBuilder::append(AstAssert *Assert) {
 		return;
 	push_comment(format(u8"assert {}", Assert->location));
 
-	APPEND_INTO_REGISTER(condition, Assert->condition, r0);
+	APPEND_INTO_REGISTER(condition, Assert->condition);
 
 	I(jnz_cr, 2, condition);
 	push_comment(format(u8"Assertion failed: {}", Assert->condition->location));
@@ -1922,18 +2028,23 @@ void FrameBuilder::append(AstMatch *Match) {
 
 	bool has_default_case = false;
 
-	mov_rm(r0, matchable);
-	for (auto &Case : Match->cases) {
-		if (Case.expression) {
-			I(mov_rc, r1, (s64)get_constant_integer(Case.expression).value());
-			switch (compiler.stack_word_size) {
-				case 4: I(cmpu4, r2, r0, r1, Comparison::e); break;
-				case 8: I(cmpu8, r2, r0, r1, Comparison::e); break;
-				default: invalid_code_path();
+	{
+		tmpreg(matchable_reg);
+		mov_rm(matchable_reg, matchable);
+		for (auto &Case : Match->cases) {
+			if (Case.expression) {
+				tmpreg(case_reg);
+				tmpreg(cmpresult_reg);
+				I(mov_rc, case_reg, (s64)get_constant_integer(Case.expression).value());
+				switch (compiler.stack_word_size) {
+					case 4: I(cmpu4, cmpresult_reg, matchable_reg, case_reg, Comparison::e); break;
+					case 8: I(cmpu8, cmpresult_reg, matchable_reg, case_reg, Comparison::e); break;
+					default: invalid_code_path();
+				}
+				jumps_to_cases.add({II(jnz_cr, 0, cmpresult_reg), instructions.count});
+			} else {
+				has_default_case = true;
 			}
-			jumps_to_cases.add({II(jnz_cr, 0, r2), instructions.count});
-		} else {
-			has_default_case = true;
 		}
 	}
 
@@ -2012,16 +2123,16 @@ void FrameBuilder::append(AstBinaryOperator *bin, RegisterOrAddress destination)
 
 						Register member_address;
 						if (is_pointer) {
-							APPEND_INTO_REGISTER(_struct_address, bin->left, r0);
+							APPEND_INTO_REGISTER(_struct_address, bin->left);
 							member_address = _struct_address;
 						} else {
 							if (is_addressable(bin->left)) {
-								LOAD_ADDRESS_INTO_REGISTER(_struct_address, bin->left, r0);
+								LOAD_ADDRESS_INTO_REGISTER(_struct_address, bin->left);
 								member_address = _struct_address;
 							} else {
 								auto tmp = allocate_temporary_space(struct_size);
 								append(bin->left, tmp);
-								member_address = r0;
+								member_address = Register::r0;
 								I(lea, member_address, tmp);
 							}
 						}
@@ -2054,7 +2165,7 @@ void FrameBuilder::append(AstBinaryOperator *bin, RegisterOrAddress destination)
 		case bsl: {
 			if (destination.is_in_register) {
 				append(left, destination);
-				APPEND_INTO_REGISTER(rr, right, r1);
+				APPEND_INTO_REGISTER(rr, right);
 
 				auto lt = direct(bin->left->type);
 
@@ -2095,26 +2206,10 @@ void FrameBuilder::append(AstBinaryOperator *bin, RegisterOrAddress destination)
 					invalid_code_path();
 				}
 			} else {
-				assert(get_size(left ->type) <= compiler.stack_word_size);
-				assert(get_size(right->type) <= compiler.stack_word_size);
-				auto left_  = append(left);
-				auto right_ = append(right);
-				defer {
-					if (left_ .is_in_register) free_register(left_.reg);
-					if (right_.is_in_register) free_register(right_.reg);
-				};
-				Register l = r0;
-				Register r = r1;
-				if (left_.is_in_register) {
-					l = left_.reg;
-				} else {
-					mov_rm(l, left_.address);
-				}
-				if (right_.is_in_register) {
-					r = right_.reg;
-				} else {
-					mov_rm(r, right_.address);
-				}
+				APPEND2(
+					l, append, left,
+					r, append, right
+				);
 
 				auto lt = direct(bin->left->type);
 
@@ -2170,6 +2265,10 @@ void FrameBuilder::append(AstBinaryOperator *bin, RegisterOrAddress destination)
 				auto la = append(left).ensure_address();
 				auto ra = append(right).ensure_address();
 
+				tmpreg(r0);
+				tmpreg(r1);
+				tmpreg(r2);
+
 				// load counts
 				mov_rm(r1, la + compiler.stack_word_size);
 				mov_rm(r2, ra + compiler.stack_word_size);
@@ -2215,26 +2314,10 @@ void FrameBuilder::append(AstBinaryOperator *bin, RegisterOrAddress destination)
 				return;
 			}
 
-			assert(get_size(left->type) <= compiler.stack_word_size);
-			assert(get_size(right->type) <= compiler.stack_word_size);
-			auto la = append(left);
-			auto ra = append(right);
-			defer {
-				if (la.is_in_register) free_register(la.reg);
-				if (ra.is_in_register) free_register(ra.reg);
-			};
-			Register rl = r0;
-			Register rr = r1;
-			if (la.is_in_register) {
-				rl = la.reg;
-			} else {
-				mov_rm(rl, la.address);
-			}
-			if (ra.is_in_register) {
-				rr = ra.reg;
-			} else {
-				mov_rm(rr, ra.address);
-			}
+			APPEND2(
+				rl, append, left,
+				rr, append, right
+			);
 
 			auto comparison = comparison_from_binary_operation(bin->operation);
 
@@ -2267,6 +2350,7 @@ void FrameBuilder::append(AstBinaryOperator *bin, RegisterOrAddress destination)
 					not_implemented();
 				}
 			} else {
+				tmpreg(r2);
 				if (::is_integer_internally(left->type)) {
 					if (::is_signed(left->type)) {
 						switch (get_size(left->type)) {
@@ -2320,10 +2404,13 @@ void FrameBuilder::append(AstBinaryOperator *bin, RegisterOrAddress destination)
 				defer {
 					if (src.is_in_register) free_register(src.reg);
 				};
-				Register dst = r0;
+
+				Register dst;
+				defer { if ((umm)dst < temporary_register_count) free_temporary_register(dst); };
 				if (dst_addr.is_in_register) {
 					dst = dst_addr.reg;
 				} else {
+					dst = allocate_temporary_register();
 					mov_rm(dst, dst_addr.address);
 				}
 
@@ -2367,53 +2454,34 @@ void FrameBuilder::append(AstBinaryOperator *bin, RegisterOrAddress destination)
 		case bsrass: {
 			assert(get_size(bin->right->type) <= compiler.stack_word_size);
 
-			auto _left = load_address_of(bin->left);
-			auto _right = append(bin->right);
-			defer {
-				if (_left.is_in_register)  free_register(_left.reg);
-				if (_right.is_in_register) free_register(_right.reg);
-			};
-
-			Register dst = r0;
-			Register src = r1;
-
-			if (_left.is_in_register) {
-				dst = _left.reg;
-			} else {
-				mov_rm(dst, _left.address);
-			}
-
-			if (_right.is_in_register) {
-				src = _right.reg;
-			} else {
-				mov_rm(get_size(bin->right->type), src, _right.address);
-			}
+			APPEND2(
+				dst, load_address_of, bin->left,
+				src, append, bin->right
+			);
 
 			if (::is_integer_or_pointer(bin->type)) {
 				if (auto pointer = as_pointer(bin->left->type)) {
 					I(mul_rc, src, get_size(pointer->expression));
 				}
+
+				auto size = get_size(bin->right->type);
+
 				switch (bin->operation) {
-					case addass:  I(add_mr, Address(dst), src); break;
-					case subass:  I(sub_mr, Address(dst), src); break;
-					case mulass:  I(mul_mr, Address(dst), src); break;
-					case divass:  if (::is_signed(bin->left->type)) I(divs_mr, Address(dst), src); else I(divu_mr, Address(dst), src); break;
-					case modass:  if (::is_signed(bin->left->type)) I(mods_mr, Address(dst), src); else I(modu_mr, Address(dst), src); break;
-					case borass:  I( or_mr, Address(dst), src); break;
-					case bandass: I(and_mr, Address(dst), src); break;
-					case bxorass:
-						switch (get_size(bin->right->type)) {
-							case 1: I(xor1_mr, Address(dst), src); break;
-							case 2: I(xor2_mr, Address(dst), src); break;
-							case 4: I(xor4_mr, Address(dst), src); break;
-							case 8: I(xor8_mr, Address(dst), src); break;
-						}
-						break;
-					case bslass:  I(shl_mr, Address(dst), src); break;
-					case bsrass:  I(shr_mr, Address(dst), src); break;
+					case addass:  add_mr(size, Address(dst), src); break;
+					case subass:  sub_mr(size, Address(dst), src); break;
+					case mulass:  mul_mr(size, Address(dst), src); break;
+					case divass:  if (::is_signed(bin->left->type)) divs_mr(size, Address(dst), src); else divu_mr(size, Address(dst), src); break;
+					case modass:  if (::is_signed(bin->left->type)) mods_mr(size, Address(dst), src); else modu_mr(size, Address(dst), src); break;
+					case borass:   or_mr(size, Address(dst), src); break;
+					case bandass: and_mr(size, Address(dst), src); break;
+					case bxorass: xor_mr(size, Address(dst), src); break;
+					case bslass:  shl_mr(size, Address(dst), src); break;
+					case bsrass:  shr_mr(size, Address(dst), src); break;
 					default: invalid_code_path();
 				}
 			} else if (::is_float(bin->type)) {
+				tmpreg(r2);
+
 				auto size = get_size(bin->type);
 				mov_rm(size, r2, Address(dst));
 
@@ -2477,6 +2545,7 @@ void FrameBuilder::append(AstBinaryOperator *bin, RegisterOrAddress destination)
 
 						append(left, tmp);
 
+						tmpreg(r0);
 						I(lea, r0, tmp);
 						I(mov8_mr, destination.address, r0);
 					}
@@ -2498,6 +2567,7 @@ void FrameBuilder::append(AstBinaryOperator *bin, RegisterOrAddress destination)
 					if (destination.is_in_register) {
 						I(mov8_rm, destination.reg, count_addr);
 					} else {
+						tmpreg(r0);
 						I(mov8_rm, r0, count_addr);
 						I(mov8_mr, destination.address, r0);
 					}
@@ -2506,6 +2576,7 @@ void FrameBuilder::append(AstBinaryOperator *bin, RegisterOrAddress destination)
 					if (destination.is_in_register) {
 						I(mov8_rm, destination.reg, data_addr);
 					} else {
+						tmpreg(r0);
 						I(mov8_rm, r0, data_addr);
 						I(mov8_mr, destination.address, r0);
 					}
@@ -2516,7 +2587,7 @@ void FrameBuilder::append(AstBinaryOperator *bin, RegisterOrAddress destination)
 			}
 
 
-			// Integer builderersions:
+			// Integer conversions:
 			// If destination is bigger than source:
 			//    extend the size depending on the signedness of source operand (sign extend for signed, zero extend for unsigned).
 			// Otherwise this is a noop.
@@ -2535,6 +2606,7 @@ void FrameBuilder::append(AstBinaryOperator *bin, RegisterOrAddress destination)
 		if (uncasted.is_in_register) I(mov##z##x##d##s##_rr, destination.reg, uncasted.reg); \
 		else                      I(mov##z##x##d##s##_rm, destination.reg, uncasted.address); \
 	} else { \
+		tmpreg(r0); \
 		if (uncasted.is_in_register) I(mov##z##x##d##s##_rr, r0, uncasted.reg); /* NOTE: movsx/movzx into a memory is not a thing! */ \
 		else                      I(mov##z##x##d##s##_rm, r0, uncasted.address); \
 		I(mov##d##_mr, destination.address, r0); \
@@ -2602,6 +2674,7 @@ void FrameBuilder::append(AstBinaryOperator *bin, RegisterOrAddress destination)
 						invalid_code_path();
 					}
 				} else {
+					tmpreg(r0);
 					if (false) {
 					} else if (from == builtin_s32.Struct) {
 						I(mov4_rm, r0, destination.address);
@@ -2640,6 +2713,7 @@ void FrameBuilder::append(AstBinaryOperator *bin, RegisterOrAddress destination)
 						invalid_code_path();
 					}
 				} else {
+					tmpreg(r0);
 					if (false) {
 					} else if (from == builtin_f64.Struct) {
 						I(mov8_rm, r0, destination.address);
@@ -2678,6 +2752,7 @@ void FrameBuilder::append(AstBinaryOperator *bin, RegisterOrAddress destination)
 						invalid_code_path();
 					}
 				} else {
+					tmpreg(r0);
 					if (false) {
 					} else if (from == builtin_f64.Struct) {
 						I(mov8_rm, r0, destination.address);
@@ -2698,6 +2773,29 @@ void FrameBuilder::append(AstBinaryOperator *bin, RegisterOrAddress destination)
 				return;
 			}
 
+			if (::is_integer(from) && types_match(to, builtin_bool)) {
+				APPEND_INTO_REGISTER(integer, cast->left);
+				switch (get_size(from)) {
+					case 1: I(and_rc, integer, 0xFF); break;
+					case 2: I(and_rc, integer, 0xFFFF); break;
+					case 4: I(and_rc, integer, 0xFFFFFFFF); break;
+				}
+				I(tobool_r, integer);
+				copy(destination, integer, 1, false);
+			}
+
+			if (types_match(from, builtin_bool) && ::is_integer(to)) {
+				if (destination.is_in_register) {
+					append(cast->left, destination);
+					I(and_rc, destination.reg, 1);
+				} else {
+					APPEND_INTO_REGISTER(boolean, cast->left);
+					I(and_rc, boolean, 1);
+					mov_mr(get_size(to), destination.address, boolean);
+				}
+				return;
+			}
+
 			if (auto option = as_option(from)) {
 				if (to == builtin_bool.Struct) {
 					auto tmp_size = get_size(option);
@@ -2709,6 +2807,7 @@ void FrameBuilder::append(AstBinaryOperator *bin, RegisterOrAddress destination)
 					if (destination.is_in_register) {
 						I(mov1_rm, destination.reg, tmp + get_size(option->expression));
 					} else {
+						tmpreg(r0);
 						I(mov1_rm, r0, tmp + get_size(option->expression));
 						I(mov1_mr, destination.address, r0);
 					}
@@ -2742,9 +2841,13 @@ void FrameBuilder::append(AstBinaryOperator *bin, RegisterOrAddress destination)
 				jump->offset = skip_end - skip_start;
 			} else {
 				append(bin->left, destination);
-				I(mov1_rm, r0, destination.address);
 
-				auto jump = I(jnz_cr, 0, destination.reg);
+				decltype(Instruction::jnz_cr) *jump;
+				{
+					tmpreg(r0);
+					I(mov1_rm, r0, destination.address);
+					jump = I(jnz_cr, 0, r0);
+				}
 				auto skip_start = instructions.count;
 
 				append(bin->right, destination);
@@ -2771,9 +2874,14 @@ void FrameBuilder::append(AstBinaryOperator *bin, RegisterOrAddress destination)
 				jump->offset = skip_end - skip_start;
 			} else {
 				append(bin->left, destination);
-				I(mov1_rm, r0, destination.address);
 
-				auto jump = I(jz_cr, 0, r0);
+				decltype(Instruction::jz_cr) *jump;
+				{
+					tmpreg(r0);
+					I(mov1_rm, r0, destination.address);
+					jump = I(jz_cr, 0, r0);
+				}
+
 				auto skip_start = instructions.count;
 
 				append(bin->right, destination);
@@ -2790,581 +2898,6 @@ void FrameBuilder::append(AstBinaryOperator *bin, RegisterOrAddress destination)
 	}
 
 	return;
-	not_implemented();
-#if 0
-	assert(!destination);
-	push_comment(format(u8"binary {}"s, bin->location));
-
-	auto left = bin->left;
-	auto right = bin->right;
-
-	using enum BinaryOperation;
-	if (bin->operation == dot) {
-		switch (right->kind) {
-			case Ast_Identifier: {
-				AstStruct *Struct = 0;
-				bool is_pointer = false;
-				if (auto pointer = as_pointer(left->type)) {
-					Struct = direct_as<AstStruct>(pointer->expression);
-					is_pointer = true;
-				} else {
-					Struct = direct_as<AstStruct>(left->type);
-				}
-
-				if (Struct) {
-					auto struct_size = get_size(left->type);
-
-
-					assert(right->kind == Ast_Identifier);
-					auto ident = (AstIdentifier *)right;
-					auto member = ident->definition();
-					assert(member);
-					auto member_size = get_size(member->type);
-
-					// assert(struct_size % stack_word_size == 0);
-					// assert(member_size % stack_word_size == 0);
-
-
-					if (is_pointer) {
-
-						if (member->is_constant) {
-							invalid_code_path("not implemented");
-							I(push_c, member->bytecode_offset);
-						} else {
-							// The plan is simple:
-							// 1. Reserve space for eventual value
-							// 2. Append pointer to stack
-							// 3. Append struct pointer
-							// 4. Copy the member from struct to reserved space
-							assert(member->offset_in_struct != INVALID_MEMBER_OFFSET);
-
-							push_comment(u8"1. Reserve space for eventual value"s);
-							I(sub_rc, rs, ceil(member_size, compiler.stack_word_size));
-
-							//if (member == Struct->members.back()) {
-							//	I(add_rc, rs, struct_size - member_size); // just throw away rest of the struct
-							//} else
-							{
-								/*
-
-								Example on 64 bit architecture
-
-								a :: struct {
-									data: *void;
-									count: uint;
-								}
-																			rs
-									20      28      30      38      40      48      50
-								  0 |------||------||------||------||------||------||------| ffff
-											38      48      data    count   data    ????????
-
-								*/
-
-								push_comment(u8"2. Append destination pointer"s);
-								I(push_r, rs); // destination
-
-								push_comment(u8"3. Append pointer to the struct"s);
-								append_to_stack(left);
-								I(add_mc, rs, member->offset_in_struct);
-
-								push_comment(u8"4. Copy the member"s);
-								copy(member_size, true, bin->location, u8"stack"s);
-							}
-						}
-					} else {
-						if (member->is_constant) {
-							invalid_code_path("not implemented");
-							I(push_c, member->bytecode_offset);
-						} else {
-							if (false && is_addressable(bin->left)) {
-								// TODO: FIXME: DEBUG: this doesn't work
-								push_comment(u8"1. Reserve space for eventual value"s);
-								I(sub_rc, rs, ceil(member_size, compiler.stack_word_size));
-
-								push_comment(u8"3. Copy the member from struct to reserved space"s);
-
-								auto member_src = load_address_of(bin->left).value_or([&]{I(pop_r, r1); return r1;});
-
-								copy_a(rs, member_src + member->offset_in_struct, member_size, false, bin->location, u8"stack"s);
-							} else {
-								// The plan is simple:
-								// 1. Reserve space for eventual value
-								// 2. Append the struct
-								// 3. Copy the member from struct to reserved space
-								// 4. Remove struct from the stack
-								assert(member->offset_in_struct != INVALID_MEMBER_OFFSET);
-
-								push_comment(u8"1. Reserve space for eventual value"s);
-								I(sub_rc, rs, ceil(member_size, compiler.stack_word_size));
-
-								push_comment(u8"2. Append the struct"s);
-								append_to_stack(left);
-
-								//if (member == Struct->members.back()) {
-								//	I(add_rc, rs, struct_size - member_size); // just throw away rest of the struct
-								//} else
-								{
-									/*
-
-									Example on 64 bit architecture
-
-									a :: struct {
-										data: *void;
-										count: uint;
-									}
-																				rs
-										20      28      30      38      40      48      50
-									  0 |------||------||------||------||------||------||------| ffff
-												38      48      data    count   data    ????????
-
-									*/
-
-									push_comment(u8"3. Copy the member from struct to reserved space"s);
-									I(push_r, rs); // destination
-									I(add_mc, rs, ceil(struct_size, compiler.stack_word_size));
-
-									I(push_r, rs); // source
-									I(add_mc, rs, compiler.stack_word_size + member->offset_in_struct);
-
-									copy(member_size, true, bin->location, u8"stack"s);
-
-									push_comment(u8"4. Remove struct from the stack"s);
-									I(add_rc, rs, ceil(struct_size, compiler.stack_word_size));
-								}
-							}
-						}
-					}
-				} else {
-					assert(is_sized_array(left->type));
-				}
-
-				break;
-			}
-			default: {
-				invalid_code_path();
-				break;
-			}
-		}
-	} else if (bin->operation == as) {
-		auto cast = bin;
-
-		auto get_internal_representation = [&](AstExpression *type) -> AstExpression * {
-			if (is_pointer_internally(type))
-				return builtin_u64.Struct;
-			else if (auto Enum = direct_as<AstEnum>(type)) {
-				assert(!Enum->underlying_type, "not implemented");
-				return builtin_s64.Struct;
-			} else
-				return direct(type);
-			return 0;
-		};
-
-		AstExpression *from = get_internal_representation(cast->left->type);
-		AstExpression *to = get_internal_representation(cast->type);
-
-		{
-			auto array = as_array(from);
-			auto span = as_span(to);
-			if (array && span) {
-				I(push_c, (s64)get_constant_integer(array->index_expression).value());
-				if (is_addressable(left)) {
-					push_address_of(left);
-				} else {
-					auto size = ceil(get_size(array), compiler.stack_word_size);
-
-					append_to_stack(left);
-
-					auto offset = rb-temporary_cursor-size;
-					copy_a(offset, rs, size, false, "cast"str, "temporary"str);
-
-					I(add_rc, rs, size);
-					I(lea, r0, offset);
-					I(push_r, r0);
-
-					temporary_cursor += size;
-				}
-				return {};
-			}
-		}
-
-
-		append_to_stack(cast->left);
-
-		{
-			// TODO: FIXME: HACK:
-			// extremely dumb way to access data and count members of span
-			auto span = as_span(from);
-			if (span) {
-				if (::is_integer(to)) {
-					//       count => count <- rs
-					// rs -> data
-					I(add_rc, rs, compiler.stack_word_size);
-				} else if (::is_pointer(to)) {
-					//       count => data <- rs
-					// rs -> data
-					I(pop_r, r0);
-					I(mov8_mr, rs, r0);
-				} else {
-					invalid_code_path();
-				}
-				return {};
-			}
-		}
-
-
-		// Here are integer cases
-		//   source to    size destination operation
-		// unsigned to  bigger    unsigned zero extend
-		// unsigned to    same    unsigned noop
-		// unsigned to smaller    unsigned noop
-		// unsigned to  bigger      signed zero extend
-		// unsigned to    same      signed noop
-		// unsigned to smaller      signed noop
-		//   signed to  bigger    unsigned sign extend
-		//   signed to    same    unsigned noop
-		//   signed to smaller    unsigned noop
-		//   signed to  bigger      signed sign extend
-		//   signed to    same      signed noop
-		//   signed to smaller      signed noop
-
-		if (false) {
-		} else if (from == builtin_u8.Struct) {
-			if (false) { return {}; }
-			else if (to == builtin_u8.Struct) { return {}; }
-			else if (to == builtin_u16.Struct) { I(and_mc, rs, 0xff); return {}; } // discard bits that could be garbage
-			else if (to == builtin_u32.Struct) { I(and_mc, rs, 0xff); return {}; }
-			else if (to == builtin_u64.Struct) { I(and_mc, rs, 0xff); return {}; }
-			else if (to == builtin_s8.Struct) { return {}; }
-			else if (to == builtin_s16.Struct) { I(and_mc, rs, 0xff); return {}; }
-			else if (to == builtin_s32.Struct) { I(and_mc, rs, 0xff); return {}; }
-			else if (to == builtin_s64.Struct) { I(and_mc, rs, 0xff); return {}; }
-		} else if (from == builtin_u16.Struct) {
-			if (false) { return {}; }
-			else if (to == builtin_u8.Struct) { return {}; }
-			else if (to == builtin_u16.Struct) { return {}; }
-			else if (to == builtin_u32.Struct) { I(and_mc, rs, 0xffff); return {}; }
-			else if (to == builtin_u64.Struct) { I(and_mc, rs, 0xffff); return {}; }
-			else if (to == builtin_s8.Struct) { return {}; }
-			else if (to == builtin_s16.Struct) { return {}; }
-			else if (to == builtin_s32.Struct) { I(and_mc, rs, 0xffff); return {}; }
-			else if (to == builtin_s64.Struct) { I(and_mc, rs, 0xffff); return {}; }
-		} else if (from == builtin_u32.Struct) {
-			if (false) { return {}; }
-			else if (to == builtin_u8.Struct) { return {}; }
-			else if (to == builtin_u16.Struct) { return {}; }
-			else if (to == builtin_u32.Struct) { return {}; }
-			else if (to == builtin_u64.Struct) { I(and_mc, rs, 0xffffffff); return {}; }
-			else if (to == builtin_s8.Struct) { return {}; }
-			else if (to == builtin_s16.Struct) { return {}; }
-			else if (to == builtin_s32.Struct) { return {}; }
-			else if (to == builtin_s64.Struct) { I(and_mc, rs, 0xffffffff); return {}; }
-		} else if (from == builtin_u64.Struct) {
-			if (false) { return {}; }
-			else if (to == builtin_u8.Struct) { return {}; }
-			else if (to == builtin_u16.Struct) { return {}; }
-			else if (to == builtin_u32.Struct) { return {}; }
-			else if (to == builtin_u64.Struct) { return {}; }
-			else if (to == builtin_s8.Struct) { return {}; }
-			else if (to == builtin_s16.Struct) { return {}; }
-			else if (to == builtin_s32.Struct) { return {}; }
-			else if (to == builtin_s64.Struct) { return {}; }
-		} else if (from == builtin_s8.Struct) {
-			if (false) { return {}; }
-			else if (to == builtin_u8.Struct) { return {}; }
-			else if (to == builtin_u16.Struct) { I(movsx21_rm, r0, rs); I(mov2_mr, rs, r0); return {}; } // discard bits that could be garbage
-			else if (to == builtin_u32.Struct) { I(movsx41_rm, r0, rs); I(mov4_mr, rs, r0); return {}; }
-			else if (to == builtin_u64.Struct) { I(movsx81_rm, r0, rs); I(mov8_mr, rs, r0); return {}; }
-			else if (to == builtin_s8.Struct) { return {}; }
-			else if (to == builtin_s16.Struct) { I(movsx21_rm, r0, rs); I(mov2_mr, rs, r0); return {}; }
-			else if (to == builtin_s32.Struct) { I(movsx41_rm, r0, rs); I(mov4_mr, rs, r0); return {}; }
-			else if (to == builtin_s64.Struct) { I(movsx81_rm, r0, rs); I(mov8_mr, rs, r0); return {}; }
-		} else if (from == builtin_s16.Struct) {
-			if (false) { return {}; }
-			else if (to == builtin_u8.Struct) { return {}; }
-			else if (to == builtin_u16.Struct) { return {}; }
-			else if (to == builtin_u32.Struct) { I(movsx42_rm, r0, rs); I(mov4_mr, rs, r0); return {}; }
-			else if (to == builtin_u64.Struct) { I(movsx82_rm, r0, rs); I(mov8_mr, rs, r0); return {}; }
-			else if (to == builtin_s8.Struct) { return {}; }
-			else if (to == builtin_s16.Struct) { return {}; }
-			else if (to == builtin_s32.Struct) { I(movsx42_rm, r0, rs); I(mov4_mr, rs, r0); return {}; }
-			else if (to == builtin_s64.Struct) { I(movsx82_rm, r0, rs); I(mov8_mr, rs, r0); return {}; }
-		} else if (from == builtin_s32.Struct) {
-			if (false) { return {}; }
-			else if (to == builtin_u8.Struct) { return {}; }
-			else if (to == builtin_u16.Struct) { return {}; }
-			else if (to == builtin_u32.Struct) { return {}; }
-			else if (to == builtin_u64.Struct) { I(movsx84_rm, r0, rs); I(mov8_mr, rs, r0); return {}; }
-			else if (to == builtin_s8.Struct) { return {}; }
-			else if (to == builtin_s16.Struct) { return {}; }
-			else if (to == builtin_s32.Struct) { return {}; }
-			else if (to == builtin_s64.Struct) { I(movsx84_rm, r0, rs); I(mov8_mr, rs, r0); return {}; }
-			else if (to == builtin_f32.Struct) { I(cvt_s32_f32); return {}; }
-		} else if (from == builtin_s64.Struct) {
-			if (false) { return {}; }
-			else if (to == builtin_u8.Struct) { return {}; }
-			else if (to == builtin_u16.Struct) { return {}; }
-			else if (to == builtin_u32.Struct) { return {}; }
-			else if (to == builtin_u64.Struct) { return {}; }
-			else if (to == builtin_s8.Struct) { return {}; }
-			else if (to == builtin_s16.Struct) { return {}; }
-			else if (to == builtin_s32.Struct) { return {}; }
-			else if (to == builtin_s64.Struct) { return {}; }
-			else if (to == builtin_f64.Struct) { I(cvt_s64_f64); return {}; }
-		} else if (from == builtin_f64.Struct) {
-			if (false) { return {}; }
-			else if (to == builtin_s64.Struct) { I(cvt_f64_s64); return {}; }
-		}
-
-		if (to == builtin_bool .Struct&& as_option(from)) {
-			I(mov1_rm, r0, rs);
-			I(add_rc, rs, get_size(from));
-			I(push_r, r0);
-			return {};
-		}
-
-		if (auto option = as_option(to)) {
-			assert(types_match(option->expression, from));
-			//     string as ?string
-			//      count    count
-			// rs -> data    data
-			//               has_value <- rs
-
-			I(sub_rc, rs, get_align(from));
-			I(mov1_mc, rs, 1);
-			return {};
-		}
-
-		invalid_code_path();
-		return {};
-	} else {
-		switch (bin->operation) {
-			case add:
-			case sub:
-			case mul:
-			case div:
-			case mod:
-			case bor:
-			case band:
-			case bxor:
-			case bsr:
-			case bsl: {
-				append_to_stack(left);
-				append_to_stack(right);
-
-				auto lt = direct(bin->left->type);
-
-				if (lt == builtin_f32.Struct) {
-					I(pop_f, x1);
-					I(pop_f, x0);
-					switch (bin->operation) {
-						case add:  I(add_f32_f32, x0, x1); break;
-						case sub:  I(sub_f32_f32, x0, x1); break;
-						case mul:  I(mul_f32_f32, x0, x1); break;
-						case div:  I(div_f32_f32, x0, x1); break;
-						// case mod:  I(mod_f64, x0, x1); break;
-						default: invalid_code_path();
-					}
-					I(push_f, x0);
-				} else if (lt == builtin_f64.Struct) {
-					I(pop_f, x1);
-					I(pop_f, x0);
-					switch (bin->operation) {
-						case add:  I(add_f64_f64, x0, x1); break;
-						case sub:  I(sub_f64_f64, x0, x1); break;
-						case mul:  I(mul_f64_f64, x0, x1); break;
-						case div:  I(div_f64_f64, x0, x1); break;
-						// case mod:  I(mod_f64, x0, x1); break;
-						default: invalid_code_path();
-					}
-					I(push_f, x0);
-				} else {
-					assert(::is_integer(bin->type) || ::is_pointer(bin->type));
-					I(pop_r, r0);
-					switch (bin->operation) {
-						case add:  I(add_mr, rs, r0); break;
-						case sub:  I(sub_mr, rs, r0); break;
-						case mul:  I(mul_mr, rs, r0); break;
-						case div:  I(div_mr, rs, r0); break;
-						case mod:  I(mod_mr, rs, r0); break;
-						case bor:  I( or_mr, rs, r0); break;
-						case band: I(and_mr, rs, r0); break;
-						case bxor: I(xor_mr, rs, r0); break;
-						case bsr:  I(shr_mr, rs, r0); break;
-						case bsl:  I(shl_mr, rs, r0); break;
-						default: invalid_code_path();
-					}
-				}
-				break;
-			}
-			case ass: {
-				auto bytes_to_write = get_size(left->type);
-				assert(bytes_to_write);
-
-				auto expr_size = get_size(right->type);
-				assert(bytes_to_write == expr_size);
-
-				auto dst_opt = load_address_of(left);
-
-				if (dst_opt) {
-					auto dst = dst_opt.value_unchecked();
-					auto right_registers = append(right);
-					if (right_registers.count) {
-						// TODO: use these registers without pushing them to the stack
-						for (auto r : reverse(right_registers)) {
-							I(push_r, r);
-							free_register(r);
-						}
-					}
-					copy(dst, rs, bytes_to_write, false, right->location, left->location); // will pop src and dst addresses
-					free_register(dst);
-
-					push_comment(u8"remove right from the stack"s);
-					I(add_rc, rs, ceil(bytes_to_write, compiler.stack_word_size));
-				} else {
-					append_to_stack(right);
-
-					 // load dest address
-					switch (compiler.register_size) {
-						case 8: I(mov8_rm, r0, rs + ceil(bytes_to_write, compiler.stack_word_size)); break;
-						case 4: I(mov4_rm, r0, rs + ceil(bytes_to_write, compiler.stack_word_size)); break;
-					}
-
-					copy(r0, rs, bytes_to_write, false, right->location, left->location); // will pop src and dst addresses
-
-					push_comment(u8"remove left address and right from the stack"s);
-					I(add_rc, rs, ceil(bytes_to_write, compiler.stack_word_size) + compiler.stack_word_size);
-				}
-
-				break;
-
-
-				// BTW this code is unreachable
-
-				// :PUSH_ADDRESS: TODO: Replace this with load_address_of
-				push_address_of(left); // destination address
-
-				I(push_r, rs); // source address
-				I(add_mc, rs, compiler.stack_word_size);
-
-				assert(bytes_to_write);
-
-				copy(bytes_to_write, false, right->location, left->location); // will pop src and dst addresses
-
-				I(add_rc, rs, ceil(bytes_to_write, compiler.stack_word_size));
-
-				// Finish this thing that uses registers
-#if 0
-				auto destination_address = load_address_of(left); // destination address
-				if (destination_address) {
-					REDECLARE_VAL(destination_address, destination_address.value_unchecked());
-
-					auto source_address = allocate_register(builder);
-					if (source_address) {
-						REDECLARE_VAL(source_address, source_address.value_unchecked());
-
-						copy(destination_address, source_address, bytes_to_write, false, right->location, left->location); // will pop src and dst addresses
-					} else {
-
-					}
-
-					free_register(destination_address);
-				} else {
-				}
-
-				I(push_r, rs); // source address
-				I(add_mc, rs, compiler.stack_word_size);
-
-				assert(bytes_to_write);
-
-				copy(bytes_to_write, false, right->location, left->location); // will pop src and dst addresses
-
-				I(add_rc, rs, ceil(bytes_to_write, compiler.stack_word_size));
-#endif
-
-				break;
-			}
-			case lt:
-			case gt:
-			case le:
-			case ge:
-			case eq:
-			case ne: {
-				append_to_stack(left);
-				append_to_stack(right);
-				auto comparison = comparison_from_binary_operation(bin->operation);
-
-				I(pop_r, r1); // right
-				I(pop_r, r0); // left
-				if (::is_signed(left->type)) {
-					switch (get_size(left->type)) {
-						case 1: I(cmps1, .d=r2, .a=r0, .b=r1, .c = comparison); break;
-						case 2: I(cmps2, .d=r2, .a=r0, .b=r1, .c = comparison); break;
-						case 4: I(cmps4, .d=r2, .a=r0, .b=r1, .c = comparison); break;
-						case 8: I(cmps8, .d=r2, .a=r0, .b=r1, .c = comparison); break;
-						default: invalid_code_path();
-					}
-				} else {
-					switch (get_size(left->type)) {
-						case 1: I(cmpu1, .d=r2, .a=r0, .b=r1, .c = comparison); break;
-						case 2: I(cmpu2, .d=r2, .a=r0, .b=r1, .c = comparison); break;
-						case 4: I(cmpu4, .d=r2, .a=r0, .b=r1, .c = comparison); break;
-						case 8: I(cmpu8, .d=r2, .a=r0, .b=r1, .c = comparison); break;
-						default: invalid_code_path();
-					}
-				}
-				I(push_r, r2);
-				break;
-			}
-			case addass:
-			case subass:
-			case mulass:
-			case divass:
-			case modass:
-			case borass:
-			case bandass:
-			case bxorass:
-			case bslass:
-			case bsrass: {
-				append_to_stack(right);
-
-				auto destination_address_opt = load_address_of(left);
-				Register destination_address = r0;
-				if (destination_address_opt) {
-					destination_address = destination_address_opt.value_unchecked();
-				} else {
-					I(pop_r, destination_address);
-				}
-
-				I(pop_r, r1); // value
-
-				switch (bin->operation) {
-					case addass:  I(add_mr, destination_address, r1); break;
-					case subass:  I(sub_mr, destination_address, r1); break;
-					case mulass:  I(mul_mr, destination_address, r1); break;
-					case divass:  I(div_mr, destination_address, r1); break;
-					case modass:  I(mod_mr, destination_address, r1); break;
-					case borass:  I( or_mr, destination_address, r1); break;
-					case bandass: I(and_mr, destination_address, r1); break;
-					case bxorass: I(xor_mr, destination_address, r1); break;
-					case bslass:  I(shr_mr, destination_address, r1); break;
-					case bsrass:  I(shl_mr, destination_address, r1); break;
-					default: {
-						invalid_code_path();
-						break;
-					}
-				}
-
-				break;
-			}
-			default: {
-				invalid_code_path();
-				break;
-			}
-		}
-		return {};
-	}
-	return {};
-#endif
 }
 void FrameBuilder::append(AstIdentifier *identifier, RegisterOrAddress destination) {
 	check_destination(destination);
@@ -3378,6 +2911,7 @@ void FrameBuilder::append(AstIdentifier *identifier, RegisterOrAddress destinati
 				if (destination.is_in_register) {
 					I(lea, destination.reg, Register::instructions + definition->offset);
 				} else {
+					tmpreg(r0);
 					I(lea, r0, Register::instructions + definition->offset);
 					mov_mr(destination.address, r0);
 				}
@@ -3385,6 +2919,7 @@ void FrameBuilder::append(AstIdentifier *identifier, RegisterOrAddress destinati
 				if (destination.is_in_register) {
 					I(mov_re, destination.reg, definition->name);
 				} else {
+					tmpreg(r0);
 					I(mov_re, r0, definition->name);
 					mov_mr(destination.address, r0);
 				}
@@ -3402,10 +2937,12 @@ void FrameBuilder::append(AstIdentifier *identifier, RegisterOrAddress destinati
 			if (computed_address.is_in_register)
 				free_register(computed_address.reg);
 		};
-		Register definition_address_register = r0;
+		Register definition_address_register;
+		defer { if ((umm)definition_address_register < temporary_register_count) free_temporary_register(definition_address_register); };
 		if (computed_address.is_in_register) {
 			definition_address_register = computed_address.reg;
 		} else {
+			definition_address_register = allocate_temporary_register();
 			mov_rm(compiler.stack_word_size, definition_address_register, computed_address.address);
 		}
 		copy(destination, Address(definition_address_register), get_size(identifier->type), false);
@@ -3447,7 +2984,7 @@ void FrameBuilder::append(AstCall *call, RegisterOrAddress destination) {
 			stack_space_used_for_call += 32;
 		max_stack_space_used_for_call = max(max_stack_space_used_for_call, ceil(stack_space_used_for_call, 16ll));
 
-		auto return_value_address = rs + parameters_bytes;
+		auto return_value_address = Register::rs + parameters_bytes;
 
 		auto append_arguments = [&] {
 			// TODO: implement for 32-bit
@@ -3479,6 +3016,7 @@ void FrameBuilder::append(AstCall *call, RegisterOrAddress destination) {
 					auto tmp = allocate_temporary_space(size);
 					append(arg, tmp);
 
+					tmpreg(r0);
 					I(lea, r0, tmp);
 					I(mov8_mr, arg_addr, r0);
 				} else {
@@ -3488,6 +3026,7 @@ void FrameBuilder::append(AstCall *call, RegisterOrAddress destination) {
 			}
 
 			if (return_value_size > word_size) {
+				tmpreg(r0);
 				I(lea, r0, destination.address);
 				I(mov8_mr, return_value_address, r0);
 			}
@@ -3498,7 +3037,8 @@ void FrameBuilder::append(AstCall *call, RegisterOrAddress destination) {
 
 			for (umm i = 0; i < call->sorted_arguments.count; ++i) {
 				auto src = args_tmp + (call->sorted_arguments.count-1-i)*word_size;
-				auto dst = rs + (call->sorted_arguments.count-1-i)*word_size;
+				tmpreg(r0);
+				auto dst = Register::rs + (call->sorted_arguments.count-1-i)*word_size;
 				I(mov8_rm, r0, src);
 				I(mov8_mr, dst, r0);
 			}
@@ -3512,22 +3052,25 @@ void FrameBuilder::append(AstCall *call, RegisterOrAddress destination) {
 			if (name == "debug_break") {
 				I(debug_break);
 			} else if (name == "memcpy") {
-				auto rdst = r0;
-				auto rsrc = r1;
-				auto rsize = r2;
-				I(mov8_rm, rsize, Address(rs));
-				I(mov8_rm, rsrc, rs + 8);
-				I(mov8_rm, rdst, rs + 16);
+				tmpreg(rdst);
+				tmpreg(rsrc);
+				tmpreg(rsize);
+				I(mov8_rm, rsize, Address(Register::rs));
+				I(mov8_rm, rsrc, Register::rs + 8);
+				I(mov8_rm, rdst, Register::rs + 16);
 				I(copyf_mmr, Address(rdst), Address(rsrc), rsize);
 			} else if (name == "debug_print_int") {
-				I(mov8_rm, r0, Address(rs));
+				tmpreg(r0);
+				I(mov8_rm, r0, Address(Register::rs));
 				I(debug_print_int, r0);
 			} else if (name == "sqrt_F32") {
-				I(mov4_rm, r0, rs + 0);
+				tmpreg(r0);
+				I(mov4_rm, r0, Register::rs + 0);
 				I(sqrt4_f, r0);
 				copy(destination, r0, 4, false);
 			} else if (name == "sqrt_F64") {
-				I(mov8_rm, r0, rs + 0);
+				tmpreg(r0);
+				I(mov8_rm, r0, Register::rs + 0);
 				I(sqrt8_f, r0);
 				copy(destination, r0, 8, false);
 			//} else if (name == "round") {
@@ -3565,13 +3108,13 @@ void FrameBuilder::append(AstCall *call, RegisterOrAddress destination) {
 					break;
 				}
 				case CallingConvention::stdcall: {
-					LOAD_ADDRESS_INTO_REGISTER(fn_addr, call->callable, r0);
+					LOAD_ADDRESS_INTO_REGISTER(fn_addr, call->callable);
 					I(call_r, fn_addr, lambda);
 					break;
 				}
 			}
 		} else {
-			APPEND_INTO_REGISTER(callable_reg, call->callable, r0);
+			APPEND_INTO_REGISTER(callable_reg, call->callable);
 			I(call_r, callable_reg, lambda);
 		}
 
@@ -3678,7 +3221,8 @@ void FrameBuilder::append(AstLiteral *literal, RegisterOrAddress destination) {
 		case string: {
 			assert(!destination.is_in_register);
 			assert(literal->string.offset != -1);
-			I(lea, r0, constants + literal->string.offset);
+			tmpreg(r0);
+			I(lea, r0, Register::constants + literal->string.offset);
 			mov_mr(destination.address, r0);
 			mov_mc(compiler.stack_word_size, destination.address+8, (s64)literal->string.count);
 			break;
@@ -3756,6 +3300,10 @@ void FrameBuilder::append(AstLiteral *literal, RegisterOrAddress destination) {
 			}
 			break;
 		}
+		case Struct: {
+			copy(destination, Register::constants + literal->struct_offset, get_size(literal->type), false);
+			break;
+		}
 		default: invalid_code_path();
 	}
 }
@@ -3773,20 +3321,8 @@ void FrameBuilder::append(AstUnaryOperator *unop, RegisterOrAddress destination)
 					I(negi_r, destination.reg);
 				} else if (::is_float(unop->type)) {
 					switch (size) {
-						case 4:
-							I(mov_fr, x0, destination.reg);
-							I(mov_rc, r0, (s64)0x8000'0000);
-							I(mov_fr, x1, r0);
-							I(xor_ff, x0, x1);
-							I(mov_rf, destination.reg, x0);
-							break;
-						case 8:
-							I(mov_fr, x0, destination.reg);
-							I(mov_rc, r0, (s64)0x8000'0000'0000'0000);
-							I(mov_fr, x1, r0);
-							I(xor_ff, x0, x1);
-							I(mov_rf, destination.reg, x0);
-							break;
+						case 4: I(sbxor_rc, destination.reg, 31); break;
+						case 8: I(sbxor_rc, destination.reg, 63); break;
 						default: invalid_code_path();
 					}
 				} else {
@@ -3795,17 +3331,11 @@ void FrameBuilder::append(AstUnaryOperator *unop, RegisterOrAddress destination)
 			} else {
 				auto size = get_size(unop->type);
 				if (::is_integer(unop->type)) {
-					switch (size) {
-						case 1: I(negi8_m,  destination.address); break;
-						case 2: I(negi16_m, destination.address); break;
-						case 4: I(negi32_m, destination.address); break;
-						case 8: I(negi64_m, destination.address); break;
-						default: invalid_code_path();
-					}
+					negi_m(size, destination.address);
 				} else if (::is_float(unop->type)) {
 					switch (size) {
-						case 4: I(xor4_mc, destination.address, (s64)0x8000'0000); break;
-						case 8: I(xor8_mc, destination.address, (s64)0x8000'0000'0000'0000); break;
+						case 4: sbxor_mc(4, destination.address, 31); break;
+						case 8: sbxor_mc(8, destination.address, 63); break;
 						default: invalid_code_path();
 					}
 				} else {
@@ -3822,6 +3352,9 @@ void FrameBuilder::append(AstUnaryOperator *unop, RegisterOrAddress destination)
 		case dereference: {
 			auto pointer = append(unop->expression);
 			defer { if (pointer.is_in_register) free_register(pointer.reg); };
+
+			tmpreg(r0);
+			tmpreg(r1);
 
 			auto src = pointer.is_in_register ? pointer.reg : r0;
 			if (!pointer.is_in_register)
@@ -3855,7 +3388,7 @@ void FrameBuilder::append(AstUnaryOperator *unop, RegisterOrAddress destination)
 			if (destination.is_in_register) {
 				I(not_r, destination.reg);
 			} else {
-				I(not_m, destination.address);
+				not_m(get_size(unop->type), destination.address);
 			}
 			break;
 		}
@@ -3867,8 +3400,11 @@ void FrameBuilder::append(AstUnaryOperator *unop, RegisterOrAddress destination)
 
 			auto value_size = get_size(unop->type);
 
-			I(mov1_rm, r0, option.address + value_size);
-			I(jnz_cr, 2, r0);
+			{
+				tmpreg(r0);
+				I(mov1_rm, r0, option.address + value_size);
+				I(jnz_cr, 2, r0);
+			}
 			push_comment(format("{} didn't have a value. unwrap failed."str, unop->expression->location));
 			I(debug_break);
 			I(jmp_label);
@@ -3890,6 +3426,7 @@ void FrameBuilder::append(AstUnaryOperator *unop, RegisterOrAddress destination)
 			if (destination.is_in_register) {
 				I(lea, destination.reg, tmp);
 			} else {
+				tmpreg(r0);
 				I(lea, r0, tmp);
 				I(mov8_mr, destination.address, r0);
 			}
@@ -3907,7 +3444,7 @@ void FrameBuilder::append(AstSubscript *subscript, RegisterOrAddress destination
 	check_destination(destination);
 
 	if (is_addressable(subscript->expression)) {
-		LOAD_ADDRESS_INTO_REGISTER(addr, subscript, r0);
+		LOAD_ADDRESS_INTO_REGISTER(addr, subscript);
 
 		auto size = get_size(subscript->type);
 
@@ -4011,7 +3548,7 @@ void FrameBuilder::append(AstIfx *If, RegisterOrAddress destination) {
 
 	push_comment(format(u8"ifx {}", If->location));
 
-	APPEND_INTO_REGISTER(condition_register, If->condition, r0);
+	APPEND_INTO_REGISTER(condition_register, If->condition);
 
 	auto jz = I(jz_cr, 0, condition_register);
 
