@@ -300,11 +300,11 @@ create :: (): result: StringBuilder {
   result.alloc_last = &result.first
 }
 ```
-Also named return parameters can be useful when you need to do something with the value right before returning from the function:
+This also works well with `using` keyword, which imports all identifiers from an expressions into current scope:
 ```java
-process :: (data: Data): result: ProcessedData  {
-  defer do_something(result)
-  return if condition then process1(data) else process2(data)
+create :: (): using result: StringBuilder {
+  last = &first
+  alloc_last = &first
 }
 ```
 ## Functions always initialize the return value
