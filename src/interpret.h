@@ -25,17 +25,6 @@ inline umm append(StringBuilder &builder, Register r) {
 	}
 	return append_format(builder, "r{}", (u8)r);
 }
-inline umm append(StringBuilder &builder, XRegister r) {
-	using enum XRegister;
-	switch (r) {
-		case x0: return append(builder, "x0");
-		case x1: return append(builder, "x1");
-		case x2: return append(builder, "x2");
-		case x3: return append(builder, "x3");
-	}
-	invalid_code_path();
-	return {};
-}
 inline umm append(StringBuilder &builder, Address a) {
 	umm result = 0;
 	result += append(builder, '[');
@@ -319,6 +308,11 @@ mr <index> <type>: show memory value by register
 
 	bool halt = false;
 
+	auto executable_instruction_address = [&](s64 offset) -> void * {
+		auto index = offset / sizeof(Instruction);
+		return 0;
+	};
+
 	while (1) {
 		if (debugging) {
 			if (rip->kind == breaker) {
@@ -432,6 +426,7 @@ got_breaker_name:;
 				c(EXCEPTION_STACK_OVERFLOW)
 				c(STATUS_UNWIND_CONSOLIDATE)
 #undef c
+				default: print("UNKNOWN EXCEPTION\n"); break;
 			}
 			return EXCEPTION_EXECUTE_HANDLER;
 		};
@@ -576,7 +571,6 @@ got_breaker_name:;
 								p10,
 								p11
 							);
-
 							*M8(rs + lambda->parameters_size) = retval;
 						} else {
 							PUSH((u64)&i);
@@ -598,11 +592,11 @@ got_breaker_name:;
 					}
 					case lea: {
 						if (i.lea.s.base == instructions) {
-							not_implemented();
+							R(i.lea.d) = (u64)executable_instruction_address(i.lea.s.c);
 						} else {
 							R(i.lea.d) = (u64)M(i.lea.s);
-							dprint("loaded {} {} into {}\n", R(i.lea.d), i.lea.s, i.lea.d);
 						}
+						dprint("loaded {} {} into {}\n", R(i.lea.d), i.lea.s, i.lea.d);
 						break;
 					}
 					case call_c: {
@@ -836,7 +830,7 @@ got_breaker_name:;
 					case and_rc: { REDECLARE_REF(i, i.and_rc); RS8(i.d) &= (s64)i.s; break; }
 					case  or_rc: { REDECLARE_REF(i, i. or_rc); RS8(i.d) |= (s64)i.s; break; }
 					case shl_rc: { REDECLARE_REF(i, i.shl_rc); RS8(i.d) <<= (s64)i.s; break; }
-					case shr_rc: { REDECLARE_REF(i, i.shr_rc); RS8(i.d) >>= (s64)i.s; break; }
+					//case shr_rc: { REDECLARE_REF(i, i.shr_rc); RS8(i.d) >>= (s64)i.s; break; }
 
 					case add_rr: { REDECLARE_REF(i, i.add_rr); RS8(i.d) += RS8(i.s); break; }
 					case sub_rr: { REDECLARE_REF(i, i.sub_rr); RS8(i.d) -= RS8(i.s); break; }
@@ -849,7 +843,7 @@ got_breaker_name:;
 					case and_rr: { REDECLARE_REF(i, i.and_rr); RS8(i.d) &= RS8(i.s); break; }
 					case  or_rr: { REDECLARE_REF(i, i. or_rr); RS8(i.d) |= RS8(i.s); break; }
 					case shl_rr: { REDECLARE_REF(i, i.shl_rr); RS8(i.d) <<= RS8(i.s); break; }
-					case shr_rr: { REDECLARE_REF(i, i.shr_rr); RS8(i.d) >>= RS8(i.s); break; }
+					//case shr_rr: { REDECLARE_REF(i, i.shr_rr); RS8(i.d) >>= RS8(i.s); break; }
 
 					case movzx21_rr: { REDECLARE_REF(i, i.movzx21_rr); RU2(i.d) = RU1(i.s); break; }
 					case movzx41_rr: { REDECLARE_REF(i, i.movzx41_rr); RU4(i.d) = RU1(i.s); break; }
@@ -933,6 +927,8 @@ got_breaker_name:;
 		if (halt)
 			break;
 	}
-	if (compiler.print_stats)
-		print("{} ips\n", total_instructions_executed / get_time(timer));
+	if (compiler.do_profile) {
+		auto time = get_time(timer);
+		print("Interpreted {} instruction in {} ms. ({} ips)\n", total_instructions_executed, time, total_instructions_executed / time);
+	}
 }

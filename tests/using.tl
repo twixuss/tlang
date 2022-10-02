@@ -5,7 +5,7 @@ Foo :: struct {
 	b: String
 }
 
-get_foo :: (): using result: Foo {
+get_foo :: () using result: Foo {
 	a = 53
 	b = "haha"
 	println(result)

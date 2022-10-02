@@ -8,6 +8,67 @@
 
 using namespace x86_64;
 
+namespace tl {
+
+inline umm append(StringBuilder &builder, ::Address a) {
+	using namespace x86_64;
+	using enum Register;
+	umm result = 0;
+	result += append(builder, '[');
+	switch (a.base) {
+		case locals:
+			a.base = rb;
+			a.c += locals_offset;
+			break;
+		case temporary:
+			a.base = rb;
+			a.c += temporary_offset;
+			break;
+		case parameters:
+			a.base = rb;
+			a.c = parameters_size - a.c + 8;
+			break;
+		case return_parameters:
+			a.base = rb;
+			a.c += parameters_size + 16;
+			break;
+	}
+	switch (a.base) {
+		case constants   : result += append(builder, "rel constants"); break;
+		case rwdata      : result += append(builder, "rel rwdata"); break;
+		case zeros       : result += append(builder, "rel zeros"); break;
+		case instructions: return append_format(builder, "rel i{}]", a.c);
+		default: result += append(builder, to_x86_register(a.base)); break;
+	}
+	if (a.r1_scale_index) {
+		if (a.r2_scale) {
+			invalid_code_path("not implemented");
+		} else {
+			result += append(builder, '+');
+			result += append(builder, to_x86_register(a.r1));
+			result += append(builder, '*');
+			result += append(builder, lea_scales[a.r1_scale_index]);
+			if (a.c) {
+				result += append(builder, '+');
+				result += append(builder, a.c);
+			}
+		}
+	} else {
+		if (a.r2_scale) {
+			invalid_code_path("not implemented");
+		} else {
+			if (a.c) {
+				result += append(builder, '+');
+				result += append(builder, a.c);
+			}
+		}
+	}
+	result += append(builder, ']');
+	return result;
+}
+
+}
+
 static void append_instructions(Compiler &compiler, StringBuilder &builder, List<Instruction> instructions) {
 	timed_function(compiler.profiler);
 
@@ -20,9 +81,11 @@ static void append_instructions(Compiler &compiler, StringBuilder &builder, List
 		"push 0\n"
 		"cld\n"
 		"call i{}\n"
+		"call i{}\n"
 		"mov rcx, [rsp]\n"
 		"call ExitProcess\n"
 		"ret\n",
+		compiler.init_runtime_lambda->location_in_bytecode,
 		compiler.main_lambda->location_in_bytecode
 	);
 
@@ -152,6 +215,35 @@ _stdcall_odd:
 	ret
 )"
 	);
+	append(builder, R"(
+global memcpy
+memcpy:
+	push rsi
+	push rdi
+	mov rdi, rcx
+	mov rsi, rdx
+	mov rcx, r8
+	rep movsb
+	pop rdi
+	pop rsi
+	ret
+global memset
+memset:
+	push rsi
+	push rdi
+	mov rdi, rcx
+	mov rax, rdx
+	mov rcx, r8
+	rep stosb
+	pop rdi
+	pop rsi
+	ret
+)"
+	);
+
+	for (auto &l : compiler.lambdas_with_body) {
+		append_format(builder, "global i{}\n", l->location_in_bytecode);
+	}
 
 	s64 idx = 0;
 	for (auto i : instructions) {
@@ -193,13 +285,13 @@ DECLARE_OUTPUT_BUILDER {
 	auto msvc_directory = locate_msvc();
 	if (!msvc_directory.data) {
 		with(ConsoleColor::red, print("Couldn't locate msvc"));
-		return;
+		return false;
 	}
 
 	auto wkits_directory = locate_wkits();
 	if (!wkits_directory.data) {
 		with(ConsoleColor::red, print("Couldn't locate windows kits"));
-		return;
+		return false;
 	}
 
 	StringBuilder builder;
@@ -267,11 +359,12 @@ DECLARE_OUTPUT_BUILDER {
 
 		append(bat_builder, "if %errorlevel% neq 0 exit /b %errorlevel%\n");
 		append_format(bat_builder,
-			R"("{}link" /nologo "{}.obj" /out:"{}" /nodefaultlib /entry:"main" /subsystem:console /DEBUG:FULL /LIBPATH:"{}" kernel32.lib)",
+			R"("{}link" /nologo "{}.obj" /out:"{}" /nodefaultlib /entry:"main" /subsystem:console /DEBUG:FULL /LIBPATH:"{}" /LIBPATH:"{}\libs" kernel32.lib)",
 			msvc_directory,
 			output_path_base,
 			compiler.output_path,
-			wkits_directory
+			wkits_directory,
+			compiler.compiler_directory
 		);
 		for_each(compiler.extern_libraries, [&](auto library, auto) {
 			append_format(bat_builder, " {}.lib", library);
@@ -285,7 +378,7 @@ DECLARE_OUTPUT_BUILDER {
 		auto process = start_process(bat_path);
 		if (!process.handle) {
 			with(ConsoleColor::red, print("Cannot execute file '{}'\n", bat_path));
-			return;
+			return false;
 		}
 
 		defer { free(process); };
@@ -310,7 +403,7 @@ DECLARE_OUTPUT_BUILDER {
 		auto exit_code = get_exit_code(process);
 		if (exit_code != 0) {
 			with(ConsoleColor::red, print("Build command failed\n"));
-			return;
+			return false;
 		}
 #endif
 		if (!compiler.keep_temp)
@@ -319,6 +412,8 @@ DECLARE_OUTPUT_BUILDER {
 
 	if (!compiler.keep_temp)
 		delete_file(asm_path);
+
+	return true;
 }
 
 DECLARE_TARGET_INFORMATION_GETTER {

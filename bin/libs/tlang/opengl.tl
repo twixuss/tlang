@@ -481,15 +481,15 @@ GL_COLOR_BUFFER_BIT :: 0x00004000
 
 wglCreateContext :: (
 	unnamedParam1: HDC
-): HGLRC
+) HGLRC
 
 wglMakeCurrent :: (
 	unnamedParam1: HDC,
 	unnamedParam2: HGLRC
-): BOOL
+) BOOL
 
-wglGetProcAddress :: (name: *U8): *Void
-wglDeleteContext  :: (_: HGLRC): BOOL
+wglGetProcAddress :: (name: *U8) *Void
+wglDeleteContext  :: (_: HGLRC) BOOL
 
 glClearColor :: (r: F32, g: F32, b: F32, a: F32)
 glClear :: (flags: U32)
@@ -513,12 +513,12 @@ glDisable    :: (cap: GLenum)
 glGenBuffers              : (n: GLsizei, buffers: *GLuint) #type
 glBindBuffer              : (target: GLenum, buffer: GLuint) #type
 glBufferData              : (target: GLenum, size: GLsizeiptr, data: *GLvoid, usage: GLenum) #type
-glCreateShader            : (shaderType: GLenum): GLuint #type
+glCreateShader            : (shaderType: GLenum) GLuint #type
 glShaderSource            : (id: GLuint, count: GLsizei, str: **GLchar, length: *GLint) #type
 glCompileShader           : (id: GLuint) #type
 glGetShaderiv             : (id: GLuint, pname: GLenum, params: *GLint) #type
 glGetShaderInfoLog        : (id: GLuint, maxLength: GLsizei, length: *GLsizei, infoLog: *GLchar) #type
-glCreateProgram           : (): GLuint #type
+glCreateProgram           : () GLuint #type
 glAttachShader            : (program: GLuint, id: GLuint) #type
 glDeleteShader            : (shader: GLuint) #type
 glLinkProgram             : (program: GLuint) #type
@@ -558,11 +558,11 @@ glUniform1uiv             : (location: GLint, count: GLsizei, value: *GLuint) #t
 glUniform2uiv             : (location: GLint, count: GLsizei, value: *GLuint) #type
 glUniform3uiv             : (location: GLint, count: GLsizei, value: *GLuint) #type
 glUniform4uiv             : (location: GLint, count: GLsizei, value: *GLuint) #type
-glGetUniformLocation      : (program: GLuint, name: *GLchar): GLint #type
-wglSwapIntervalEXT           : (interval: S32): BOOL #type
-wglCreateContextAttribsARB   : (hDC: HDC, hShareContext: HGLRC, attribList: *S32): HGLRC #type
-wglChoosePixelFormatARB      : (hdc: HDC, piAttribIList: *S32, pfAttribFList: *F32, nMaxFormats: UINT, piFormats: *S32, nNumFormats: *UINT): BOOL #type
-wglGetPixelFormatAttribivARB : (hdc: HDC, iPixelFormat: S32, iLayerPlane: S32, nAttributes: UINT, piAttributes: *S32, piValues: *S32): BOOL #type
+glGetUniformLocation      : (program: GLuint, name: *GLchar) GLint #type
+wglSwapIntervalEXT           : (interval: S32) BOOL #type
+wglCreateContextAttribsARB   : (hDC: HDC, hShareContext: HGLRC, attribList: *S32) HGLRC #type
+wglChoosePixelFormatARB      : (hdc: HDC, piAttribIList: *S32, pfAttribFList: *F32, nMaxFormats: UINT, piFormats: *S32, nNumFormats: *UINT) BOOL #type
+wglGetPixelFormatAttribivARB : (hdc: HDC, iPixelFormat: S32, iLayerPlane: S32, nAttributes: UINT, piAttributes: *S32, piValues: *S32) BOOL #type
 
 load_opengl_functions :: () {
 	glGenBuffers              = @wglGetProcAddress("glGenBuffers"             .data)

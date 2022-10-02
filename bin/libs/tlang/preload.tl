@@ -46,10 +46,10 @@ any :: struct {
 debug_break :: () #intrinsic
 memcpy :: (dst: *Void, src: *Void, size: UInt) #intrinsic
 debug_print_int :: (value: Int) #intrinsic
-mul128 :: (a: Int, b: Int): [2]Int #intrinsic
-mul128 :: (a: UInt, b: UInt): [2]UInt #intrinsic
-sqrt_F32 :: (a: F32): F32 #intrinsic
-sqrt_F64 :: (a: F64): F64 #intrinsic
+mul128 :: (a: Int, b: Int) [2]Int #intrinsic
+mul128 :: (a: UInt, b: UInt) [2]UInt #intrinsic
+sqrt_F32 :: (a: F32) F32 #intrinsic
+sqrt_F64 :: (a: F64) F64 #intrinsic
 
 sqrt :: (a: F32) => sqrt_F32(a)
 sqrt :: (a: F64) => sqrt_F64(a)
@@ -61,8 +61,31 @@ sqrt :: (a: F64) => sqrt_F64(a)
 // 	to_closest_integer
 // }
 //
-// round :: (value: F64, mode: %RoundingMode): F64 #intrinsic
+// round :: (value: F64, mode: %RoundingMode) F64 #intrinsic
 // fraction :: (value: F64, mode: %RoundingMode) => value - round(value, mode)
 
 // FIXME: default arguments
 // fraction :: (value: F64) => fraction(value, .to_negative_infinity)
+
+init_runtime :: () {
+	init_allocator()
+}
+
+Allocator :: struct {
+    func:  (size: Int, state: *Void) *Void #type
+    state: *Void
+}
+
+default_allocator: Allocator
+current_allocator: Allocator
+
+init_allocator :: () {
+    default_allocator.func = (size: Int, state: *Void) *Void => VirtualAlloc(null, @size, MEM_RESERVE|MEM_COMMIT, PAGE_READWRITE)
+    current_allocator = default_allocator
+}
+
+allocate :: (me: *Allocator, size: Int) => me.func(size, me.state)
+
+new :: (T: %Type) *T => @current_allocator.allocate(#sizeof T)
+
+import "tlang/windows.tl"

@@ -3,14 +3,6 @@
 
 #define BYTECODE_DEBUG TL_DEBUG
 
-// XMM registers
-enum class XRegister : u8 {
-	x0,
-	x1,
-	x2,
-	x3,
-};
-
 inline static constexpr Array<u8, 5> lea_scales {
 	0, 1, 2, 4, 8
 };
@@ -168,15 +160,15 @@ e(movzx84, rr         , m(Register, d) m(Register, s)) \
 w(lea                 , m(Register, d) m(Address, s)) \
 e(push, c             , m(s64, s)) \
 e(push, r             , m(Register, s)) \
-e(push, f             , m(XRegister, s)) \
 e(push, m             , m(Address, s)) \
 e(mov, re             , m(Register, d) m(String, s)) \
 e(pop, r              , m(Register, d)) \
-e(pop, f              , m(XRegister, d)) \
 e(pop, m              , m(Address, d)) \
 w(ret                 , ) \
-e(shr, rc             , m(Register, d) m(s64, s)) \
-e(shr, rr             , m(Register, d) m(Register, s)) \
+e(sar, rc             , m(Register, d) m(s64, s)) \
+e(sar, rr             , m(Register, d) m(Register, s)) \
+e(slr, rc             , m(Register, d) m(s64, s)) \
+e(slr, rr             , m(Register, d) m(Register, s)) \
 e(shl, rc             , m(Register, d) m(s64, s)) \
 e(shl, rr             , m(Register, d) m(Register, s)) \
 e(add, rc             , m(Register, d) m(s64, s)) \
@@ -250,12 +242,6 @@ w(cvt_f64_s64         , m(Register, d)) \
 w(cvt_s64_f64         , m(Register, d)) \
 w(cvt_f32_f64         , m(Register, d)) \
 w(cvt_f64_f32         , m(Register, d)) \
-e(mov, fr             , m(XRegister, d) m(Register, s)) \
-e(mov, rf             , m(Register, d) m(XRegister, s)) \
-e(mov1, xm            , m(XRegister, d) m(Address, s)) \
-e(mov2, xm            , m(XRegister, d) m(Address, s)) \
-e(mov4, xm            , m(XRegister, d) m(Address, s)) \
-e(mov8, xm            , m(XRegister, d) m(Address, s)) \
 e(add4, ff            , m(Register, d) m(Register, s)) \
 e(mul4, ff            , m(Register, d) m(Register, s)) \
 e(sub4, ff            , m(Register, d) m(Register, s)) \
@@ -264,7 +250,6 @@ e(add8, ff            , m(Register, d) m(Register, s)) \
 e(mul8, ff            , m(Register, d) m(Register, s)) \
 e(sub8, ff            , m(Register, d) m(Register, s)) \
 e(div8, ff            , m(Register, d) m(Register, s)) \
-e(xor, ff             , m(XRegister, d) m(XRegister, s)) \
 e(round4, f           , m(Register, d) m(RoundingMode, mode)) \
 e(round8, f           , m(Register, d) m(RoundingMode, mode)) \
 e(tobool, r           , m(Register, d)) \
@@ -278,6 +263,14 @@ w(debug_break         , ) \
 w(debug_line          , m(u32, line)) \
 w(debug_start_lambda  , m(AstLambda *, lambda)) \
 w(debug_print_int     , m(Register, r)) \
+e(adds1, rr           , m(Register, d) m(Register, s)) \
+e(adds2, rr           , m(Register, d) m(Register, s)) \
+e(adds4, rr           , m(Register, d) m(Register, s)) \
+e(adds8, rr           , m(Register, d) m(Register, s)) \
+e(subs1, rr           , m(Register, d) m(Register, s)) \
+e(subs2, rr           , m(Register, d) m(Register, s)) \
+e(subs4, rr           , m(Register, d) m(Register, s)) \
+e(subs8, rr           , m(Register, d) m(Register, s)) \
 
 
 
@@ -393,8 +386,8 @@ inline umm append(StringBuilder &builder, Comparison c) {
 	}
 }
 
-#define DECLARE_OUTPUT_BUILDER extern "C" __declspec(dllexport) void tlang_build_output(Compiler &compiler, Bytecode &bytecode)
-using OutputBuilder = void (*)(Compiler &compiler, Bytecode &bytecode);
+#define DECLARE_OUTPUT_BUILDER extern "C" __declspec(dllexport) bool tlang_build_output(Compiler &compiler, Bytecode &bytecode)
+using OutputBuilder = bool (*)(Compiler &compiler, Bytecode &bytecode);
 
 #define DECLARE_TARGET_INFORMATION_GETTER extern "C" __declspec(dllexport) void tlang_get_target_information(Compiler &compiler)
 using TargetInformationGetter = void (*)(Compiler &compiler);

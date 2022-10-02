@@ -7,3 +7,6 @@
 [submodule "dep/fadec"]
 	path = dep/fadec
 	url = https://github.com/aengelke/fadec
+[submodule "dep/stb"]
+	path = dep/stb
+	url = https://github.com/nothings/stb

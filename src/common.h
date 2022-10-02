@@ -146,19 +146,19 @@ void for_each(StdHashMap<Key, Value, Traits> map, Fn &&fn) {
 #endif
 
 #if 0
-template <class K, class V>
-struct DebugHashTraits : DefaultHashTraits<K, V> {
+template <class K>
+struct DebugHashTraits : DefaultHashTraits<K> {
 	inline static constexpr void on_collision(K a, K b) {
 		print("COLLISION: '{}' and '{}'\n", a, b);
 	}
 };
 
 template <class K, class V>
-using Map = ContiguousHashMap<K, V, DebugHashTraits<K, V>>;
+using Map = ContiguousHashMap<K, V, DebugHashTraits<K>>;
 #else
 template <class K, class V>
-using Map = HashMap<K, V>;
-//using Map = ContiguousHashMap<K, V>;
+//using Map = HashMap<K, V>;
+using Map = ContiguousHashMap<K, V>;
 #endif
 
 #pragma warning(disable: 4455)
@@ -174,7 +174,7 @@ struct SourceFileInfo {
 };
 
 struct Section {
-	BlockList<u8> buffer;
+	List<u8> buffer;
 	List<u64> relocations;
 
 	u32 w8(u64 v) {
@@ -291,6 +291,11 @@ inline Report make_report(ReportKind kind, String location, Char const *format_s
 // Library name -> list of function names
 using ExternLibraries = Map<String, List<String>>;
 
+struct RelativeString {
+	u32 offset;
+	u32 count;
+};
+
 struct Compiler {
 	String source_path;
 	String source_path_without_extension;
@@ -301,6 +306,7 @@ struct Compiler {
 	String current_directory;
 	AstLambda *main_lambda;
 	AstLambda *build_lambda;
+	AstLambda *init_runtime_lambda;
 	Profiler profiler;
     List<PreciseTimer> phase_timers;
 	int tabs = 0;
@@ -317,7 +323,6 @@ struct Compiler {
 	bool debug_poly = false;
 	bool print_lowered = false;
 	bool optimize = false;
-	bool print_stats = false;
 
 	u8 optimization_pass_count = 4;
 
@@ -328,7 +333,7 @@ struct Compiler {
 	Section data_section;
 	s64 zero_section_size = 0;
 
-	HashMap<String, s64> string_set;
+	List<RelativeString> string_set;
 
 	Strings strings;
 
@@ -418,7 +423,7 @@ struct Compiler {
 		switch (kind) {
 			using enum ReportKind;
 			using enum ConsoleColor;
-			case info: return dark_gray;
+			case info: return cyan;
 			case warning: return yellow;
 			case error: return red;
 		}
@@ -556,24 +561,29 @@ struct Compiler {
 			print_replacing_tabs_with_4_spaces(line_end);
 			print('\n');
 
-			for (u32 i = 0; i < offset; ++i) {
-				print(' ');
-			}
-			for (auto c : line_start) {
-				if (c == '\t') {
-					print("    ");
-				} else {
+			if (!find(location, u8'\n')) {
+				for (u32 i = 0; i < offset; ++i) {
 					print(' ');
 				}
-			}
-			for (auto c : location) {
-				if (c == '\t') {
-					print("^^^^");
-				} else {
-					print('^');
+				for (auto c : line_start) {
+					if (c == '\t') {
+						print("    ");
+					} else {
+						print(' ');
+					}
 				}
+
+				withs(get_console_color(kind),
+					for (auto c : location) {
+						if (c == '\t') {
+							print("~~~~");
+						} else {
+							print('~');
+						}
+					}
+				);
+				print("\n");
 			}
-			print("\n");
 		}
 	}
 

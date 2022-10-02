@@ -233,6 +233,10 @@ void append_type(StringBuilder &builder, AstExpression *type, bool silent_error)
 
 // TODO FIXME extremely inefficient on allocations.
 HeapString type_to_string(AstExpression *type, bool silent_error) {
+	// Is this 'aka' thing really useful?
+	return type_name(type, silent_error);
+
+
 	if (!type)
 		return (HeapString)to_list<MyAllocator>(u8"null"s);
 
@@ -601,6 +605,13 @@ bool is_pointer(AstExpression *type) {
 bool is_pointer_internally(AstExpression *type) {
 	return is_lambda_type(type) || is_pointer(type);
 }
+bool is_pointer_to(AstExpression *pointer_type, AstExpression *pointee_type) {
+	auto p = as_pointer(pointer_type);
+	if (!p)
+		return false;
+	return types_match(p->expression, pointee_type);
+
+}
 AstUnaryOperator *as_pointer(AstExpression *type) {
 	switch (type->kind) {
 		case Ast_Identifier: {
@@ -650,7 +661,7 @@ bool is_constant(AstExpression *expression) {
 			return true;
 		case Ast_BinaryOperator: {
 			auto binop = (AstBinaryOperator *)expression;
-			return is_constant(binop->left) && is_constant(binop->right);
+			return is_constant(binop->right);
 		}
 		case Ast_UnaryOperator: {
 			auto unop = (AstUnaryOperator *)expression;
@@ -803,4 +814,29 @@ bool is_addressable(AstExpression *expression) {
 		}
 	}
 	return false;
+}
+
+AstNode::AstNode() {
+	// if (_uid == 4613)
+	// 	debug_break();
+}
+
+void Scope::add(AstStatement *statement) {
+	if (!statement->parent_scope) {
+		statement->parent_scope = this;
+	}
+	statement_list.add(statement);
+	if (statement->kind == Ast_Definition) {
+		auto definition = (AstDefinition *)statement;
+		definition_list.add(definition);
+		definition_map.get_or_insert(definition->name).add(definition);
+	}
+}
+void Scope::add(AstDefinition *definition) {
+	if (!definition->parent_scope) {
+		definition->parent_scope = this;
+	}
+	statement_list.add(definition);
+	definition_list.add(definition);
+	definition_map.get_or_insert(definition->name).add(definition);
 }

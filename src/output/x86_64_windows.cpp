@@ -117,13 +117,13 @@ DECLARE_OUTPUT_BUILDER {
 	auto msvc_directory = locate_msvc();
 	if (!msvc_directory.data) {
 		with(ConsoleColor::red, print("Couldn't locate msvc"));
-		return;
+		return false;
 	}
 
 	auto wkits_directory = locate_wkits();
 	if (!wkits_directory.data) {
 		with(ConsoleColor::red, print("Couldn't locate windows kits"));
-		return;
+		return false;
 	}
 
 	{
@@ -538,7 +538,7 @@ DECLARE_OUTPUT_BUILDER {
 		}
 	}
 
-		return;
+		return false;
 
 	{
 		scoped_phase("Assembling and linking");
@@ -564,7 +564,7 @@ DECLARE_OUTPUT_BUILDER {
 		auto process = start_process(bat_path);
 		if (!process.handle) {
 			with(ConsoleColor::red, print("Cannot execute file '{}'\n", bat_path));
-			return;
+			return false;
 		}
 
 		defer { free(process); };
@@ -589,7 +589,7 @@ DECLARE_OUTPUT_BUILDER {
 		auto exit_code = get_exit_code(process);
 		if (exit_code != 0) {
 			with(ConsoleColor::red, print("Build command failed\n"));
-			return;
+			return false;
 		}
 #endif
 		if (!context.keep_temp)
@@ -598,6 +598,8 @@ DECLARE_OUTPUT_BUILDER {
 
 	if (!context.keep_temp)
 		delete_file(obj_path);
+
+	return true;
 }
 
 DECLARE_TARGET_INFORMATION_GETTER {

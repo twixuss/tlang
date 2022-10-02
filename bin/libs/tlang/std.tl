@@ -1,36 +1,53 @@
 import "tlang/windows.tl"
-import "tlang/allocator.tl"
 
-merge :: (a: U8, b: U8): U16 =>
+RGBU8 :: struct {
+    r: U8
+    g: U8
+    b: U8
+}
+
+RGBAU8 :: struct {
+    r: U8
+    g: U8
+    b: U8
+    a: U8
+}
+
+merge :: (a, b: U8) U16 =>
 	(a as U16 << 8) | b
 
 strlen :: (str: *U8) {
 	c := str
-	while *c != 0 c += 1
+	while *c != 0 do c += 1
 	return c as Int - str as Int
 }
 
-find :: (me: String, what: String): ?String {
-	if (count - what.count + 1) as Int <= 0
+min :: (a, b: $T) => if a < b then a else b
+max :: (a, b: $T) => if a < b then b else a
+
+lerp :: (a, b: $T, t: $U) => a + (b - a) * t
+
+find :: (haystack, needle: String) ?String {
+	if (haystack.count - needle.count + 1) as Int <= 0
 		return null
 
 	same := true
-	for i in 0 .. count - what.count + 1 {
+	for i in 0 .. haystack.count - needle.count + 1 {
 		same = true
-		for j in 0 .. what.count
-			if what[j] != me[i + j]
+		for j in 0 .. needle.count
+			if needle[j] != haystack[i + j]
 				same = false
 		if same
-			return String(&me[i], what.count)
+			return String(&haystack[i], needle.count)
 	}
 	return null
 }
 
-starts_with :: (me: String, sub: String) {
-	if sub.count > count
+starts_with :: (haystack, needle: String) {
+	if needle.count > haystack.count
         return false
-    for i in 0..sub.count
-        if data[i] != sub.data[i]
+    for i in 0..needle.count
+        if haystack.data[i] != needle.data[i]
             return false
     return true
 }
@@ -44,7 +61,17 @@ write_to_stdout :: (str: String) {
 write_to_stdout :: (char: U8) =>
     write_to_stdout(String(&char, 1))
 
-StringizeCallback :: (state: *Void, str: String): Int #type
+// TODO: default arguments
+set_console_color :: (color: RGBU8, background: Bool /*= false*/) {
+    mask := 0x8
+    if color.r >= 128 then mask |= 0x4
+    if color.g >= 128 then mask |= 0x2
+    if color.b >= 128 then mask |= 0x1
+    if background then mask <<= 4
+    SetConsoleTextAttribute(GetStdHandle(STD_OUTPUT_HANDLE), mask as DWORD);
+}
+
+StringizeCallback :: (state: *Void, str: String) Int #type
 
 stringize :: (_val: Int, state: *Void, callback: StringizeCallback) {
     val := _val
@@ -141,12 +168,9 @@ stringize_hex :: (_val: UInt, state: *Void, callback: StringizeCallback) {
     }
 
 
-	while true {
+	while dst_index != 0 {
         dst_index -= 1
         buffer[dst_index] = '0'
-
-		if dst_index == 0
-			break
 	}
 
     return callback(state, String(@&buffer[dst_index], @(CAPACITY - dst_index)))
@@ -310,24 +334,31 @@ stringize_quoted_if_string :: (value: Any, state: *Void, callback: StringizeCall
 		stringize(value, state, callback)
 
 
-stringize :: (value: Any, state: *Void, callback: StringizeCallback): Int {
+stringize :: (value: Any, state: *Void, callback: StringizeCallback) Int {
 	info := value.type
     assert info != null
 
-	stringize_span :: (data: *U8, count: Int, info: *TypeInfo, state: *Void, callback: StringizeCallback): Int {
+	stringize_span :: (data: *U8, count: Int, info: *TypeInfo, state: *Void, callback: StringizeCallback) Int {
         bytes_written: Int
 		bytes_written += callback(state, "[")
-		for i in 0..count {
-			if i != 0
+        if count <= 16 {
+            for i in 0..count {
+                if i != 0
+                    bytes_written += callback(state, ", ")
+                bytes_written += stringize_quoted_if_string(Any(data + i * info.size, info), state, callback)
+            }
+        } else {
+            for i in 0..8 {
+                if i != 0
+                    bytes_written += callback(state, ", ")
+                bytes_written += stringize_quoted_if_string(Any(data + i * info.size, info), state, callback)
+            }
+            bytes_written += callback(state, "...")
+            for i in (count-8)..count {
                 bytes_written += callback(state, ", ")
-
-			if i == 8 && i < count - 8 {
-				i = count - 8
-				bytes_written += callback(state, "..., ")
-			}
-
-			bytes_written += stringize_quoted_if_string(Any(data + i * info.size, info), state, callback)
-		}
+                bytes_written += stringize_quoted_if_string(Any(data + i * info.size, info), state, callback)
+            }
+        }
 		bytes_written += callback(state, "]")
 	}
 
@@ -355,6 +386,8 @@ stringize :: (value: Any, state: *Void, callback: StringizeCallback): Int {
 		.\struct => {
 			if info.name == "String" {
 				return callback(state, *(value.pointer as *String))
+            } else if info.name == "RGBU8" {
+                set_console_color(*(value.pointer as *RGBU8), false)
 			} else {
                 bytes_written: Int
                 bytes_written += callback(state, "{")
@@ -374,20 +407,65 @@ stringize :: (value: Any, state: *Void, callback: StringizeCallback): Int {
 		.array => return stringize_span(value.pointer, info.array_count, info.pointee, state, callback)
 		.span => {
 			span := *(value.pointer as *[]U8)
-			return stringize_span(span.data, span.count, info.members[0].type.pointee, state, callback)
+			return stringize_span(span.data, span.count, info.pointee, state, callback)
 		}
 	}
 }
+
+stringize_format :: (state: *Void, callback: StringizeCallback, format: String, args: ..Any) Int {
+    bytes_written := 0
+	remaining := format
+
+	for i in 0 .. args.count {
+		y := remaining.find("{}")
+		if !y break
+		x := *y
+
+		bytes_written += callback(state, String(remaining.data, @(x.data - remaining.data)))
+
+		bytes_written += stringize(args[i], state, callback)
+
+		remaining.count -= x.data - remaining.data + 2
+		remaining.data = x.data + 2
+	}
+
+    bytes_written += callback(state, remaining)
+    return bytes_written
+}
+
+
+dprint :: (value: String) => write_to_stdout(value)
 
 dprint :: (value: Any) =>
     stringize(value, null, (state: *Void, str: String) =>
         write_to_stdout(str)
     )
 
+dprint :: (format: String, values: ..Any) Int =>
+    stringize_format(null, (state: *Void, string: String) {
+        return dprint(string)
+    }, format, ..values)
+
+
+dprintln :: () => write_to_stdout('\n')
+
+dprintln :: (string: String) {
+    write_to_stdout(string)
+    write_to_stdout('\n')
+}
+
 dprintln :: (value: Any) {
-	dprint(value)
+    dprint(value)
+    write_to_stdout('\n')
+}
+
+dprintln :: (format: String, values: ..Any) {
+	dprint(format, ..values)
 	write_to_stdout('\n')
 }
+
+
+print :: (value: String) => write_to_stdout(value)
 
 print :: (value: Any) {
 	b := create_string_builder()
@@ -395,9 +473,6 @@ print :: (value: Any) {
 	write_to_stdout(b.to_string())
 	b.free()
 }
-
-print :: (value: String) =>
-	write_to_stdout(value)
 
 print :: (format: String, values: ..Any) {
 	b := create_string_builder()
@@ -408,13 +483,13 @@ print :: (format: String, values: ..Any) {
 
 println :: () => write_to_stdout('\n')
 
-println :: (value: Any) {
-	print(value)
+println :: (value: String) {
+	write_to_stdout(value)
 	write_to_stdout('\n')
 }
 
-println :: (value: String) {
-	write_to_stdout(value)
+println :: (value: Any) {
+	print(value)
 	write_to_stdout('\n')
 }
 
@@ -432,7 +507,7 @@ StringBuilder :: struct {
 		next: *Block
 	}
 
-	// allocator: Allocator = current_allocator
+	allocator: Allocator
 	first: Block
 	initial_buffer: U8[STRING_BUILDER_INITIAL_BUFFER_CAPACITY]
 	last: *Block
@@ -441,21 +516,20 @@ StringBuilder :: struct {
 }
 
 // TODO: static extensions for structs
-create_string_builder :: (): using result: StringBuilder {
-	// allocator = current_allocator
+create_string_builder :: () using result: StringBuilder {
+	allocator = current_allocator
 	first.capacity = STRING_BUILDER_INITIAL_BUFFER_CAPACITY
 	last = &first
 	alloc_last = &first
 }
 
-begin :: (me: *StringBuilder.Block): *U8 => @&me[1]
-end   :: (me: *StringBuilder.Block): *U8 => me.begin() + count
-available_space :: (me: *StringBuilder.Block): Int => capacity - count
+begin :: (using me: *StringBuilder.Block) *U8 => @&me[1]
+end   :: (using me: *StringBuilder.Block) *U8 => me.begin() + count
+available_space :: (using me: *StringBuilder.Block) Int => capacity - count
 
-allocate_block :: (me: *StringBuilder) {
+allocate_block :: (using me: *StringBuilder) {
     capacity := alloc_last.capacity*2
-    block := VirtualAlloc(null, (#sizeof StringBuilder.Block + capacity) as SIZE_T, MEM_RESERVE|MEM_COMMIT, PAGE_READWRITE) as *StringBuilder.Block
-    // block := (Block *)allocator.allocate_uninitialized(sizeof(Block) + capacity, alignof(Block) TL_LA)
+    block := allocator.allocate(#sizeof StringBuilder.Block + capacity) as *StringBuilder.Block
     block.count = 0
     block.capacity = capacity
     block.next = null
@@ -464,9 +538,9 @@ allocate_block :: (me: *StringBuilder) {
     return block
 }
 
-append_char :: (me: *StringBuilder, ch: U8) => me.append(String(&ch, 1))
+append_char :: (using me: *StringBuilder, ch: U8) => me.append(String(&ch, 1))
 
-append :: (me: *StringBuilder, str: String) {
+append :: (using me: *StringBuilder, str: String) {
     remaining := str
     while remaining.count > last.available_space() {
         space_in_block := last.available_space()
@@ -485,33 +559,15 @@ append :: (me: *StringBuilder, str: String) {
     return str.count
 }
 
-append :: (me: *StringBuilder, value: Any) =>
+append :: (using me: *StringBuilder, value: Any) =>
 	stringize(value, me, (state: *Void, str: String) =>
         (state as *StringBuilder).append(str)
     )
 
-append_format :: (me: *StringBuilder, format: String, args: ..Any) {
-    bytes_written := 0
-	remaining := format
+append_format :: (using me: *StringBuilder, format: String, args: ..Any) =>
+    stringize_format(me, (state: *Void, string: String) => (state as *StringBuilder).append(string), format, ..args)
 
-	for i in 0 .. args.count {
-		y := remaining.find("{}")
-		assert y // invalid format String
-		x := *y
-
-		bytes_written += me.append(String(remaining.data, @(x.data - remaining.data)))
-
-		bytes_written += me.append(args[i])
-
-		remaining.count -= x.data - remaining.data + 2
-		remaining.data = x.data + 2
-	}
-
-	bytes_written += me.append(remaining)
-    return bytes_written
-}
-
-fill :: (me: *StringBuilder, dst_string: String): result: String {
+fill :: (using me: *StringBuilder, dst_string: String) result: String {
     dst_char := dst_string.data
     block := &first
     while block != null {
@@ -523,13 +579,13 @@ fill :: (me: *StringBuilder, dst_string: String): result: String {
     result.count = count
 }
 
-to_string :: (me: *StringBuilder): result: String {
-    result.data = @ VirtualAlloc(null, count as SIZE_T, MEM_RESERVE|MEM_COMMIT, PAGE_READWRITE)
+to_string :: (using me: *StringBuilder) result: String {
+    result.data = @ current_allocator.allocate(count)
 	result.count = count
 	me.fill(result)
 }
 
-free :: (me: *StringBuilder) {
+free :: (using me: *StringBuilder) {
 	block := first.next
 	while block != null {
 		next := block.next
@@ -539,3 +595,61 @@ free :: (me: *StringBuilder) {
 	}
 	// allocator = {}
 }
+
+read :: (file: HANDLE, span_: String) Int {
+	max_bytes :: -1 as DWORD
+	bytes_read: DWORD = 0
+	total_bytes_read := 0
+    span := span_
+
+	while span.count > max_bytes as Int {
+		if ReadFile(file, span.data, max_bytes, &bytes_read, null) == 0
+			return total_bytes_read
+
+		span.data += max_bytes
+		span.count -= max_bytes
+
+		total_bytes_read += bytes_read
+
+		if bytes_read != max_bytes
+			return total_bytes_read
+	}
+	if span.count != 0 {
+		if ReadFile(file, span.data, span.count as DWORD, &bytes_read, null) == 0
+			return total_bytes_read
+
+		total_bytes_read += bytes_read
+
+		if bytes_read as Int != span.count
+			return total_bytes_read
+	}
+	return total_bytes_read
+}
+
+read_entire_file :: (path: *U8) using result: String {
+	file := CreateFileA(path, GENERIC_READ, 0, null, OPEN_EXISTING, 0, null)
+	if file == INVALID_HANDLE_VALUE return
+
+
+	SetFilePointerEx(file, 0, null, FILE_END)
+
+	size: LARGE_INTEGER
+	SetFilePointerEx(file, 0, &size, FILE_CURRENT)
+
+	SetFilePointerEx(file, 0, null, FILE_BEGIN)
+
+
+    result.data = @current_allocator.allocate(size)
+    result.count = size
+
+    read(file, result)
+}
+
+Vector3 :: struct(T: Type) {
+    x, y, z: T
+}
+
+operator + :: (a: Vector3($T), b: Vector3(T)) => Vector3(T)(a.x + b.x, a.y + b.y, a.z + b.z)
+operator - :: (a: Vector3($T), b: Vector3(T)) => Vector3(T)(a.x - b.x, a.y - b.y, a.z - b.z)
+operator * :: (a: Vector3($T), b: Vector3(T)) => Vector3(T)(a.x * b.x, a.y * b.y, a.z * b.z)
+operator / :: (a: Vector3($T), b: Vector3(T)) => Vector3(T)(a.x / b.x, a.y / b.y, a.z / b.z)

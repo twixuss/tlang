@@ -1,6 +1,6 @@
 import "tlang/std.tl"
 
-main :: (): Int {
+main :: () Int {
     println(#file)
     println(#line)
     println(#location)

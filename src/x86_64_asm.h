@@ -68,77 +68,9 @@ inline umm append(StringBuilder&builder,x86_64::Register32 r){return append(buil
 inline umm append(StringBuilder&builder,x86_64::Register16 r){return append(builder,as_string(r));}
 inline umm append(StringBuilder&builder,x86_64::Register8  r){return append(builder,as_string(r));}
 
-inline umm append(StringBuilder &builder, Address a) {
-	using namespace x86_64;
-	using enum Register;
-	umm result = 0;
-	result += append(builder, '[');
-	switch (a.base) {
-		case locals:
-			a.base = rb;
-			a.c += locals_offset;
-			break;
-		case temporary:
-			a.base = rb;
-			a.c += temporary_offset;
-			break;
-		case parameters:
-			a.base = rb;
-			a.c = parameters_size - a.c + 8;
-			break;
-		case return_parameters:
-			a.base = rb;
-			a.c += parameters_size + 16;
-			break;
-	}
-	switch (a.base) {
-		case constants   : result += append(builder, "rel constants"); break;
-		case rwdata      : result += append(builder, "rel rwdata"); break;
-		case zeros       : result += append(builder, "rel zeros"); break;
-		case instructions: return append_format(builder, "rel i{}]", a.c);
-		default: result += append(builder, to_x86_register(a.base)); break;
-	}
-	if (a.r1_scale_index) {
-		if (a.r2_scale) {
-			invalid_code_path("not implemented");
-		} else {
-			result += append(builder, '+');
-			result += append(builder, to_x86_register(a.r1));
-			result += append(builder, '*');
-			result += append(builder, lea_scales[a.r1_scale_index]);
-			if (a.c) {
-				result += append(builder, '+');
-				result += append(builder, a.c);
-			}
-		}
-	} else {
-		if (a.r2_scale) {
-			invalid_code_path("not implemented");
-		} else {
-			if (a.c) {
-				result += append(builder, '+');
-				result += append(builder, a.c);
-			}
-		}
-	}
-	result += append(builder, ']');
-	return result;
-}
-
 inline umm append(StringBuilder &builder, Register r) {
 	using namespace x86_64;
 	return append(builder, to_x86_register(r));
-}
-inline umm append(StringBuilder &builder, XRegister r) {
-	using enum XRegister;
-	switch (r) {
-		case x0: return append(builder, "xmm0");
-		case x1: return append(builder, "xmm1");
-		case x2: return append(builder, "xmm2");
-		case x3: return append(builder, "xmm3");
-	}
-	invalid_code_path();
-	return {};
 }
 }
 
@@ -196,19 +128,121 @@ inline umm append_instruction(StringBuilder &builder, s64 idx, Instruction i) {
 			break;
 		}
 		case push_r: return append_format(builder, "push {}", i.push_r.s);
-		case push_f: return append_format(builder, "movq rax,{}\npush rax", i.push_f.s);
 		case push_m: return append_format(builder, "push qword{}", i.push_m.s);
 
 		case pop_r: return append_format(builder, "pop {}", i.pop_r.d);
-		case pop_f: return append_format(builder, "pop rax\nmovq {}, rax", i.pop_f.d);
 
 		case ret: return append_format(builder, "ret");
 
 		case shl_rc: return append_format(builder, "shl {},{}", i.shl_rc.d, i.shl_rc.s);
-		case shl_rr: return append_format(builder, "mov cl,{}\nshl {},cl", part1b(i.shl_rr.s), i.shl_rr.d);
+		case shl_rr: {
+			if (to_x86_register(i.shl_rr.d) == Register64::rcx) {
+				if (to_x86_register(i.shl_rr.s) == Register64::rdx) {
+					return append(builder,
+						"mov r8,rcx\n"
+						"mov cl,dl\n"
+						"shl r8,cl\n"
+						"mov rcx,r8"
+					);
+				} else {
+					return append_format(builder,
+						"mov rdx,rcx\n"
+						"mov cl,{}\n"
+						"shl rdx,cl\n"
+						"mov rcx,rdx",
+						part1b(i.shl_rr.s)
+					);
+				}
+			} else {
+				if (to_x86_register(i.shl_rr.s) == Register64::rcx) {
+					return append_format(builder,
+						"shl {},cl",
+						i.shl_rr.d
+					);
+				} else {
+					return append_format(builder,
+						"mov cl,{}\n"
+						"shl {},cl",
+						part1b(i.shl_rr.s),
+						i.shl_rr.d
+					);
+				}
+			}
+			break;
+		}
+		case slr_rc: return append_format(builder, "shr {}, {}", i.slr_rc.d, i.slr_rc.s);
+		case slr_rr: {
+			if (to_x86_register(i.slr_rr.d) == Register64::rcx) {
+				if (to_x86_register(i.slr_rr.s) == Register64::rdx) {
+					return append(builder,
+						"mov r8,rcx\n"
+						"mov cl,dl\n"
+						"shr r8,cl\n"
+						"mov rcx,r8"
+					);
+				} else {
+					return append_format(builder,
+						"mov rdx,rcx\n"
+						"mov cl,{}\n"
+						"shr rdx,cl\n"
+						"mov rcx,rdx",
+						part1b(i.slr_rr.s)
+					);
+				}
+			} else {
+				if (to_x86_register(i.slr_rr.s) == Register64::rcx) {
+					return append_format(builder,
+						"shr {},cl",
+						i.slr_rr.d
+					);
+				} else {
+					return append_format(builder,
+						"mov cl,{}\n"
+						"shr {},cl",
+						part1b(i.slr_rr.s),
+						i.slr_rr.d
+					);
+				}
+			}
+			break;
+		}
 
-		case shr_rc: return append_format(builder, "shr {}, {}", i.shr_rc.d, i.shr_rc.s);
-		case shr_rr: return append_format(builder, "mov cl, {}\nshr {}, cl", part1b(i.shr_rr.s), i.shr_rr.d);
+		case sar_rc: return append_format(builder, "sar {}, {}", i.sar_rc.d, i.sar_rc.s);
+		case sar_rr: {
+			if (to_x86_register(i.sar_rr.d) == Register64::rcx) {
+				if (to_x86_register(i.sar_rr.s) == Register64::rdx) {
+					return append(builder,
+						"mov r8,rcx\n"
+						"mov cl,dl\n"
+						"sar r8,cl\n"
+						"mov rcx,r8"
+					);
+				} else {
+					return append_format(builder,
+						"mov rdx,rcx\n"
+						"mov cl,{}\n"
+						"sar rdx,cl\n"
+						"mov rcx,rdx",
+						part1b(i.sar_rr.s)
+					);
+				}
+			} else {
+				if (to_x86_register(i.sar_rr.s) == Register64::rcx) {
+					return append_format(builder,
+						"sar {},cl",
+						i.sar_rr.d
+					);
+				} else {
+					return append_format(builder,
+						"mov cl,{}\n"
+						"sar {},cl",
+						part1b(i.sar_rr.s),
+						i.sar_rr.d
+					);
+				}
+			}
+			break;
+		}
 
 		case add_rc: return append_format(builder, "add {},{}"      , i.add_rc.d, i.add_rc.s);
 		case add_rr: return append_format(builder, "add {},{}"      , i.add_rr.d, i.add_rr.s);
@@ -468,7 +502,14 @@ inline umm append_instruction(StringBuilder &builder, s64 idx, Instruction i) {
 		case call_c: {
 			REDECLARE_REF(i, i.call_c);
 			assert(i.lambda->convention == CallingConvention::tlang);
-			return append_format(builder, "call i{}", i.constant);
+			return append_format(builder,
+					"mov rax, rsp\n"
+					"and rax, 15\n"
+					"test rax, rax\n"
+					"jz .s{}\n"
+					"int3; STACK WAS NOT ALIGNED TO 16 BYTES BEFORE CALLING THIS PROCEDURE\n"
+					".s{}:\n"
+					"call i{}", FormatInt{.value=(u64)idx, .radix=62}, FormatInt{.value=(u64)idx, .radix=62}, i.constant);
 			break;
 #if 0
 			auto lambda = i.call_c.lambda;
@@ -594,14 +635,6 @@ inline umm append_instruction(StringBuilder &builder, s64 idx, Instruction i) {
 		case cvt_f64_f32: return append_format(builder, "movq xmm7,{}\ncvtsd2ss xmm7,xmm7\nmovd {}, xmm7", i.cvt_f64_f32.d, part4b(i.cvt_f64_f32.d));
 		case cvt_f32_f64: return append_format(builder, "movd xmm7,{}\ncvtss2sd xmm7,xmm7\nmovq {}, xmm7", part4b(i.cvt_f32_f64.d), i.cvt_f32_f64.d);
 
-		case mov_fr: return append_format(builder, "movq {}, {}", i.mov_fr.d, i.mov_fr.s);
-	    case mov_rf: return append_format(builder, "movq {}, {}", i.mov_rf.d, i.mov_rf.s);
-
-		case mov1_xm: return append_format(builder, "movb {}, byte {}", i.mov1_xm.d, i.mov1_xm.s);
-		case mov2_xm: return append_format(builder, "movw {}, word {}", i.mov2_xm.d, i.mov2_xm.s);
-		case mov4_xm: return append_format(builder, "movd {}, dword {}", i.mov4_xm.d, i.mov4_xm.s);
-		case mov8_xm: return append_format(builder, "movq {}, qword {}", i.mov8_xm.d, i.mov8_xm.s);
-
 	    case add4_ff: return append_format(builder, "movd xmm6, {}\nmovd xmm7, {}\naddss xmm6, xmm7\nmovd {}, xmm6", part4b(i.add4_ff.d), part4b(i.add4_ff.s), part4b(i.add4_ff.d));
 	    case sub4_ff: return append_format(builder, "movd xmm6, {}\nmovd xmm7, {}\nsubss xmm6, xmm7\nmovd {}, xmm6", part4b(i.sub4_ff.d), part4b(i.sub4_ff.s), part4b(i.sub4_ff.d));
 	    case mul4_ff: return append_format(builder, "movd xmm6, {}\nmovd xmm7, {}\nmulss xmm6, xmm7\nmovd {}, xmm6", part4b(i.mul4_ff.d), part4b(i.mul4_ff.s), part4b(i.mul4_ff.d));
@@ -611,8 +644,6 @@ inline umm append_instruction(StringBuilder &builder, s64 idx, Instruction i) {
 	    case sub8_ff: return append_format(builder, "movq xmm6, {}\nmovq xmm7, {}\nsubsd xmm6, xmm7\nmovq {}, xmm6", i.sub8_ff.d, i.sub8_ff.s, i.sub8_ff.d);
 	    case mul8_ff: return append_format(builder, "movq xmm6, {}\nmovq xmm7, {}\nmulsd xmm6, xmm7\nmovq {}, xmm6", i.mul8_ff.d, i.mul8_ff.s, i.mul8_ff.d);
 	    case div8_ff: return append_format(builder, "movq xmm6, {}\nmovq xmm7, {}\ndivsd xmm6, xmm7\nmovq {}, xmm6", i.div8_ff.d, i.div8_ff.s, i.div8_ff.d);
-
-	    case xor_ff: return append_format(builder, "xorps {}, {}", i.xor_ff.d, i.xor_ff.s);
 
 		case sqrt4_f: return append_format(builder, "movd xmm7, {}\nsqrtss xmm7,xmm7\nmovd {}, xmm7", part4b(i.sqrt4_f.d), part4b(i.sqrt4_f.d));
 		case sqrt8_f: return append_format(builder, "movq xmm7, {}\nsqrtsd xmm7,xmm7\nmovq {}, xmm7", i.sqrt8_f.d, i.sqrt8_f.d);
@@ -630,7 +661,7 @@ inline umm append_instruction(StringBuilder &builder, s64 idx, Instruction i) {
 		case movsx81_rr: return append_format(builder, "movsx {}, {}", part8b(i.movsx81_rr.d), part1b(i.movsx81_rr.s));
 		case movsx42_rr: return append_format(builder, "movsx {}, {}", part4b(i.movsx42_rr.d), part2b(i.movsx42_rr.s));
 		case movsx82_rr: return append_format(builder, "movsx {}, {}", part8b(i.movsx82_rr.d), part2b(i.movsx82_rr.s));
-		case movsx84_rr: return append_format(builder, "movsx {}, {}", part8b(i.movsx84_rr.d), part4b(i.movsx84_rr.s));
+		case movsx84_rr: return append_format(builder, "movsxd {}, {}", part8b(i.movsx84_rr.d), part4b(i.movsx84_rr.s));
 
 		case movzx21_rr: return append_format(builder, "movzx {}, {}", part2b(i.movsx21_rr.d), part1b(i.movsx21_rr.s));
 		case movzx41_rr: return append_format(builder, "movzx {}, {}", part4b(i.movsx41_rr.d), part1b(i.movsx41_rr.s));
@@ -644,7 +675,7 @@ inline umm append_instruction(StringBuilder &builder, s64 idx, Instruction i) {
 		case movsx81_rm: return append_format(builder, "movsx {}, byte {}",  part8b(i.movsx81_rm.d), i.movsx81_rm.s);
 		case movsx42_rm: return append_format(builder, "movsx {}, word {}",  part4b(i.movsx42_rm.d), i.movsx42_rm.s);
 		case movsx82_rm: return append_format(builder, "movsx {}, word {}",  part8b(i.movsx82_rm.d), i.movsx82_rm.s);
-		case movsx84_rm: return append_format(builder, "movsx {}, dword {}", part8b(i.movsx84_rm.d), i.movsx84_rm.s);
+		case movsx84_rm: return append_format(builder, "movsxd {}, dword {}", part8b(i.movsx84_rm.d), i.movsx84_rm.s);
 
 		case movzx21_rm: return append_format(builder, "movzx {}, byte {}",  part2b(i.movsx21_rm.d), i.movsx21_rm.s);
 		case movzx41_rm: return append_format(builder, "movzx {}, byte {}",  part4b(i.movsx41_rm.d), i.movsx41_rm.s);
@@ -740,35 +771,27 @@ inline umm append_instruction(StringBuilder &builder, s64 idx, Instruction i) {
 
 			auto lambda = i.lambda;
 
-			// TODO:
-			//
-			// [x ] push rbp
-			// [x ] push used registers
-			// [x ] touch stack pages (if necessary)
-			// [  ] reserve temporary space
-			// [  ] set rsp away from rbp
-			// [ ] all of the above inverted in reverse for end_lambda
-			//
-			// patch:
-			// [ ] locals
-			// [ ] parameters
-			// [ ] return parameters
-
 			auto begin_tlang = [&] {
-				append_format(builder, "push rbp\nmov rbp, rsp\n");
+				append_format(builder,
+					"push rbp\n"
+					"mov rbp, rsp\n"
+					"mov rax, rsp\n"
+					"and rax, 15\n"
+					"test rax, rax\n"
+					"jz .s{}\n"
+					"int3; STACK WAS NOT ALIGNED TO 16 BYTES WHEN ENTERING THIS PROCEDURE\n"
+					".s{}:\n", FormatInt{.value=(u64)i.lambda, .radix=62}, FormatInt{.value=(u64)i.lambda, .radix=62}
+				);
+
+				u32 total_bytes_pushed = 0;
 
 				saved_registers_size = 0;
 
 				for_each(lambda->used_registers, [&](umm bit) {
 					append_format(builder, "push {}\n", (Register)bit);
+					total_bytes_pushed += 8;
 					saved_registers_size += 8;
 				});
-
-				// keep the stack 16-byte aligned
-				if (lambda->used_registers.count() & 1) {
-					append_format(builder, "sub rsp, 8\n");
-					saved_registers_size += 8;
-				}
 
 
 				auto used_bytes = lambda->locals_size + lambda->temporary_size + lambda->max_stack_space_used_for_call;
@@ -776,8 +799,27 @@ inline umm append_instruction(StringBuilder &builder, s64 idx, Instruction i) {
 					append_format(builder, "mov rax, {}\ncall _ps\n", used_bytes);
 				}
 
-				if (used_bytes)
+				if (used_bytes) {
 					append_format(builder, "sub rsp, {}; reserve space for locals, temporary storage and call arguments\n", used_bytes);
+					total_bytes_pushed += used_bytes;
+				}
+
+				// keep the stack 16-byte aligned
+				if (total_bytes_pushed % 16 != 0) {
+					append_format(builder, "sub rsp, 8\n");
+					total_bytes_pushed += 8;
+				}
+
+				assert(total_bytes_pushed % 16 == 0);
+
+				append_format(builder,
+					"mov rax, rsp\n"
+					"and rax, 15\n"
+					"test rax, rax\n"
+					"jz .s{}\n"
+					"int3; STACK WAS NOT ALIGNED TO 16 BYTES AFTER RESERVING STACK SPACE\n"
+					".s{}:\n", FormatInt{.value=(u64)i.lambda + 1, .radix=62}, FormatInt{.value=(u64)i.lambda + 1, .radix=62}
+				);
 
 				temporary_offset = -(saved_registers_size + lambda->temporary_size);
 				locals_offset    = -(saved_registers_size + lambda->temporary_size + lambda->locals_size);
@@ -795,7 +837,7 @@ inline umm append_instruction(StringBuilder &builder, s64 idx, Instruction i) {
 
 					s64 total_bytes_will_be_pushed = param_size + return_size;
 
-					auto param_offset = 16; // return addres and return value
+					auto param_offset = 16; // return address and return value
 
 					if (total_bytes_will_be_pushed % 16 == 0) {
 						append(builder, "sub rsp, 8\n");  // keep alignment
@@ -830,16 +872,24 @@ inline umm append_instruction(StringBuilder &builder, s64 idx, Instruction i) {
 			auto end_tlang = [&] {
 				auto used_bytes = lambda->locals_size + lambda->temporary_size + lambda->max_stack_space_used_for_call;
 
+				u32 total_bytes_popped = 0;
+
 				// keep the stack 16-byte aligned
-				if (lambda->used_registers.count() & 1) {
+				if ((lambda->used_registers.count() * 8 + used_bytes) % 16 != 0) {
 					used_bytes += 8;
 				}
-				if (used_bytes)
+				if (used_bytes) {
 					append_format(builder, "add rsp, {}; remove space for locals, temporary storage and call arguments\n", used_bytes);
+					total_bytes_popped += used_bytes;
+				}
 
 				for_each<ForEach_reverse>(lambda->used_registers, [&](umm bit) {
 					append_format(builder, "pop {}\n", (Register)bit);
+					total_bytes_popped += 8;
 				});
+
+				assert(total_bytes_popped % 16 == 0);
+
 				append(builder, "mov rsp, rbp\npop rbp\n");
 			};
 

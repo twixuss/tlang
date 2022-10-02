@@ -36,6 +36,7 @@ LRESULT :: LONG_PTR
 
 ATOM :: U16
 
+PVOID   :: *Void
 LPVOID  :: *Void
 LPCVOID :: *Void
 
@@ -50,12 +51,21 @@ HMENU     :: *Void
 HDC       :: *Void
 HRAWINPUT :: *Void
 
+INVALID_HANDLE_VALUE :: -1 as HANDLE
+
 PSTR   :: *U8
 PCSTR  :: PSTR
 LPSTR  :: PSTR
 LPCSTR :: PSTR
 
-WNDPROC :: (hwnd : HWND, uMsg : UINT, wParam : WPARAM, lParam : LPARAM): LRESULT #type
+WNDPROC :: (hwnd : HWND, uMsg : UINT, wParam : WPARAM, lParam : LPARAM) LRESULT #type
+
+LARGE_INTEGER :: S64
+PLARGE_INTEGER :: *LARGE_INTEGER
+
+FILE_BEGIN   :: 0 // The starting point is zero or the beginning of the file. If this flag is specified, then the liDistanceToMove parameter is interpreted as an unsigned value.
+FILE_CURRENT :: 1 // The start point is the current value of the file pointer.
+FILE_END     :: 2 // The starting point is the current end-of-file position.
 
 #layout_c
 
@@ -176,7 +186,21 @@ STD_OUTPUT_HANDLE :: -11 as U32 // The standard output device. Initially, this i
 STD_ERROR_HANDLE  :: -12 as U32 // The standard error device. Initially, this is the active console screen buffer, CONOUT$.
 
 SECURITY_ATTRIBUTES :: Void
-OVERLAPPED :: Void
+
+OVERLAPPED :: struct {
+	Internal: ULONG_PTR
+	InternalHigh: ULONG_PTR
+	DUMMYUNIONNAME: union {
+		DUMMYSTRUCTNAME: struct {
+			Offset: DWORD
+			OffsetHigh: DWORD
+		}
+		Pointer: PVOID
+	}
+	hEvent: HANDLE
+}
+
+LPOVERLAPPED :: *OVERLAPPED
 
 GENERIC_READ    :: 0x80000000
 GENERIC_WRITE   :: 0x40000000
@@ -895,9 +919,11 @@ IDC_WAIT        :: 32514 as *U8
 
 #extern_library "kernel32"
 
-GetStdHandle :: (nStdHandle: DWORD): HANDLE
+GetStdHandle :: (nStdHandle: DWORD) HANDLE
 
-WriteConsoleA :: (hConsoleOutput: HANDLE, lpBuffer: LPCVOID, nNumberOfCharsToWrite: DWORD, lpNumberOfCharsWritten: LPDWORD, lpReserved: LPVOID): BOOL
+WriteConsoleA :: (hConsoleOutput: HANDLE, lpBuffer: LPCVOID, nNumberOfCharsToWrite: DWORD, lpNumberOfCharsWritten: LPDWORD, lpReserved: LPVOID) BOOL
+
+SetConsoleTextAttribute :: (hConsoleOutput: HANDLE, attribute: DWORD)
 
 CreateFileA :: (
 	lpFileName: LPCSTR,
@@ -907,7 +933,7 @@ CreateFileA :: (
 	dwCreationDisposition: DWORD,
 	dwFlagsAndAttributes: DWORD,
 	hTemplateFile: HANDLE
-): HANDLE
+) HANDLE
 
 WriteFile :: (
 	hFile:                  HANDLE,
@@ -915,26 +941,26 @@ WriteFile :: (
 	nNumberOfBytesToWrite:  DWORD,
 	lpNumberOfBytesWritten: LPDWORD,
 	lpOverlapped:           *OVERLAPPED
-): BOOL
+) BOOL
 
-GetLastError :: (): DWORD
+GetLastError :: () DWORD
 
 VirtualAlloc :: (
 	lpAddress        : LPVOID,
 	dwSize           : SIZE_T,
 	flAllocationType : DWORD,
 	flProtect        : DWORD
-): LPVOID
+) LPVOID
 
 VirtualFree :: (
 	lpAddress: LPVOID,
 	dwSize: SIZE_T,
 	dwFreeType: DWORD
-): BOOL
+) BOOL
 
 GetModuleHandleA :: (
 	lpModuleName : LPCSTR
-): HMODULE
+) HMODULE
 
 ExitProcess :: (ret: UINT)
 
@@ -942,14 +968,14 @@ ExitProcess :: (ret: UINT)
 
 RegisterClassExA :: (
 	unnamedParam1 : *WNDCLASSEXA
-): ATOM
+) ATOM
 
 DefWindowProcA :: (
 	hWnd   : HWND,
 	Msg    : UINT,
 	wParam : WPARAM,
 	lParam : LPARAM
-): LRESULT
+) LRESULT
 
 CreateWindowExA :: (
 	dwExStyle    : DWORD,
@@ -964,7 +990,7 @@ CreateWindowExA :: (
 	hMenu        : HMENU,
 	hInstance    : HINSTANCE,
 	lpParam      : LPVOID
-): HWND
+) HWND
 
 PeekMessageA :: (
 	lpMsg         : LPMSG,
@@ -972,15 +998,15 @@ PeekMessageA :: (
 	wMsgFilterMin : UINT,
 	wMsgFilterMax : UINT,
 	wRemoveMsg    : UINT
-): BOOL
+) BOOL
 
 TranslateMessage :: (
 	lpMsg : *MSG
-): BOOL
+) BOOL
 
 DispatchMessageA :: (
 	lpMsg : *MSG
-): LRESULT
+) LRESULT
 
 PostQuitMessage :: (
   nExitCode : INT
@@ -989,21 +1015,21 @@ PostQuitMessage :: (
 LoadCursorA :: (
   hInstance    : HINSTANCE,
   lpCursorName : LPCSTR
-): HCURSOR
+) HCURSOR
 
 GetDC :: (
   hWnd : HWND
-): HDC
+) HDC
 
 RegisterRawInputDevices :: (
     pRawInputDevices: PCRAWINPUTDEVICE,
     uiNumDevices: UINT,
     cbSize: UINT
-): BOOL
+) BOOL
 
-SetCapture :: (hWnd: HWND): HWND
+SetCapture :: (hWnd: HWND) HWND
 
-ReleaseCapture :: (): BOOL
+ReleaseCapture :: () BOOL
 
 GetRawInputData :: (
   hRawInput:    HRAWINPUT,
@@ -1011,8 +1037,23 @@ GetRawInputData :: (
   pData:	    LPVOID,
   pcbSize:	    PUINT,
   cbSizeHeader: UINT
-): UINT
+) UINT
 
 GetCursorPos :: (p: *POINT)
 
 ScreenToClient :: (window: HWND, p: *POINT)
+
+SetFilePointerEx :: (
+	hFile: HANDLE,
+	liDistanceToMove: LARGE_INTEGER,
+	lpNewFilePointer: PLARGE_INTEGER,
+	dwMoveMethod: DWORD
+) BOOL
+
+ReadFile :: (
+	hFile: HANDLE,
+	lpBuffer: LPVOID,
+	nNumberOfBytesToRead: DWORD,
+	lpNumberOfBytesRead: LPDWORD,
+	lpOverlapped: LPOVERLAPPED
+) BOOL

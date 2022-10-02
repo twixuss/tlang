@@ -16,7 +16,7 @@ draw :: () {
     SwapBuffers(dc)
 }
 
-main :: (): Int {
+main :: () Int {
 	class_name := "window_class\0".data
 	window_name := "hello window\0".data
 
@@ -25,7 +25,7 @@ main :: (): Int {
 	wc : WNDCLASSEXA
 	wc.hInstance = hInstance
 	wc.cbSize = #sizeof WNDCLASSEXA
-	wc.lpfnWndProc = (hwnd: HWND, uMsg: UINT, wParam: WPARAM, lParam: LPARAM): LRESULT {
+	wc.lpfnWndProc = (hwnd: HWND, uMsg: UINT, wParam: WPARAM, lParam: LPARAM) LRESULT {
 		if uMsg == WM_DESTROY {
 			PostQuitMessage(0)
 		} else if uMsg == WM_SIZE {

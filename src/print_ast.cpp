@@ -43,7 +43,7 @@ void print_ast(AstNode *node) {
 }
 
 void print_ast(Scope *scope) {
-	for (auto statement : scope->statements) {
+	for (auto statement : scope->statement_list) {
 		print_ast(statement);
 	}
 }
@@ -72,7 +72,7 @@ void print_ast(AstLambda *node) {
 		tab_count -= 1;
 		print_tabbed("statements:\n");
 		tab_count += 1;
-		for (auto statement : node->body_scope->statements) {
+		for (auto statement : node->body_scope->statement_list) {
 			print_ast(statement);
 		}
 		tab_count -= 1;
@@ -152,7 +152,7 @@ void print_ast(AstLiteral *node) {
 
 				for (umm i = 0; i < node->struct_values.count; ++i) {
 					auto value = node->struct_values[i];
-					auto member = Struct->data_members[i];
+					auto member = Struct->member_scope->definition_list[i];
 					if (value) {
 						print_tabbed("{}:\n", member->name);
 						print_ast(value);
@@ -182,9 +182,9 @@ void print_ast(AstStruct *node) {
 	else
 		print_tabbed("struct - unnamed, uid: {}\n", node->uid());
 	tab_count += 1;
-	for_each(node->member_scope->definitions, [&](auto, auto member) {
-		print_ast(member[0]);
-	});
+	for (auto &member : node->member_scope->statement_list) {
+		print_ast(member);
+	}
 	tab_count -= 1;
 }
 void print_ast(AstIf *node) {
@@ -196,13 +196,13 @@ void print_ast(AstIf *node) {
 	tab_count -= 1;
 	print_label("true statements:\n");
 	tab_count += 1;
-	for (auto statement : node->true_scope->statements) {
+	for (auto statement : node->true_scope->statement_list) {
 		print_ast(statement);
 	}
 	tab_count -= 1;
 	print_label("false statements:\n");
 	tab_count += 1;
-	for (auto statement : node->false_scope->statements) {
+	for (auto statement : node->false_scope->statement_list) {
 		print_ast(statement);
 	}
 	tab_count -= 1;
@@ -313,7 +313,7 @@ void print_ast(AstMatch* match) {
 
 void print_ast() {
 	timed_function(context.profiler);
-	for (auto statement : global_scope.statements) {
+	for (auto statement : global_scope.statement_list) {
 		print_ast(statement);
 	}
 }
@@ -331,7 +331,7 @@ void print_lowered(AstExpression* expression) {
 	void print_lowered(AstUnaryOperator *node);
 	void print_lowered(AstSubscript *node);
 	void print_lowered(AstTuple*node);
-	void print_lowered(AstPack*node);
+	void print_lowered(AstArrayLiteral*node);
 	void print_lowered(AstSpan*node);
 
 	if (expression->is_parenthesized)
@@ -348,7 +348,7 @@ void print_lowered(AstExpression* expression) {
 		case Ast_UnaryOperator: print_lowered((AstUnaryOperator *)expression); break;
 		case Ast_Subscript: print_lowered((AstSubscript *)expression); break;
 		case Ast_Tuple: print_lowered((AstTuple*)expression); break;
-		case Ast_Pack: print_lowered((AstPack*)expression); break;
+		case Ast_ArrayLiteral: print_lowered((AstArrayLiteral*)expression); break;
 		case Ast_Span: print_lowered((AstSpan*)expression); break;
 		default:
 			print("!unknown expression!");
@@ -370,6 +370,7 @@ void print_lowered(AstNode *node) {
 	void print_lowered(AstDefer  *);
 	void print_lowered(AstBlock  *);
 	void print_lowered(AstMatch  *);
+	void print_lowered(AstOperatorDefinition  *);
 
 	print_tabbed("");
 	switch (node->kind) {
@@ -383,6 +384,7 @@ void print_lowered(AstNode *node) {
 		case Ast_Defer: return print_lowered((AstDefer*)node);
 		case Ast_Block: return print_lowered((AstBlock*)node);
 		case Ast_Match: return print_lowered((AstMatch*)node);
+		case Ast_OperatorDefinition: return print_lowered((AstOperatorDefinition*)node);
 		case Ast_Lambda:
 		case Ast_LambdaType:
 		case Ast_Identifier:
@@ -405,7 +407,7 @@ void print_lowered(AstNode *node) {
 void print_lowered(Scope *scope) {
 	print("{\n");
 	++tab_count;
-	for (auto statement : scope->statements) {
+	for (auto statement : scope->statement_list) {
 		print_lowered(statement);
 	}
 	--tab_count;
@@ -444,7 +446,7 @@ void print_lowered(AstLambda *node) {
 		return;
 	}
 
-	print("(fn (");
+	print("(");
 	for (auto &argument : node->parameters) {
 		if (&argument != node->parameters.data) {
 			print(", ");
@@ -457,13 +459,11 @@ void print_lowered(AstLambda *node) {
 	if (node->has_body) {
 		print(" {\n");
 		++tab_count;
-		for (auto statement : node->body_scope->statements) {
+		for (auto statement : node->body_scope->statement_list) {
 			print_lowered(statement);
 		}
 		--tab_count;
-		print_tabbed("})");
-	} else {
-		print(";");
+		print_tabbed("}");
 	}
 }
 void print_lowered(AstLambdaType *node) {
@@ -558,8 +558,11 @@ void print_lowered(AstLiteral *literal) {
 			print("'");
 			break;
 		}
-		case pack: {
-			print("!pack!");
+		case array: {
+			print(".[");
+			if (literal->array_elements.count) print_lowered(literal->array_elements[0]);
+			for (auto e : literal->array_elements.skip(1)) print(", "), print_lowered(e);
+			print("]");
 			break;
 		}
 		default:
@@ -577,10 +580,10 @@ void print_lowered(AstReturn *node) {
 	}
 }
 void print_lowered(AstStruct *node) {
-	if (node->member_scope->statements.count) {
+	if (node->member_scope->statement_list.count) {
 		print("struct {\n");
 		++tab_count;
-		for (auto statement : node->member_scope->statements) {
+		for (auto statement : node->member_scope->statement_list) {
 			print_lowered(statement);
 		}
 		--tab_count;
@@ -594,13 +597,13 @@ void print_lowered(AstIf *If) {
 	print_lowered(If->condition);
 	print(" {\n");
 	++tab_count;
-	for (auto statement : If->true_scope->statements) {
+	for (auto statement : If->true_scope->statement_list) {
 		print_lowered(statement);
 	}
 	--tab_count;
 	print_tabbed("} else {\n");
 	++tab_count;
-	for (auto statement : If->false_scope->statements) {
+	for (auto statement : If->false_scope->statement_list) {
 		print_lowered(statement);
 	}
 	--tab_count;
@@ -640,7 +643,7 @@ void print_lowered(AstWhile *While) {
 	print_lowered(While->condition);
 	print(" {\n");
 	++tab_count;
-	for (auto statement : While->scope->statements) {
+	for (auto statement : While->scope->statement_list) {
 		print_lowered(statement);
 	}
 	--tab_count;
@@ -649,11 +652,11 @@ void print_lowered(AstWhile *While) {
 void print_lowered(AstTuple*tuple) {
 	print("!tuple!");
 }
-void print_lowered(AstPack *pack) {
-	print("<pack>{");
-	if (pack->expressions.count) print_lowered(pack->expressions[0]);
-	for (auto e : pack->expressions.skip(1)) print(", "), print_lowered(e);
-	print("}");
+void print_lowered(AstArrayLiteral *pack) {
+	print(".[");
+	if (pack->elements.count) print_lowered(pack->elements[0]);
+	for (auto e : pack->elements.skip(1)) print(", "), print_lowered(e);
+	print("]");
 }
 void print_lowered(AstAssert* assert) {
 	print("#assert ");
@@ -693,10 +696,14 @@ void print_lowered(AstMatch* match) {
 	tab_count -= 1;
 	print_tabbed("}\n");
 }
+void print_lowered(AstOperatorDefinition* Operator) {
+	print_lowered(Operator->definition);
+	print("\n");
+}
 
 void print_lowered() {
 	timed_function(context.profiler);
-	for (auto statement : global_scope.statements) {
+	for (auto statement : global_scope.statement_list) {
 		print_lowered(statement);
 	}
 }

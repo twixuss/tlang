@@ -14,7 +14,7 @@ Because that way it can depend on input types.
 
 Thoughts about characters:
 '☺' - utf32 codepoint
-`☺` - 
+`☺` -
 
 
 
@@ -33,7 +33,7 @@ Import string as expression???
 
 How arrays should be passed as arguments? How anything relatively big should be passed? Copy or constant reference?
 Copy may be too expensive.
-Constant arguments may not be modified, so there should be no way to do this: 
+Constant arguments may not be modified, so there should be no way to do this:
 
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -106,7 +106,7 @@ InlineString :: struct {
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 /*
-I think assert should be just a regular function. For that i'll need to implement argument expression string.    
+I think assert should be just a regular function. For that i'll need to implement argument expression string.
 */
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -127,3 +127,23 @@ value := &thing.value;
 [2 [1 get_thing()].value] = clamp(%2, -get_bound(%1), +get_bound(%1));
 
 // maybe useful with simple expressions and long names ?
+
+
+// ======================================================
+// ============ Approximate floating point comparison ===
+// ======================================================
+
+// Introduce binary operator ~~ , which will compare two floats using an epsilon value.
+
+// Epsilon value can be defined per block:
+{
+    ~~ :: 0.01
+    result1 = a ~~ b
+ // result1 = abs(a - b) < 0.01
+    {
+        ~~ :: 0.00001
+        result2 = a ~~ b
+     // result2 = abs(a - b) < 0.00001
+    }
+}
+

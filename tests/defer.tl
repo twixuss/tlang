@@ -1,19 +1,19 @@
 import "tlang/std.tl"
 
 main :: () {
-    defer { print("A\n") }
-    defer print("B\n")
+    defer { println("A") }
+    defer println("B")
 
     {
         {
-            defer print("C\n")
+            defer println("C")
         }
-        defer print("D\n")
+        defer println("D")
         return
-        defer print("E\n")
+        defer println("E")
     }
-    
-    defer print("F\n")
-    print("G\n")
+
+    defer println("F")
+    println("G")
 }
 

@@ -1,12 +1,12 @@
 
-foo :: (): result: Int {
+foo :: () result: Int {
 	result = 64
 	result = 32
 	return
 }
 
 
-main :: (): Int {
+main :: () Int {
 	a := foo()
 	return a
 }

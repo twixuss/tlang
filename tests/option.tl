@@ -2,8 +2,8 @@ import "tlang/std.tl"
 
 main ::() {
     e: ?String
-    println(unwrap(e))   
-    println(unwrap("Hello")) 
+    println(unwrap(e))
+    println(unwrap("Hello"))
 }
 
 unwrap :: (x: ?String) {

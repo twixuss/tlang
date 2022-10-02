@@ -68,38 +68,38 @@ static Span<utf8> as_string(Register8  r){using enum Register8 ;switch(r){C( al)
 inline auto instruction_address(s64 val) { return FormatInt<s64>{.value=val, .radix=62}; }
 
 #define REGISTER_MAP \
-	C(r0, eax) \
-	C(r1, ebx) \
-	C(r2, ecx) \
-	C(r3, edx) \
-	C(r4, esi) \
-	C(r5, edi) \
-	C(rs, esp) \
-	C(rb, ebp)
+	C((Register)0, eax) \
+	C((Register)1, ebx) \
+	C((Register)2, ecx) \
+	C((Register)3, edx) \
+	C((Register)4, esi) \
+	C((Register)5, edi) \
+	C(Register::rs, esp) \
+	C(Register::rb, ebp)
 
-#define C(a, b) case Register::a: return Register32::b;
 
 inline static constexpr Register32 to_x86_register(Register r) {
 	switch (r) {
+#define C(a, b) case a: return Register32::b;
 		REGISTER_MAP;
+#undef C
 	}
 	invalid_code_path();
 	return {};
 }
 
-#undef C
 
-#define C(a, b) case Register32::b: return Register::a;
 
 inline static constexpr Register to_bc_register(Register32 r) {
 	switch (r) {
+#define C(a, b) case Register32::b: return a;
 		REGISTER_MAP;
+#undef C
 	}
 	invalid_code_path();
 	return {};
 }
 
-#undef C
 }
 
 namespace tl {

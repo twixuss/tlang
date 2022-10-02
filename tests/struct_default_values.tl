@@ -10,13 +10,19 @@ Nest :: struct {
 	w: Int = 3
 }
 
+ag: Nest
+bg := Nest(v = Vector(11, 22))
+cg := Nest(w = 33)
+
 main :: () {
-	a: Nest
-	println(a)
+	al: Nest
+	bl := Nest(v = Vector(11, 22))
+	cl := Nest(w = 33)
 
-	b := Nest(v = Vector(4, 5))
-	println(b)
-
-	c := Nest(w = 6)
-	println(c)
+	println(ag)
+	println(bg)
+	println(cg)
+	println(al)
+	println(bl)
+	println(cl)
 }

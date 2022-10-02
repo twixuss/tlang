@@ -7,6 +7,7 @@ DECLARE_OUTPUT_BUILDER {
 	init_printer();
 
 	run_bytecode(compiler, bytecode.instructions, compiler.main_lambda, compiler.extern_libraries);
+	return true;
 }
 
 DECLARE_TARGET_INFORMATION_GETTER {

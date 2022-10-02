@@ -1,5 +1,29 @@
 import "tlang/std.tl"
 
+test_float :: (T: %Type) {
+    #assert T == Float32 || T == Float64
+
+    a: T = 1.5
+    b: T = 2.6
+
+    assert a != b
+
+    assert a == a
+    assert b == b
+
+    assert a < b
+    assert b > a
+
+    assert a <= b
+    assert b >= a
+
+    assert a <= a
+    assert a >= a
+
+    assert b >= b
+    assert b <= b
+}
+
 main :: () {
     assert 999_999_999_999 + 999_999_999_999 == 1_999_999_999_998
     assert 999_999_999_999 - 1_999_999_999_998 == -999_999_999_999
@@ -17,7 +41,7 @@ main :: () {
     assert 987654321 >= 123456789
     assert -99999999999999999999999999999999999999999 == -99999999999999999999999999999999999999999
     assert -99999999999999999999999999999999999999999 != -99999999999999999999999999999999999999998
-    assert !0b10101010 as U8 == 0b01010101 as U8
+    assert ~0b10101010 as U8 == 0b01010101 as U8
 
     // FIXME: implement missing conversions
     {
@@ -37,27 +61,8 @@ main :: () {
         //assert a as U64 == 12
     }
 
-    {
-        a: F32 = 1.5
-        b: F32 = 2.6
-
-        assert a != b
-
-        assert a == a
-        assert b == b
-
-        assert a < b
-        assert b > a
-
-        assert a <= b
-        assert b >= a
-
-        assert a <= a
-        assert a >= a
-
-        assert b >= b
-        assert b <= b
-    }
+    test_float(F32)
+    test_float(F64)
 }
 
 # () => main()

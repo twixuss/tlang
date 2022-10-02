@@ -1,25 +1,91 @@
 
 # tlang
-Inspired by jai, odin, zig and other languages.
-### Hello world!
+Inspired by jai, odin, zig, nim and other languages.
+# Hello world!
 ```java
 import "std.tl"
 main :: () {
     println("Hello world!")
 }
 ```
-# Language
-## Definitions
+# Comments
+Comments in this language are like in C.
 ```java
-name := expression // variable
-name :: expression // constant
+// Single line comment
+
+/*
+Multiline
+Comment
+*/
 ```
-This way the type of a variable will be inferred automatically.
-If you want to explicitly specify the type, put it after first colon, like this:
+The only thing that's different is that you can have nested multiline comments.
 ```java
-my_counter: Int = 42
+/* This /* Does */ Work */
 ```
-## Blocks
+# Identifiers
+An identifier is a name that references something.
+
+It's first symbol can't be a number. Examples:
+```java
+x
+hello_mister_123
+♥
+```
+You can't use reserved keywords as identifiers
+```java
+struct // `struct` is a keyword, not an identifier
+```
+There is a way to work around that. You can prefix a keyword with `\` to make it an identifier:
+```java
+\struct // this is an identifier whose name is 'struct'
+```
+Also you can use `\` to merge two identifiers in a single one:
+```java
+hello_  \  world
+hello_world
+// These are the same
+```
+# Literals
+Literal is a simplest expression. They are constant and always evaluate to the same value.
+```java
+1          // Int
+1.2        // Float
+"Hello"    // String
+true false // Bool
+'\n'       // U8          (There's no char type. ASCII)
+null       // pointer
+```
+Numeric literals in this language are unsized. You don't have to write suffixes to specify the type (e.g. 42ull in C++).
+
+Strings in this language are represented with a `data` pointer and byte `count`.
+Literals are null-terminated, but the terminator is not included in the `count`.
+If the quotes of a string literal are located on different lines, the literal becomes multiline.
+Such literal does not include the first and the last newline.
+```java
+"
+Hello
+
+"
+// is equivalent to
+"Hello\n"
+```
+## TODO: Indentation in multiline string literals
+# Definitions
+Definition is a statement that introduces a name, associated with some value, in the current scope.
+```java
+value: Int = 42 // This is a variable
+```
+To make this a constant, use ':' instead of '='
+```java
+value: Int : 42 // This is a contant
+```
+Note that unlike in other languages, constant means constant and not read-only, meaning it is always the same, therefore it must be known at compile time.
+
+You don't have to always put the type after the name:
+```java
+value :: 42 // Compiler infers that the type is Int from the expression
+```
+# Blocks
 Block is a statement that contains a list of other statements.
 It is the same thing as in many other languages.
 ```java
@@ -28,60 +94,255 @@ a := 1
   b := 2
 }
 ```
-## Functions
-Like in most other languages, a function is a block of code which you can call on demand, that takes some parameters and returns a value.
-In this language a function is an expression:
+# Lambdas
+## Basics
+### Writing lambdas
+Lambda is a block of code that accepts zero or more arguments and returns a value to the caller.
+This is the simplest lambda:
 ```java
-(a: Float, b: Int): *Void { return null }
+()
+// This is a lambda that accepts zero arguments, returns nothing and does not have a body.
 ```
-Function can be named like any other thing:
-```java
-do_nothing :: (a: Float, b: Int): *Void { return null }
-```
-You can use named parameters:
-```java
-function :: (a: Int, b: Int) {...}
-function(b=12, a=99)
-```
-Functions can be overloaded on a parameter *type*:
-```java
-print :: (value: Int) {...}
-print :: (value: String) {...}
 
-print(1)   // calls the first one
-print("2") // calls the second one
-```
-Also functions can be overloaded on a parameter *name*:
+A body of a lambda is defined with curly braces. You can put other statements between them, like in blocks.
 ```java
-print :: (a: Int) {...}
-print :: (b: Int) {...}
-
-print(a=1) // calls the first one
-print(b=2) // calls the second one
-// print(3) // does not compile - ambiguous.
+() {
+}
+// This is still a lambda that accepts zero arguments and returns nothing.
 ```
-## Structs
-A structure is also an expression. You can use it like this:
+To make the lambda accept an argument, just put the argument definition inside the brackets.
+Multiple arguments are separated with a comma. To specify the return type of a lambda write a colon after closing bracket and then the type.
 ```java
-// This is a String type as it is in the language.
-String :: struct {
-  data: *U8
-  count: UInt
+(a: Int, b: Int): Int {
+  // Now we can do something with "a" and "b"
+  return a + b
 }
 ```
-Note that string literals are null terminated, but the terminator is not included in the count.
+Note that that `: Int` between the braces looks like a part of a definition. Guess what, it is a definition and we can give it a name if we want to:
+```java
+(a: Int, b: Int) result: Int {
+  result = a + b
+}
+```
+With named return parameters we don't have to use `return` statement, the result will be implicitly returned for us.
 
+What happens if we don't assign to it you may ask? In that case the function will return the default value of the return type. For `Int` it is `0`.
+
+Let's move on to ways of simplifying this lambda.
+
+There are three ways how we can do that. First we can use parameter type only once:
+```java
+(a, b: Int): Int {
+  return a + b
+}
+```
+Then we can use '=>' syntax to make this thing even shorter:
+```java
+(a, b: Int): Int => a + b
+```
+And finally we can get rid of ": Int" because the compiler can infer the type from the return expression.
+```java
+(a, b: Int) => a + b
+```
+Now we can assign this lambda to a name for calling it later:
+```java
+add :: (a, b: Int) => a + b // Here `add` is a regular function
+
+add := (a, b: Int) => a + b // Here `add` is a function pointer, that can later be reassigned.
+```
+
+#### TODO: default arguments.
+
+### Using lambdas
+To call a function `add` which we wrote in the previous chapter, we can use the following syntax:
+```java
+add(1, 2)
+```
+Looking at the order of arguments we can see that 1 goes into a and 2 goes into b.
+When lambdas have a lot of arguments this may not be clear right away.
+This language provides a way to say what is what:
+```java
+add(b=2, a=1)
+// As you can see you can reorder arguments
+```
+Also this language does not restrict you in ways to call a function:
+```java
+add(1, 2) // Standard syntax
+1.add(2)  // Member syntax
+1 add 2   // Binary syntax (only for functions with 2 arguments)
+```
+All of these are available by default.
+## Variadics
+There is a way to say that a lambda accepts an unknown number of arguments:
+```java
+foo :: (ints: ..Int)
+// You can call this function with any number of ints:
+foo()
+foo(1)
+foo(1, 2, 3)
+```
+In terms of usage `..Int` is the same as `[]Int`. You can get the `data`, `count`, iterate over it, do whatever you want.
+This language does not put restrictions on where this kind of argument has to be:
+```java
+foo :: (ints: ..Int, valid: Bool, strings: ..String)
+
+foo(true, "hello", "world")
+```
+There must be a clear boundary between variadics. If the types are implicitly convertible,
+the compiler will not be able to disambiguate the argument order.
+## Templates
+### TODO: Constraints
+
+Templates are used to avoid code duplication.
+Consider the following example:
+```java
+add :: (a, b: Int) => a + b
+add :: (a, b: Float) => a + b
+```
+Bodies of those functions are identical, only argument types are different.
+### Type templates
+We can reduces this to a single function by using a templated type:
+```java
+add :: (a, b: $T) => a + b
+```
+Here $T introduces a type that is not known yet. Because it isn't,
+that function is not processed by the compiler until someone uses it.
+```java
+add(1, 2)
+```
+Now that we called this function, the compiler will do the copy-pasting for us -
+it will replace $T with Int.
+So now we can call `add` with other types without having to reimplement it:
+```java
+add(1.2, 3.4) // calls add(Float, Float).
+```
+### Constant templates
+You can force the parameter to be constant by using `%`:
+```java
+get :: (value: %Int) {
+  arr: [value]String
+  return arr
+}
+```
+
+To call this function, you'll have to pass a constant to it.
+```java
+get(12) // ok
+x := 12
+get(x) // error, x is not constant.
+```
+For every unique constant you pass in, a copy of the template will be instantiated. This can be used not only with values, but also types:
+```java
+new :: (T: %Type): *T {
+  return malloc(#sizeof T) as *T
+}
+```
+## Overloading
+### Basics
+This language allows multiple definitions in one scope to have the same name.
+This is mostly used with functions, because in most other cases you will not be able to differentiate the definitions.
+There are tree ways of overloading functions.
+1) Different number of arguments.
+```java
+foo :: (a: Int)
+foo :: (a, b: Int)
+
+foo(1)    // Calls the first one
+foo(1, 2) // Calls the second one
+```
+2) Different argument types.
+```java
+foo :: (a: Int)
+foo :: (a: String)
+
+foo(1)   // Calls the first one
+foo("a") // Calls the second one
+```
+3) Different argument names.
+```java
+foo :: (a: Int)
+foo :: (b: Int)
+
+foo(a=1) // Calls the first one
+foo(b=1) // Calls the second one
+// foo(1)  // Ambiguous, does not compile.
+```
+### Resolution
+There are rules for overload resolution regarding variadics, templates and `Any` type.
+Compiler collects all information about possible overloads and selects one as follows:
+1) If argument types match exactly, that overload is picked.
+2) Regular arguments are preferred to variadic.
+3) Template is preferred to Any
+```java
+foo :: (a: Int)
+foo :: (a: $T)
+foo :: (a: Any)
+
+foo(1) // Calls foo(Int)
+foo("hello") // Calls foo($T)
+x: Any = 1
+foo(x) // Calls foo(Any)
+```
+```java
+foo :: (a: Int)
+foo :: (a: ..Int)
+
+foo()     // Calls foo(..Int)
+foo(1)    // Calls foo(Int)
+foo(2, 3) // Calls foo(..Int)
+```
+## External functions
+```java
+import "windows.tl"
+```
+`windows.tl` is a file in `libs` directory of the compiler. It defines basic win32 functions, like printing to console or creating a window. If it doesn't have one that you need, you can always add it yourself:
+```java
+#extern_library "kernel32.lib"
+OpenFile :: (...) ... #stdcall
+// functions without a body will be searched for in extern libraries.
+```
+Windows uses stdcall convention, so #stdcall directive says to use stdcall calling
+convention for this function. if you want to add a lot more functions with this
+convention, you don't have to write #stdcall for every function. Instead you can write
+the following statement:
+```java
+#stdcall
+```
+This directive says to use stdcall calling convention for ALL following functions. if you want to restore language default calling convention, use `#tlangcall` directive.
+# Structs
+A structure is a construct that allows you to group related data together:
+```java
+Cat :: struct {
+  name: String
+  age: Int
+  lives_left: Int
+}
+```
+You can create on of these like this:
+```java
+cat: Cat
+cat.name = "Funny"
+cat.age = 6
+cat.lives_left = 9
+```
+Or like that:
+```java
+cat := Cat(name = "Funny", age = 6, lives_left = 9)
+// NOTE: if no member names were specified,
+// members are initialized in order of declaration.
+```
 Structs can have default values:
 ```java
 Thing :: struct {
-  value: Int = 42
+  value := 42
 }
 
-thing: Thing
-println(thing) // prints 42
-println(Thing()) // also prints 42
+print(Thing().value) // prints 42
 ```
-## Arrays
+Because the above struct definitions are constant,
+a structure may seem to be a literal, but it is not.
+If you write two identical structs, they are considered different types.
+# Arrays
 Array types are made like this:
 ```java
 [count]type
@@ -98,7 +359,7 @@ println(array.count)
 print("pointer to first element is ")
 println(array.data)
 ```
-## Defer
+# Defer
 ```java
 {
   // this statement will be executed at the end of the scope.
@@ -110,21 +371,55 @@ println("last");
 `defer` statement will delay the execution of following statement until the end of scope.
 So this code will print "first deferred last".
 # Control flow
+## If statement
 ```java
-// if statement
 if condition {
   do_stuff()
 } else // braces are optional for single statement
   do_other_stuff()
-
-// if expression
+// NOTE: `if` oneliners without braces require using `then` keyword
+```
+In the above example `condition` will be evaluated at runtime. If you want to do it
+at compile time, prefix `if` with a `#`:
+```java
+#if condition then do_stuff()
+else do_other_stuff()
+```
+Compiler has to evaluate `condition` at compile time, and depending on it's value it
+will only keep a single branch in the executable.
+## If expression
+```java
 value := if condition then 42 else 1337
-
+```
+## While statement
+```java
 // while loop
 while condition {
    do_stuff()
 }
+// NOTE: `while` oneliners without braces require using `do` keyword
+```
+## For statement
+```java
+// for loop
+for it in expression {
+  println(it)
+}
+// NOTE: `for` oneliners without braces require using `do` keyword
 
+// iterable types are:
+// spans  - []Int
+// arrays - [5]Int
+// ranges - 0..10
+```
+Iterate by pointer:
+```java
+for * it in expression {
+  println("address: {}, value: {}", it, *it)
+}
+```
+## Match statement
+```java
 x := 1
 match x {
   0 => println("good")
@@ -132,10 +427,10 @@ match x {
   2 => println("bad")
   else => println("???")
 }
-// Only constant integers and enums are supported right now.
-// Matching an enum without default case is checked to cover all possible values.
-// Maybe I'll add a way to match with default case and the checks.
 ```
+Only constant integers and enums are supported right now.
+Matching an enum without default case is going to throw a warning if not all cases are handled.
+Maybe I'll add a way to match with default case and the checks.
 # Whitespace and semicolons
 Spaces and tabs are not significant:
 ```java
@@ -143,7 +438,7 @@ a : = 12
 a:=12
 // these are the same thing
 ```
-Before tokenizing, all new lines (\n, \r or \r\n) are converted to \n.
+Before converting the source code into tokens, all new lines (\n, \r or \r\n) are converted to \n.
 This affects multiline string literals, lines are always separated by \n.
 Maybe there will be a way to provide custom line separators.
 
@@ -153,12 +448,15 @@ new lines in this language are significant in certain places. For example:
 ```java
 a := 1 + 2
 // OK
-
+```
+```java
 a := 1 +
 2
 // OK, compiler expects an expression to the right of the +.
 // It is not on the current line, so it searches in the next one.
-
+```
+## TODO: maybe this should work?
+```java
 a := 1
 + 2
 // Error. In this case compiler sees `1` as a single expression,
@@ -166,6 +464,7 @@ a := 1
 // which is a valid expression, but not a valid statement,
 // so it shows corresponing error.
 ```
+---
 As said earlier, semicolons are optional in this language.
 They can be used to explicitly terminate a statement
 ```java
@@ -174,15 +473,15 @@ if condition
 else
   a = b - c;
 ```
-Note that semicolon mus be placed on the same line with the statement.
+Note that semicolon must be placed on the same line with the statement.
 ```java
 if condition
   a = b + c
   ;
 else
   a = b - c;
-// Error. The line with the semicolon and the one above are independent statements,
-// and we can't use `else` block without braces after `if`.
+// Error. The line with the semicolon and the one above are independent
+// statements, and we can't use two statements in an `if` without braces.
 ```
 Basically the rule is:
 * If a semicolon is present right after a statement (no new line between them), it is included in that statement and the statement is terminated.
@@ -190,23 +489,8 @@ Basically the rule is:
 
 Note that empty statements and block statements, like `while`, `defer` and others, can not be terminated with a semicolon.
 A semicolon after such statement will always be independent
-# External functions
+# Compile time queries
 ```java
-import "windows.tl"
-```
-`windows.tl` is a file in `libs` directory of the compiler. It defines basic win32 functions, like printing to console or creating a window. If it doesn't have one that you need, you can always add it yourself:
-```java
-#extern_library "kernel32.lib"
-OpenFile :: (...): ... #stdcall
-// functions without a body will be searched for in extern libraries.
-```
-Windows uses stdcall convention, so #stdcall directive says to use stdcall calling convention for this function. if you want to add a lot more functions with this convention, you may not write #stdcall for every function. Instead you can write the following statement:
-```c
-#stdcall
-```
-This directive says to use stdcall calling convention for ALL following functions. if you want to restore language default calling convention, use `#tlangcall` directive.
-## "Macros"
-```c
 #line // line number
 
 #column // column number
@@ -215,37 +499,139 @@ This directive says to use stdcall calling convention for ALL following function
 
 #location // string in form "file:line:column"
 
-#function // function type string *
-// NOTE: Because of return type deduction, if no return type was specified, #function has to be
-// evaluated after typechecking the entire body. It will evaluate to correct name at runtime, but if
-// it is used in constant context, it will result in "undefined".
+#function // function type string
+// NOTE: this directive includes return type name.
+// If the return type is explicitly specified, #function is usable in constant
+// context. Otherwise it will result in "undefined". If no return type was
+// specified, #function has to be evaluated after typechecking the entire body.
+// But constant expressions have to be evaluated as they are encountered, which
+// is always before inferring the return type, meaning that you can't use this
+// directive in constant context.
+paradox :: () {
+  #if #function contains "Int" {
+    return true // makes #function return "(): Bool"
+  } else {
+    return 1 // makes #function return "(): Int"
+  }
+}
+////////////////////////////
 
-#assert <expression> // assert at compile time that expression evaluates to `true`
+// TODO: implement
+#definition // current definition name
+// Example:
+Thing :: struct {
+  name := #definition // evaluates to "Thing"
+  do_stuff :: () {
+    return #definition // returns "do_stuff"
+  }
+}
+////////////////////////////
 
-#print <expression> // prints the value at compile time
+#assert expression // assert at compile time that expression evaluates to `true`
 
-#typeof <expression> // returns the type of expression
+#print expression // prints the value at compile time
 
-#compiles <statement> // evaluates to true or false depending if the following statement compiles or not.
-                      // that block will not be evaluated at runtime.
+#typeof expression // returns the type of expression
 
-# <lambda> // evaluate lambda at compile time.
+#compiles statement // Evaluates to true or false depending if the
+                    // following statement compiles or not.
+                    // That block will not be evaluated at runtime.
+
+# lambda // evaluate lambda at compile time.
 ```
 # Types
-## Optional
+## Builtin types
+### Fundamental types
+```java
+Void
+Bool
+U8 U16 U32 U64 // Unsigned ints
+S8 S16 S32 S64 // Signed ints
+F32 F64 // Floats
+String
+Type // Every type has type `Type`
+```
+### Structs
+```java
+String :: struct {
+  data: *U8
+  count: Int
+}
+StructMember :: struct {
+  name: String
+  type: *Typeinfo
+  offset: Int
+}
+EnumMember :: struct {
+  value: Int
+  name: String
+}
+TypeInfo :: struct {
+  kind: TypeKind
+  name: String
+  size: Int
+  members: []StructMember
+  pointee: *TypeInfo
+  array_count: Int
+  enum_members: []EnumMember
+  parameters: []*TypeInfo
+}
+Any :: struct {
+  pointer: *U8
+  type: *TypeInfo
+}
+Range :: struct {
+  min, max: Int
+}
+```
+#### TODO: Make Range a template
+### Enums
+```java
+TypeKind :: enum {
+	Void,
+	Bool,
+	U8,
+	U16,
+	U32,
+	U64,
+	S8,
+	S16,
+	S32,
+	S64,
+	F32,
+	F64,
+	\struct,
+	\enum,
+	pointer,
+	span,
+	array,
+}
+```
+### Aliases
+```java
+Int SInt // alias to signed integer of target architecture register's size
+UInt // alias to unsigned integer of target architecture register's size
+Float // alias to F64
+```
+## Type modifiers
+### Pointer
+```java
+x: *String // x is a pointer to String
+```
+### Optional
 ```java
 func :: (a: ?String) {
   print(if a then *a else "a is empty")
 }
 ```
-## Array
+### Array
 ```java
 array: [10]Int
 array[0] = 12
 // pointer to first element is array.data
 // number of elements is array.count
 ```
-## Span
+### Span
 Span is just a pointer to an array and the number of elements.
 Span does not have to cover an entire array, it can point at a portion of it.
 ```java
@@ -280,44 +666,36 @@ process(get_array())
 // To allow this conversion, the array is temporarily stored in a reserved stack memory.
 // This memory region can be overwritten by subsequent statements.
 ```
-# Functions
-## Return type deduction
+## Internal types
+There is a bunch of special types that are available only during compilation.
+For example, unsized integer is the initial type of any integer literal.
+You can do math with literals and they won't be truncated. They also will preserve the precision if you assign them to names:
 ```java
-get_string :: () { // no need to put `:String` in here
-  return "what's up"
-}
-```
-## Named return parameters
-```java
-test :: (): named_return_value: Int {
-  named_return_value = 42 // this is the same as return 42
-}
-```
-They can be used when creating objects:
-```java
-create :: (): result: StringBuilder {
-  result.last = &result.first
-  result.alloc_last = &result.first
-}
-```
-This also works well with `using` keyword, which imports all identifiers from an expressions into current scope:
-```java
-create :: (): using result: StringBuilder {
-  last = &first
-  alloc_last = &first
-}
-```
-## Functions always initialize the return value
-```java
-forgot_to_return :: (): Int {
-  // oops. no return statement! no worries. this will always return 0.
+big_value :: 1 << 1000 // this won't fit in any sized integer type
 
-  // I don't know if compiler should always warn you if you forget to explicitly return.
-  // For example when using named return parameters, this warning becomes kinda annoying.
-  // For now it will issue a warning only for unnamed return parameters.
-}
+println(big_value) // error, does not fit into any type
+println(big_value >> 1000)// ok, prints 1
 ```
-## Packs
+Note that checks for too big numbers is not fully implemented yet, so be careful to not use all your RAM.
+
+# Using
+`using` is a keyword that can be used before a definition or an identifier.
+All it does is it brings all inner names from the definition inside the current scope.
+```java
+Vector3 :: struct { x,y,z: Float }
+
+vec: Vector3
+using vec
+// The above two lines can be merged together in a single one:
+// using vec: Vector3
+x = 1
+y = 4
+z = 9
+println(vec) // prints 1,4,9
+```
+`using` can be applied to any definition, including globals, locals, parameters, return parameters, struct members.
+
+# Packs
 Packs allow you to pass variable amount of arguments of the same type to a function.
 ```java
 vararg :: (pack: ..String) {
@@ -359,7 +737,9 @@ If you want to pass a pack to a function that accepts another pack, you have to 
 foo :: (a: ..Int) {...}
 bar :: (b: ..Int) => foo(..b)
 ```
-You might think that this is redundant, because you just passing a span to a function that accepts the same span, and you will be right in that case. This will not work with `Any`. Consider this example:
+You might think that `..` in `..b` is redundant, because you just passing a span to a function
+that accepts the same span, and you will be right in that case.
+This will not work with `Any` though. Consider this example:
 ```java
 foo :: (a: ..Any) {...}
 bar1 :: (b: ..Any) => foo(..b)
@@ -367,61 +747,14 @@ bar2 :: (b: ..Any) => foo(b)
 ```
 `bar1` will call foo with the same received arguments.
 `bar2` howewer will call foo with just one argument of type `[]Any`.
-## Functions templates
-Function template can be used to create multiple functions with different parameter types or values. You can create a template by making parameter's type polymorphic. A type is polymorphic if it contains `$` followed by a name.
+# A pointer to a function
 ```java
-poly :: (x: $T) {
-  #print T // prints type name at compile time
-}
-poly(123)      // prints Int
-poly("Hello ") // prints String
-poly("World!") // doesn't print anything because poly with String
-                // parameter is already instantiated and typechecked.
-```
-## Function templates with packs
-You can make a pack be a template.
-```java
-poly :: (x: ..$T) {}
-
-// poly() // error: could not determine $T type
-poly(1, 2)
-poly("x", "y")
-```
-## Constant parameters
-You can force the parameter to be constant by using % operator:
-```java
-get :: (value: %Int) {
-  arr: [value]String
-  return value * 7
-}
-```
-
-To call this function, you'll have to pass a constant to it.
-```java
-get(12) // ok
-x := 12
-get(x) // error, x is not constant.
-```
-This is a kind of function template. For every unique constant you pass in, a copy of the template will be instantiated. This can be used not only with values, but also types:
-```java
-new :: (T: %Type): *T {
-  return malloc(#sizeof T) as *T
-}
-```
-## A bit of syntactic sugar
-```java
-sweet :: () => "YEP"
-// this is equivalent to
-sweet :: () { return "YEP" }
-```
-## A pointer to a function
-```java
-ptr : * #type (): Int
+ptr: (): Int #type
 // the same syntax is used for types. Because of that it's
 // ambiguous if it's a type or a lambda without a body.
 // So to distinguish between them we have to use #type directive.
 ```
-## Member functions
+# Member functions
 To create a member function, name it's first parameter `me`:
 ```java
 Vector :: struct {
@@ -479,8 +812,7 @@ This makes doing something like this possible without much trouble:
 x: Any = 2 // that 2 is stored until the scope closes.
 ```
 
-### TODO
-Compare different temporary space sizing strategies.
+### TODO: Compare different temporary space sizing strategies.
 
 Right now the size of temporary space is determined per-scope (maximum of all scopes in a function).
 This method may use more memory than in per-statement case, but it makes things easier.
@@ -530,6 +862,15 @@ a :: 999999999999999999999999999 * 123456789
 ```
 * Lossy conversions are always explicit.
 * Nested comments `/* /* /* */ */ */`
+
+Every fundamental type in this language is represented as a struct internally.
+This means that you can do all things with them that you can do with structs, for example add methods:
+```java
+is_negative :: (me: Float) => me < 0
+
+f: Float = 12
+println(f.is_negative())
+```
 # TODO
 * [ ] Builtin types
   * [ ] variant

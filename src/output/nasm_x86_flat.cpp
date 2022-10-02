@@ -401,7 +401,7 @@ DECLARE_OUTPUT_BUILDER {
 		auto process = start_process(bat_path);
 		if (!process.handle) {
 			with(ConsoleColor::red, print("Cannot execute file '{}'\n", bat_path));
-			return;
+			return false;
 		}
 
 		defer { free(process); };
@@ -426,10 +426,11 @@ DECLARE_OUTPUT_BUILDER {
 		auto exit_code = get_exit_code(process);
 		if (exit_code != 0) {
 			with(ConsoleColor::red, print("Build command failed\n"));
-			return;
+			return false;
 		}
 	}
 
+	return true;
 }
 
 DECLARE_TARGET_INFORMATION_GETTER {

@@ -10,26 +10,26 @@ enum class Register16:u8{ ax, cx, dx, bx, sp, bp, si, di,r8w,r9w,r10w,r11w,r12w,
 enum class Register8 :u8{ al, cl, dl, bl,spl,bpl,sil,dil,r8b,r9b,r10b,r11b,r12b,r13b,r14b,r15b};
 
 // Microsoft 64 bit calling convention - saved registers
-// +-----+----------+
-// | reg | volatile |
-// +-----+----------+
-// | rax |    +     |
-// | rbx |          |
-// | rcx |    +     |
-// | rdx |    +     |
-// | rsi |          |
-// | rdi |          |
-// | rsp |          |
-// | rbp |          |
-// | r8  |    +     |
-// | r9  |    +     |
-// | r10 |    +     |
-// | r11 |    +     |
-// | r12 |          |
-// | r13 |          |
-// | r14 |          |
-// | r15 |          |
-// +-----+----------+
+// +-----+-----+----------+
+// | reg | idx | volatile |
+// +-----+-----+----------+
+// | rax |     |    +     |
+// | rbx | 10  |          |
+// | rcx | 0   |    +     |
+// | rdx | 1   |    +     |
+// | rsi | 8   |          |
+// | rdi | 9   |          |
+// | rsp |     |          |
+// | rbp |     |          |
+// | r8  | 2   |    +     |
+// | r9  | 3   |    +     |
+// | r10 |     |    +     |
+// | r11 |     |    +     |
+// | r12 | 4   |          |
+// | r13 | 5   |          |
+// | r14 | 6   |          |
+// | r15 | 7   |          |
+// +-----+-----+----------+
 
 inline static constexpr Register64 stdcall_int_registers[] {
 	Register64::rcx,
@@ -38,27 +38,21 @@ inline static constexpr Register64 stdcall_int_registers[] {
 	Register64::r9,
 };
 
-inline static constexpr XRegister stdcall_float_registers[] {
-	XRegister::x0,
-	XRegister::x1,
-	XRegister::x2,
-	XRegister::x3,
-};
-
 inline static constexpr Register64 to_x86_register(Register r) {
 	using enum Register;
 	using enum Register64;
 	switch (r) {
-		case (Register)0: return rcx;
-		case (Register)1: return rdx;
-		case (Register)2: return r8;
-		case (Register)3: return r9;
-		case (Register)4: return r12;
-		case (Register)5: return r13;
-		case (Register)6: return r14;
-		case (Register)7: return r15;
-		case (Register)8: return rsi;
-		case (Register)9: return rdi;
+		case (Register)0:  return rcx;
+		case (Register)1:  return rdx;
+		case (Register)2:  return r8;
+		case (Register)3:  return r9;
+		case (Register)4:  return r12;
+		case (Register)5:  return r13;
+		case (Register)6:  return r14;
+		case (Register)7:  return r15;
+		case (Register)8:  return rsi;
+		case (Register)9:  return rdi;
+		case (Register)10: return rbx;
 		case rs: return rsp;
 		case rb: return rbp;
 	}

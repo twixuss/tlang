@@ -69,21 +69,21 @@ PFD_STEREO_DONTCARE       :: 0x80000000
 ChoosePixelFormat :: (
   hdc  : HDC,
   ppfd : *PIXELFORMATDESCRIPTOR
-): INT
+) INT
 
 SwapBuffers :: (
   unnamedParam1 : HDC
-): BOOL
+) BOOL
 
 DescribePixelFormat :: (
   hdc          : HDC,
   iPixelFormat : INT,
   nBytes       : UINT,
   ppfd         : *PIXELFORMATDESCRIPTOR
-): INT
+) INT
 
 SetPixelFormat :: (
   hdc    : HDC,
   format : INT,
   ppfd   : *PIXELFORMATDESCRIPTOR
-): BOOL
+) BOOL
