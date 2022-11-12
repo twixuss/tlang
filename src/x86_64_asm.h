@@ -648,8 +648,8 @@ inline umm append_instruction(StringBuilder &builder, s64 idx, Instruction i) {
 		case sqrt4_f: return append_format(builder, "movd xmm7, {}\nsqrtss xmm7,xmm7\nmovd {}, xmm7", part4b(i.sqrt4_f.d), part4b(i.sqrt4_f.d));
 		case sqrt8_f: return append_format(builder, "movq xmm7, {}\nsqrtsd xmm7,xmm7\nmovq {}, xmm7", i.sqrt8_f.d, i.sqrt8_f.d);
 
-		case tobool_r:    { auto d = part1b(i.tobool_r.d);    return append_format(builder, "test {}, {}\nsetnz {}", d, d, d); }
-		case toboolnot_r: { auto d = part1b(i.toboolnot_r.d); return append_format(builder, "test {}, {}\nsetz {}" , d, d, d); }
+		case tobool_r:    { auto d = i.tobool_r.d;    return append_format(builder, "test {}, {}\nsetnz {}", d, d, part1b(d)); }
+		case toboolnot_r: { auto d = i.toboolnot_r.d; return append_format(builder, "test {}, {}\nsetz {}" , d, d, part1b(d)); }
 		case jmp_label:
 		case noop:
 			return 0;

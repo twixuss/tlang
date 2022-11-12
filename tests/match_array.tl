@@ -1,11 +1,11 @@
 import "tlang/std.tl"
 
 Kind :: enum {
-	literal;
-	identifier;
-	lambda;
-	\struct;
-	\enum;
+	literal
+	identifier
+	lambda
+	\struct
+	\enum
 }
 
 main :: () {

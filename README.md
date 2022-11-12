@@ -31,14 +31,18 @@ x
 hello_mister_123
 ♥
 ```
-You can't use reserved keywords as identifiers
+You can't use reserved keywords and words that start with a number as identifiers
 ```java
 struct // `struct` is a keyword, not an identifier
+123    // `123' is a literal
 ```
-There is a way to work around that. You can prefix a keyword with `\` to make it an identifier:
+There is a way to work around that. You can prefix such word with `\` to make it an identifier:
 ```java
 \struct // this is an identifier whose name is 'struct'
+\123    // identifier '123'
 ```
+Backslash is not included in the identifier name.
+
 Also you can use `\` to merge two identifiers in a single one:
 ```java
 hello_  \  world
@@ -113,12 +117,12 @@ A body of a lambda is defined with curly braces. You can put other statements be
 To make the lambda accept an argument, just put the argument definition inside the brackets.
 Multiple arguments are separated with a comma. To specify the return type of a lambda write a colon after closing bracket and then the type.
 ```java
-(a: Int, b: Int): Int {
+(a: Int, b: Int) Int {
   // Now we can do something with "a" and "b"
   return a + b
 }
 ```
-Note that that `: Int` between the braces looks like a part of a definition. Guess what, it is a definition and we can give it a name if we want to:
+Note that return type is actually a part of a definition that can be given a name:
 ```java
 (a: Int, b: Int) result: Int {
   result = a + b
@@ -127,6 +131,17 @@ Note that that `: Int` between the braces looks like a part of a definition. Gue
 With named return parameters we don't have to use `return` statement, the result will be implicitly returned for us.
 
 What happens if we don't assign to it you may ask? In that case the function will return the default value of the return type. For `Int` it is `0`.
+
+Another question is what if we don't use named return parameter and don't return from a function?
+The same thing happens: the default value is returned.
+
+The last thing about return parameters is that you don't have to provide an expression for the return statement:
+```java
+() result: Int {
+  result = 42
+  return
+}
+```
 
 Let's move on to ways of simplifying this lambda.
 
@@ -165,11 +180,11 @@ This language provides a way to say what is what:
 add(b=2, a=1)
 // As you can see you can reorder arguments
 ```
-Also this language does not restrict you in ways to call a function:
+Also this language allows you to call a function using different syntaxes:
 ```java
-add(1, 2) // Standard syntax
+add(1, 2) // Free syntax
 1.add(2)  // Member syntax
-1 add 2   // Binary syntax (only for functions with 2 arguments)
+1 add 2   // Binary (infix) syntax (obviously only for functions with 2 arguments)
 ```
 All of these are available by default.
 ## Variadics
@@ -754,40 +769,64 @@ ptr: (): Int #type
 // ambiguous if it's a type or a lambda without a body.
 // So to distinguish between them we have to use #type directive.
 ```
-# Member functions
-To create a member function, name it's first parameter `me`:
+# Uniform function call syntax
+All functions you write are free. If a function follows specific syntax rules,
+it is callable with that syntax by default, without any extra declarations.
+## Member
+Any free function with at least
+one parameter is callable using member call syntax:
 ```java
-Vector :: struct {
-  x: Float32
-  y: Float32
-}
+fma :: (a, b, c: Int) => a * b + c
 
-dot :: (me: Vector, b: Vector) =>
-  x * b.x + y * b.y // Note that `me` has implicit `using`, so you don't have to write `me.x` all the time
-
-a := Vector(1, 2)
-b := Vector(3, 4)
-
-// Then you can call it like member or normal function:
-print(a.dot(b))
-print(dot(a, b))
+1.fma(2, 3) // a = 1, b = 2, c = 3
 ```
-In the above example parameter `me` has type `Vector`, which means that it is not modifyable.
-To change this, just make the type a pointer to vector:
+First parameter to such function can be a pointer. In that case,
+if the expression before the dot is addressable, it's address is
+implicitly taken, otherwise the value is put on the stack and only then it's address is taken:
 ```java
-normalize :: (me: *Vector) {
-  f := 1.0 / me.length()
-  x *= f
-  y *= f
-}
+Vector2 :: struct { x, y: Float }
+length :: (using v: Vector2) => sqrt(x*x + y*y)
 
-a := Vector(1, 2)
-a.normalize()
+normalized :: (v: Vector2) => v / v.length() // v is passed by value
+                                             // and can not be modified.
+
+normalize :: (v: *Vector2) { *v = v.normalized() } // v is passed by pointer
+                                                   // and can be modified.
+
+a := Vector2(1, 2)
+a.normalize() // a is modified
+
+println(Vector2(3, 4).normalize()) // `Vector2(3, 4)` is not addressable,
+                                   // so it is put on the stack
 ```
-Note that even though the function accepts a pointer, you can pass arbitrary expressions to it:
+## Infix
+Any free function with exactly
+two parameters is callable using infix syntax:
 ```java
-println(Vector2(1, 2).normalize()) // Vector2(1, 2) is not addressable, but it works.
-// See "Temporary space" section for more details.
+add :: (a, b: Int) => a + b
+
+println(1 add 2)
+```
+How this operator behaves with other operators is described in [Operator precedence](#operator-precedence) section
+
+# Operator precedence
+All binary operators are left associative and have following precedence:
+```java
+10:  .
+ 9:  as
+ 8:  custom infix
+ 7:  * / %
+ 6:  + -
+ 5:  & | ^ << >>
+ 4:  == != > < >= <=
+ 3:  || &&
+ 2:  ..
+ 1:  = += *= &= and so on...
+```
+Example:
+```java
+// This expression  parses into  this one:
+a = b + c * d dot e              (a = (b + (c * (d dot e))))
 ```
 # Temporary space
 This language provides a lot of implicit conversions to simplify things,
@@ -861,16 +900,6 @@ X :: 1337
 a :: 999999999999999999999999999 * 123456789
 ```
 * Lossy conversions are always explicit.
-* Nested comments `/* /* /* */ */ */`
-
-Every fundamental type in this language is represented as a struct internally.
-This means that you can do all things with them that you can do with structs, for example add methods:
-```java
-is_negative :: (me: Float) => me < 0
-
-f: Float = 12
-println(f.is_negative())
-```
 # TODO
 * [ ] Builtin types
   * [ ] variant
@@ -878,14 +907,13 @@ println(f.is_negative())
 * [ ] Multiple return parameters
 * [ ] Optimization
 * [ ] Context
-* [ ] Extension methods (WIP)
 * [ ] Specify build options in the source code
 * [ ] Default arguments
 * [ ] AST inspection.
 * [ ] Caller argument expression string
 ```java
 func :: (a: String) {
-  #print #exprof a
+  print(#exprof a)
 }
 
 func(get_the_string(12, 34))

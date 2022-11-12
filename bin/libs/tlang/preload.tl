@@ -43,6 +43,8 @@ any :: struct {
 }
 */
 
+import "tlang/windows.tl"
+
 debug_break :: () #intrinsic
 memcpy :: (dst: *Void, src: *Void, size: UInt) #intrinsic
 debug_print_int :: (value: Int) #intrinsic
@@ -72,7 +74,12 @@ init_runtime :: () {
 }
 
 Allocator :: struct {
-    func:  (size: Int, state: *Void) *Void #type
+	Action :: enum {
+		allocate
+		deallocate
+	}
+
+    func:  (action: Action, data: *Void, size: Int, state: *Void) *Void #type
     state: *Void
 }
 
@@ -80,12 +87,17 @@ default_allocator: Allocator
 current_allocator: Allocator
 
 init_allocator :: () {
-    default_allocator.func = (size: Int, state: *Void) *Void => VirtualAlloc(null, @size, MEM_RESERVE|MEM_COMMIT, PAGE_READWRITE)
+    default_allocator.func = (action: Allocator.Action, data: *Void, size: Int, state: *Void) *Void {
+		match action {
+			.allocate => return VirtualAlloc(null, @size, MEM_RESERVE|MEM_COMMIT, PAGE_READWRITE)
+			.deallocate => VirtualFree(data, 0, MEM_FREE)
+		}
+	}
     current_allocator = default_allocator
 }
 
-allocate :: (me: *Allocator, size: Int) => me.func(size, me.state)
+allocate :: (this: Allocator, size: Int) => this.func(.allocate, null, size, this.state)
+deallocate :: (this: Allocator, data: *Void) => this.func(.deallocate, data, 0, this.state)
 
+new :: (this: Allocator, T: %Type) *T => @this.allocate(#sizeof T)
 new :: (T: %Type) *T => @current_allocator.allocate(#sizeof T)
-
-import "tlang/windows.tl"

@@ -100,8 +100,8 @@ bool can_be_global(AstStatement *statement) {
 		case Ast_ExpressionStatement: {
 			auto expression = ((AstExpressionStatement *)statement)->expression;
 			switch (expression->kind) {
-				case Ast_Import:
-					return true;
+				//case Ast_Import:
+				//	return true;
 				case Ast_Lambda: {
 					auto Lambda = (AstLambda *)expression;
 					return Lambda->is_evaluated_at_compile_time;
@@ -234,7 +234,7 @@ void append_type(StringBuilder &builder, AstExpression *type, bool silent_error)
 // TODO FIXME extremely inefficient on allocations.
 HeapString type_to_string(AstExpression *type, bool silent_error) {
 	// Is this 'aka' thing really useful?
-	return type_name(type, silent_error);
+	// return type_name(type, silent_error);
 
 
 	if (!type)
@@ -341,6 +341,8 @@ s64 get_align(AstExpression *type, bool check_struct) {
 				using enum UnaryOperation;
 				case pointer:
 					return compiler.stack_word_size;
+				case option:
+					return get_align(unop->expression, check_struct);
 				default: invalid_code_path();
 			}
 		}
@@ -385,8 +387,10 @@ bool types_match(AstExpression *a, AstExpression *b) {
 		return true;
 
 	// TODO: direct() is way too slow.
-	a = a->directed ? (AstExpression *)a->directed : direct(a);
-	b = b->directed ? (AstExpression *)b->directed : direct(b);
+	a = direct(a);
+	b = direct(b);
+	//a = a->directed ? (AstExpression *)a->directed : direct(a);
+	//b = b->directed ? (AstExpression *)b->directed : direct(b);
 
 	if (a->kind != b->kind) {
 		return false;
@@ -440,27 +444,36 @@ bool types_match(AstExpression *a, AstExpression *b) {
 }
 
 AstExpression *direct(AstExpression *type) {
-	switch (type->kind) {
-		case Ast_Identifier: {
-			do {
+	while (1) {
+		switch (type->kind) {
+			case Ast_Identifier: {
 				auto identifier = (AstIdentifier *)type;
 				if (!identifier->definition())
 					return 0;
 				type = identifier->definition()->expression;
 				if (!type)
 					return 0;
-			} while (type->kind == Ast_Identifier);
-			break;
+				break;
+			}
+			case Ast_BinaryOperator: {
+				auto binop = (AstBinaryOperator *)type;
+				type = binop->right;
+				break;
+			}
+			case Ast_UnaryOperator: {
+				auto unop = (AstUnaryOperator *)type;
+				if (unop->operation == UnaryOperation::typeof) {
+					type = unop->expression->type;
+				} else {
+					return type;
+				}
+				break;
+			}
+			default:
+				return type;
 		}
-		case Ast_BinaryOperator: {
-			auto binop = (AstBinaryOperator *)type;
-			return direct(binop->right);
-		}
-		default:
-			break;
 	}
 
-	return type;
 }
 
 AstExpression *get_definition_expression(AstExpression *expression) {
@@ -657,7 +670,7 @@ bool is_constant(AstExpression *expression) {
 	switch (expression->kind) {
 		case Ast_Literal:
 		case Ast_Lambda:
-		case Ast_Import:
+		//case Ast_Import:
 			return true;
 		case Ast_BinaryOperator: {
 			auto binop = (AstBinaryOperator *)expression;

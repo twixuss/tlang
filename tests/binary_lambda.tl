@@ -1,13 +1,13 @@
 import "tlang/std.tl"
 
-Vector2 :: struct {
-    x: Int
-    y: Int
-}
-
-dot :: (a: Vector2, b: Vector2) => a.x * b.x + a.y * b.y
-
 main :: () {
+    Vector2 :: struct {
+        x: Int
+        y: Int
+    }
+
+    dot :: (a: Vector2, b: Vector2) => a.x * b.x + a.y * b.y
+
     a := Vector2(1, 2)
     b := Vector2(3, 4)
 

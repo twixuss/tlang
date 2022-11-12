@@ -1,17 +1,8 @@
 import "tlang/windows.tl"
 
-RGBU8 :: struct {
-    r: U8
-    g: U8
-    b: U8
-}
+CString :: *struct{}
 
-RGBAU8 :: struct {
-    r: U8
-    g: U8
-    b: U8
-    a: U8
-}
+operator as implicit :: (s: CString) *U8 => @s
 
 merge :: (a, b: U8) U16 =>
 	(a as U16 << 8) | b
@@ -22,10 +13,12 @@ strlen :: (str: *U8) {
 	return c as Int - str as Int
 }
 
-min :: (a, b: $T) => if a < b then a else b
-max :: (a, b: $T) => if a < b then b else a
+min :: (a: $T, b: T) => if a < b then a else b
+max :: (a: $T, b: T) => if a < b then b else a
 
-lerp :: (a, b: $T, t: $U) => a + (b - a) * t
+lerp :: (a: $T, b: T, t: $U) => a + (b - a) * t
+lerp :: (a: $T, b: T, c: T, t: $U) => a + t * (2 * (b - a) + t * (a - 2 * b + c))
+
 
 find :: (haystack, needle: String) ?String {
 	if (haystack.count - needle.count + 1) as Int <= 0
@@ -43,6 +36,24 @@ find :: (haystack, needle: String) ?String {
 	return null
 }
 
+// FIXME: implement following syntax for templates:
+// haystack, needle: []$T
+find :: (haystack: []$T, needle: []T) ?[]T {
+	if (haystack.count - needle.count + 1) as Int <= 0
+		return null
+
+	same := true
+	for i in 0 .. haystack.count - needle.count + 1 {
+		same = true
+		for j in 0 .. needle.count
+			if needle[j] != haystack[i + j]
+				same = false
+		if same
+			return ([]T)(&haystack[i], needle.count)
+	}
+	return null
+}
+
 starts_with :: (haystack, needle: String) {
 	if needle.count > haystack.count
         return false
@@ -54,21 +65,20 @@ starts_with :: (haystack, needle: String) {
 
 
 write_to_stdout :: (str: String) {
-    WriteFile(GetStdHandle(STD_OUTPUT_HANDLE), str.data, str.count as U32, null, null)
+    GetStdHandle(STD_OUTPUT_HANDLE).WriteFile(str.data, str.count as U32, null, null)
     return str.count
 }
 
 write_to_stdout :: (char: U8) =>
     write_to_stdout(String(&char, 1))
 
-// TODO: default arguments
-set_console_color :: (color: RGBU8, background: Bool /*= false*/) {
+set_console_color :: (color: RGB_U8, background := false) {
     mask := 0x8
     if color.r >= 128 then mask |= 0x4
     if color.g >= 128 then mask |= 0x2
     if color.b >= 128 then mask |= 0x1
     if background then mask <<= 4
-    SetConsoleTextAttribute(GetStdHandle(STD_OUTPUT_HANDLE), mask as DWORD);
+    GetStdHandle(STD_OUTPUT_HANDLE).SetConsoleTextAttribute(mask as DWORD);
 }
 
 StringizeCallback :: (state: *Void, str: String) Int #type
@@ -176,24 +186,18 @@ stringize_hex :: (_val: UInt, state: *Void, callback: StringizeCallback) {
     return callback(state, String(@&buffer[dst_index], @(CAPACITY - dst_index)))
 }
 
-is_nan :: (me: F32) {
-    u := *(&me as *U32)
+is_nan :: (v: F32) {
+    u := *(&v as *U32)
 	return ((u & 0x7f800000) == 0x7f800000) && ((u & 0x007fffff) != 0)
 }
 
-is_nan :: (me: F64) {
-    u := *(&me as *U64)
+is_nan :: (v: F64) {
+    u := *(&v as *U64)
 	return ((u & 0x7ff0000000000000) == 0x7ff0000000000000) && ((u & 0x000fffffffffffff) != 0)
 }
 
-is_infinity :: (me: F32) {
-    x: U32 = 0x7F800000
-    return x == *(&me as *U32)
-}
-is_infinity :: (me: F64) {
-    x: U64 = 0x7ff0000000000000
-    return x == *(&me as *U64)
-}
+is_infinity :: (v: F32) => *(&v as *U32) == 0x7f800000
+is_infinity :: (v: F64) => *(&v as *U64) == 0x7ff0000000000000
 
 stringize :: (_val: F64, state: *Void, callback: StringizeCallback) {
     bytes_written: Int
@@ -334,6 +338,7 @@ stringize_quoted_if_string :: (value: Any, state: *Void, callback: StringizeCall
 		stringize(value, state, callback)
 
 
+// FIXME: use a HashMap(TypeInfo, Stringizer)
 stringize :: (value: Any, state: *Void, callback: StringizeCallback) Int {
 	info := value.type
     assert info != null
@@ -353,7 +358,7 @@ stringize :: (value: Any, state: *Void, callback: StringizeCallback) Int {
                     bytes_written += callback(state, ", ")
                 bytes_written += stringize_quoted_if_string(Any(data + i * info.size, info), state, callback)
             }
-            bytes_written += callback(state, "...")
+            bytes_written += callback(state, ", ...")
             for i in (count-8)..count {
                 bytes_written += callback(state, ", ")
                 bytes_written += stringize_quoted_if_string(Any(data + i * info.size, info), state, callback)
@@ -382,12 +387,37 @@ stringize :: (value: Any, state: *Void, callback: StringizeCallback) Int {
                     return callback(state, info.enum_members[i].name)
                 }
             }
+            return callback(state, info.name) +
+                   callback(state, "(") +
+                   stringize(enum_value, state, callback) +
+                   callback(state, ")")
         }
 		.\struct => {
 			if info.name == "String" {
 				return callback(state, *(value.pointer as *String))
-            } else if info.name == "RGBU8" {
-                set_console_color(*(value.pointer as *RGBU8), false)
+            } else if info.name.starts_with("LinkedList") {
+                bytes_written: Int
+
+                list := (value.pointer as *LinkedList(U8))
+
+                node := list.head
+
+                bytes_written += callback(state, "[")
+                while node != null {
+                    if node != list.head {
+                        bytes_written += callback(state, ", ")
+                    }
+                    bytes_written += stringize_quoted_if_string(
+                        Any(node as *U8 + #sizeof *LinkedList(U8).Node, info.parameters[0]),
+                        state,
+                        callback
+                    )
+
+                    node = node.next
+                }
+                bytes_written += callback(state, "]")
+
+				return bytes_written
 			} else {
                 bytes_written: Int
                 bytes_written += callback(state, "{")
@@ -409,6 +439,13 @@ stringize :: (value: Any, state: *Void, callback: StringizeCallback) Int {
 			span := *(value.pointer as *[]U8)
 			return stringize_span(span.data, span.count, info.pointee, state, callback)
 		}
+        .option => {
+            if *((value.pointer + info.pointee.size) as *Bool) {
+                return stringize(Any(value.pointer, info.pointee), state, callback)
+            } else {
+                return callback(state, "{}")
+            }
+        }
 	}
 }
 
@@ -470,14 +507,14 @@ print :: (value: String) => write_to_stdout(value)
 print :: (value: Any) {
 	b := create_string_builder()
 	b.append(value)
-	write_to_stdout(b.to_string())
+	b.to_string().write_to_stdout()
 	b.free()
 }
 
 print :: (format: String, values: ..Any) {
 	b := create_string_builder()
 	b.append_format(format, ..values)
-	write_to_stdout(b.to_string())
+	b.to_string().write_to_stdout()
 	b.free()
 }
 
@@ -523,11 +560,11 @@ create_string_builder :: () using result: StringBuilder {
 	alloc_last = &first
 }
 
-begin :: (using me: *StringBuilder.Block) *U8 => @&me[1]
-end   :: (using me: *StringBuilder.Block) *U8 => me.begin() + count
-available_space :: (using me: *StringBuilder.Block) Int => capacity - count
+begin :: (using this: *StringBuilder.Block) *U8 => @&this[1]
+end   :: (using this: *StringBuilder.Block) *U8 => this.begin() + count
+available_space :: (using this: *StringBuilder.Block) Int => capacity - count
 
-allocate_block :: (using me: *StringBuilder) {
+allocate_block :: (using this: *StringBuilder) {
     capacity := alloc_last.capacity*2
     block := allocator.allocate(#sizeof StringBuilder.Block + capacity) as *StringBuilder.Block
     block.count = 0
@@ -538,9 +575,9 @@ allocate_block :: (using me: *StringBuilder) {
     return block
 }
 
-append_char :: (using me: *StringBuilder, ch: U8) => me.append(String(&ch, 1))
+append_char :: (using this: *StringBuilder, ch: U8) => this.append(String(&ch, 1))
 
-append :: (using me: *StringBuilder, str: String) {
+append :: (using this: *StringBuilder, str: String) {
     remaining := str
     while remaining.count > last.available_space() {
         space_in_block := last.available_space()
@@ -550,7 +587,7 @@ append :: (using me: *StringBuilder, str: String) {
         last.count += space_in_block
 		last = last.next
         if last == null
-			last = me.allocate_block()
+			last = this.allocate_block()
     }
 
     memcpy(last.end(), remaining.data, remaining.count as UInt)
@@ -559,15 +596,15 @@ append :: (using me: *StringBuilder, str: String) {
     return str.count
 }
 
-append :: (using me: *StringBuilder, value: Any) =>
-	stringize(value, me, (state: *Void, str: String) =>
+append :: (using this: *StringBuilder, value: Any) =>
+	stringize(value, this, (state: *Void, str: String) =>
         (state as *StringBuilder).append(str)
     )
 
-append_format :: (using me: *StringBuilder, format: String, args: ..Any) =>
-    stringize_format(me, (state: *Void, string: String) => (state as *StringBuilder).append(string), format, ..args)
+append_format :: (using this: *StringBuilder, format: String, args: ..Any) =>
+    stringize_format(this, (state: *Void, string: String) => (state as *StringBuilder).append(string), format, ..args)
 
-fill :: (using me: *StringBuilder, dst_string: String) result: String {
+fill :: (using this: *StringBuilder, dst_string: String) result: String {
     dst_char := dst_string.data
     block := &first
     while block != null {
@@ -579,13 +616,13 @@ fill :: (using me: *StringBuilder, dst_string: String) result: String {
     result.count = count
 }
 
-to_string :: (using me: *StringBuilder) result: String {
+to_string :: (using this: *StringBuilder) result: String {
     result.data = @ current_allocator.allocate(count)
 	result.count = count
-	me.fill(result)
+	this.fill(result)
 }
 
-free :: (using me: *StringBuilder) {
+free :: (using this: *StringBuilder) {
 	block := first.next
 	while block != null {
 		next := block.next
@@ -645,11 +682,96 @@ read_entire_file :: (path: *U8) using result: String {
     read(file, result)
 }
 
+Vector2 :: struct(T: Type) {
+    x, y: T
+    r, g: T #at x
+}
+
+vector2 :: (x: $T, y: T) => Vector2(T)(x, y)
+vector2 :: (v: $T) => Vector2(T)(v, v)
+
+operator + :: (a: Vector2($T), b: Vector2(T)) => Vector2(T)(a.x + b.x, a.y + b.y)
+operator - :: (a: Vector2($T), b: Vector2(T)) => Vector2(T)(a.x - b.x, a.y - b.y)
+operator * :: (a: Vector2($T), b: Vector2(T)) => Vector2(T)(a.x * b.x, a.y * b.y)
+operator / :: (a: Vector2($T), b: Vector2(T)) => Vector2(T)(a.x / b.x, a.y / b.y)
+
+operator + :: (a: Vector2($T), b: T) => Vector2(T)(a.x + b, a.y + b)
+operator - :: (a: Vector2($T), b: T) => Vector2(T)(a.x - b, a.y - b)
+operator * :: (a: Vector2($T), b: T) => Vector2(T)(a.x * b, a.y * b)
+operator / :: (a: Vector2($T), b: T) => Vector2(T)(a.x / b, a.y / b)
+
+operator + :: (a: $T, b: Vector2(T)) => Vector2(T)(a + b.x, a + b.y)
+operator - :: (a: $T, b: Vector2(T)) => Vector2(T)(a - b.x, a - b.y)
+operator * :: (a: $T, b: Vector2(T)) => Vector2(T)(a * b.x, a * b.y)
+operator / :: (a: $T, b: Vector2(T)) => Vector2(T)(a / b.x, a / b.y)
+
 Vector3 :: struct(T: Type) {
     x, y, z: T
+    r, g, b: T #at x
 }
+
+vector3 :: (x: $T, y: T, z: T) => Vector3(T)(x, y, z)
+vector3 :: (v: $T) => Vector3(T)(v, v, v)
 
 operator + :: (a: Vector3($T), b: Vector3(T)) => Vector3(T)(a.x + b.x, a.y + b.y, a.z + b.z)
 operator - :: (a: Vector3($T), b: Vector3(T)) => Vector3(T)(a.x - b.x, a.y - b.y, a.z - b.z)
 operator * :: (a: Vector3($T), b: Vector3(T)) => Vector3(T)(a.x * b.x, a.y * b.y, a.z * b.z)
 operator / :: (a: Vector3($T), b: Vector3(T)) => Vector3(T)(a.x / b.x, a.y / b.y, a.z / b.z)
+
+RGB_U8 :: Vector3(U8)
+
+LinkedList :: struct(T: Type) {
+    Node :: struct {
+        next: *Node
+        value: T
+    }
+
+    head, tail: *Node
+    allocator: Allocator
+}
+
+linked_list :: (T: %Type) list: LinkedList(T) {
+    // FIXME: `using list` crashes the compiler
+    list.allocator = current_allocator
+}
+
+add :: (using list: *LinkedList($T), value: T = T()) {
+    if head == null {
+        // FIXME: `allocator.new(Node)` does not compile
+        // FIXME: `new(allocator, Node)` crashes at runtime. probably has to do with constant parameters
+        head = @allocator.allocate(#sizeof Node)
+        tail = head
+    } else {
+        tail.next = @allocator.allocate(#sizeof Node)
+        tail = tail.next
+    }
+    tail.value = value
+}
+
+free :: (using list: *LinkedList($T)) {
+    node := head
+    while node != null {
+        next := node.next
+        list.allocator.deallocate(node)
+        node = next
+    }
+    list.head = null
+    list.tail = null
+}
+
+HashMap :: struct(Key: Type, Value: Type) {
+    KeyValue :: struct {
+        key: Key
+        value: Value
+    }
+    HashKeyValue :: struct {
+        hash: U64
+        key_value: KeyValue
+    }
+
+    buckets: []LinkedList(HashKeyValue)
+}
+
+
+// get_or_insert :: (using map: HashMap($Key, $Value), key: Key) {
+// }

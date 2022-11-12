@@ -165,7 +165,7 @@ struct FrameBuilder {
 	void append(AstSubscript      *, RegisterOrAddress);
 	void append(AstLambda         *, RegisterOrAddress);
 	void append(AstIfx            *, RegisterOrAddress);
-	void append(AstArrayLiteral   *, RegisterOrAddress);
+	void append(AstArrayInitializer   *, RegisterOrAddress);
 
 	[[nodiscard]] RegisterOrAddress append(AstExpression *expression) {
 		auto destination = allocate_register_or_temporary(get_size(expression->type));
@@ -337,6 +337,8 @@ struct FrameBuilder {
 
 	void with_definition_address_of(AstDefinition *definition, auto &&fn);
 
+	void append_cast(RegisterOrAddress src, AstExpression *src_type, RegisterOrAddress dst, AstExpression *dst_type);
+	void append_cast(AstExpression *src, RegisterOrAddress dst, AstExpression *dst_type);
 
 #if BYTECODE_DEBUG
 
@@ -361,6 +363,17 @@ struct FrameBuilder {
 
 #endif
 };
+
+
+#define TMP_CHECK \
+	auto start_tmp = temporary_cursor; \
+	defer { assert(temporary_cursor == start_tmp); }
+#define REG_CHECK \
+	auto start_reg = available_registers.count(); \
+	defer { assert(available_registers.count() == start_reg); }
+#define TMP_REG_CHECK \
+	auto start_tmp_reg = temporary_register_set.count(); \
+	defer { assert(temporary_register_set.count() == start_tmp_reg); }
 
 struct BytecodeBuilder {
 	InstructionList builder;
@@ -1081,30 +1094,6 @@ Instruction *FrameBuilder::add_instruction(Instruction next) {
 	return &instructions.add(next);
 }
 
-// if has enough registers, returns the value of an expression in them.
-// empty if failed to allocate registers.
-using ValueRegisters = StaticList<Register, 8>;
-
-ValueRegisters value_registers(Register a) {
-	ValueRegisters result;
-	result.add(a);
-	return result;
-}
-
-ValueRegisters value_registers(Optional<Register> a) {
-	ValueRegisters result;
-	if (a)
-		result.add(a.value_unchecked());
-	return result;
-}
-
-ValueRegisters value_registers(Register a, Register b) {
-	ValueRegisters result;
-	result.add(a);
-	result.add(b);
-	return result;
-}
-
 inline umm append(StringBuilder &b, LambdaDefinitionLocation d) {
 	switch (d) {
 		using enum LambdaDefinitionLocation;
@@ -1180,7 +1169,10 @@ DefinitionOrigin get_definition_origin(AstDefinition *definition) {
 }
 
 Address get_known_address_of(AstDefinition *definition) {
-	assert(definition->offset != -1);
+	if (definition->offset == -1) {
+		immediate_error(definition->location, "INTERNAL ERROR: definition->offset is -1 in get_known_address_of");
+		exit(-1);
+	}
 
 	if (definition->container_node && !definition->is_constant) {
 		switch (definition->container_node->kind) {
@@ -1688,7 +1680,7 @@ void FrameBuilder::append(AstStatement *statement) {
 		case Ast_Assert:
 			return append((AstAssert *)statement);
 		case Ast_Print:
-		case Ast_Import:
+		//case Ast_Import:
 		case Ast_Parse:
 		case Ast_Test:
 		case Ast_Using:
@@ -2046,18 +2038,335 @@ void FrameBuilder::append(AstMatch *Match) {
 	}
 }
 
+void FrameBuilder::append_cast(RegisterOrAddress src, AstExpression *src_type, RegisterOrAddress dst, AstExpression *dst_type) {
+	auto get_internal_representation = [&](AstExpression *type) -> AstExpression * {
+		if (is_pointer_internally(type))
+			return builtin_u64.Struct;
+		else if (auto Enum = direct_as<AstEnum>(type)) {
+			assert(!Enum->underlying_type, "not implemented");
+			return builtin_s64.Struct;
+		} else
+			return direct(type);
+		return 0;
+	};
+
+	AstExpression *from = get_internal_representation(src_type);
+	AstExpression *to   = get_internal_representation(dst_type);
+
+	{
+		auto array = as_array(from);
+		auto subtype = get_span_subtype(to);
+		if (array && subtype) {
+			assert(!src.is_in_register);
+			assert(!dst.is_in_register);
+
+			tmpreg(tmp);
+
+			I(lea, tmp, src.address);
+
+			mov_mr(dst.address + 0,                        tmp,                                                        compiler.stack_word_size);
+			mov_mc(dst.address + compiler.stack_word_size, (s64)get_constant_integer(array->index_expression).value(), compiler.stack_word_size);
+			return;
+		}
+	}
+
+
+	// TODO: FIXME: HACK:
+	// extremely dumb way to access data and count members of span
+	// EDIT: with span instantiations this is not relevant anymore. Check anyway
+	if (auto span = as_span(from)) {
+		// auto from_value = append(left);
+		//
+		// assert(!from_value.is_in_register, "not implemented");
+
+		if (::is_integer(dst_type)) {
+			invalid_code_path();
+			// auto count_addr = from_value.address + compiler.stack_word_size;
+			// if (dst.is_in_register) {
+			// 	I(mov8_rm, dst.reg, count_addr);
+			// } else {
+			// 	tmpreg(r0);
+			// 	I(mov8_rm, r0, count_addr);
+			// 	I(mov8_mr, dst.address, r0);
+			// }
+		} else if (::is_pointer(dst_type)) {
+			invalid_code_path();
+			// auto data_addr = from_value.address;
+			// if (dst.is_in_register) {
+			// 	I(mov8_rm, dst.reg, data_addr);
+			// } else {
+			// 	tmpreg(r0);
+			// 	I(mov8_rm, r0, data_addr);
+			// 	I(mov8_mr, dst.address, r0);
+			// }
+		} else {
+			invalid_code_path();
+		}
+		return;
+	}
+
+	// it's C++ lol, why not?
+#define BEGIN if (false) {}
+#define END else { invalid_code_path(); }
+#define FROM(x) else if (from == (builtin_##x.Struct))
+#define TO(x) else if (to == (builtin_##x.Struct))
+
+
+	// Integer to integer conversions:
+	// If dst is bigger than source:
+	//    extend the size depending on the signedness of source operand (sign extend for signed, zero extend for unsigned).
+	// Otherwise this is a noop.
+
+	if (::is_integer(from) && ::is_integer(to)) {
+		bool extended = false;
+
+#define C(z,d,s) \
+	extended = true; \
+	if (dst.is_in_register) { \
+		if (src.is_in_register) I(mov##z##x##d##s##_rr, dst.reg, src.reg); \
+		else                    I(mov##z##x##d##s##_rm, dst.reg, src.address); \
+	} else { \
+		tmpreg(r0); \
+		if (src.is_in_register) I(mov##z##x##d##s##_rr, r0, src.reg); /* NOTE: movsx/movzx into a memory is not a thing! */ \
+		else                    I(mov##z##x##d##s##_rm, r0, src.address); \
+		I(mov##d##_mr, dst.address, r0); \
+	}
+		// NOTE: no END's there, because conversions that are not listed here are noops.
+		BEGIN
+		FROM(u8) {
+			BEGIN
+			TO(u16) { C(z,2,1); }
+			TO(u32) { C(z,4,1); }
+			TO(u64) { C(z,8,1); }
+			TO(s16) { C(z,2,1); }
+			TO(s32) { C(z,4,1); }
+			TO(s64) { C(z,8,1); }
+		}
+		FROM(u16) {
+			BEGIN
+			TO(u32) { C(z,4,2); }
+			TO(u64) { C(z,8,2); }
+			TO(s32) { C(z,4,2); }
+			TO(s64) { C(z,8,2); }
+		}
+		FROM(u32) {
+			BEGIN
+			TO(u64) { C(z,8,4); }
+			TO(s64) { C(z,8,4); }
+		}
+		FROM(s8) {
+			BEGIN
+			TO(u16) { C(s,2,1); }
+			TO(u32) { C(s,4,1); }
+			TO(u64) { C(s,8,1); }
+			TO(s16) { C(s,2,1); }
+			TO(s32) { C(s,4,1); }
+			TO(s64) { C(s,8,1); }
+		}
+		FROM(s16) {
+			BEGIN
+			TO(u32) { C(s,4,2); }
+			TO(u64) { C(s,8,2); }
+			TO(s32) { C(s,4,2); }
+			TO(s64) { C(s,8,2); }
+		}
+		FROM(s32) {
+			BEGIN
+			TO(u64) { C(s,8,4); }
+			TO(s64) { C(s,8,4); }
+		}
+#undef C
+		if (!extended) {
+			copy(dst, src, get_size(to), false);
+		}
+		return;
+	}
+
+	// Integer to float
+	if (::is_integer(from) && ::is_float(to)) {
+		tmpreg(x);
+
+		copy(x, src, get_size(from), false);
+
+		BEGIN
+		FROM(s32) {
+			BEGIN
+			TO(f32) { I(cvt_s32_f32, x); }
+			END
+		}
+		FROM(s64) {
+			BEGIN
+			TO(f64) { I(cvt_s64_f64, x); }
+			END
+		}
+		END
+
+		copy(dst, x, get_size(to), false);
+
+		return;
+	}
+
+	// Float to integer
+	if (::is_float(from) && ::is_integer(to)) {
+		tmpreg(x);
+
+		copy(x, src, get_size(from), false);
+
+		BEGIN
+		FROM(f32) {
+			BEGIN
+			TO(s32) { I(cvt_f32_s32, x); }
+			END
+		}
+		FROM(f64) {
+			BEGIN
+			TO(s64) { I(cvt_f64_s64, x); }
+			END
+		}
+		END
+
+		copy(dst, x, get_size(to), false);
+
+		return;
+	}
+
+	// Float to float
+	if (::is_float(from) && ::is_float(to)) {
+		tmpreg(x);
+
+		copy(x, src, get_size(from), false);
+
+		BEGIN
+		FROM(f32) {
+			BEGIN
+			TO(f64) { I(cvt_f32_f64, x); }
+			END
+		}
+		FROM(f64) {
+			BEGIN
+			TO(f32) { I(cvt_f64_f32, x); }
+			END
+		}
+		END
+
+		copy(dst, x, get_size(to), false);
+
+		return;
+	}
+
+	// Integer to boolean
+	if (::is_integer(from) && types_match(to, builtin_bool)) {
+		tmpreg(x);
+		copy(x, src, get_size(from), false);
+		//switch (get_size(from)) {
+		//	case 1: I(and_rc, x, 0xFF); break;
+		//	case 2: I(and_rc, x, 0xFFFF); break;
+		//	case 4: I(and_rc, x, 0xFFFFFFFF); break;
+		//}
+		I(tobool_r, x);
+		copy(dst, x, 1, false);
+		return;
+	}
+
+	// Boolean to integer
+	if (types_match(from, builtin_bool) && ::is_integer(to)) {
+		tmpreg(x);
+		copy(x, src, 1, false);
+		I(and_rc, x, 1);
+		copy(dst, x, get_size(to), false);
+		return;
+	}
+
+	if (auto option = as_option(from)) {
+		if (to == builtin_bool.Struct) {
+
+			// Option to boolean
+
+
+			assert(!src.is_in_register, "not implemented");
+
+			tmpreg(x);
+
+			I(mov1_rm, x, src.address + get_size(option->expression));
+			copy(dst, x, 1, false);
+
+			return;
+		}
+	}
+
+	if (auto option = as_option(to)) {
+
+		// T to ?T
+
+		assert(!dst.is_in_register, "not implemented");
+
+		auto size = get_size(option->expression);
+
+		copy(dst, src, size, false);
+		I(mov1_mc, dst.address + size, 1);
+		return;
+	}
+
+	if (auto src_array = as_array(from)) {
+		if (auto dst_array = as_array(to)) {
+
+			// [N]T to [N]U
+
+			assert(!src.is_in_register);
+			assert(!dst.is_in_register);
+
+			auto src_elem_size = get_size(src_array->expression);
+			auto dst_elem_size = get_size(dst_array->expression);
+
+			// FIXME: u64 and BigInt
+			for (u64 i = 0; i < (u64)get_literal(src_array->index_expression)->integer; ++i) {
+				auto src_elem_addr = src.address + i * src_elem_size;
+				auto dst_elem_addr = dst.address + i * src_elem_size;
+
+				append_cast(src_elem_addr, src_array->expression, dst_elem_addr, dst_array->expression);
+			}
+			return;
+		}
+	}
+
+	invalid_code_path("Can not generate bytecode for cast from {} to {}", type_to_string(src_type), type_to_string(dst_type));
+
+
+#undef BEGIN
+#undef END
+#undef FROM
+#undef TO
+}
+void FrameBuilder::append_cast(AstExpression *src, RegisterOrAddress dst, AstExpression *dst_type) {
+	if (is_addressable(src)) {
+		LOAD_ADDRESS_INTO_REGISTER(addr, src);
+
+		append_cast(Address(addr), src->type, dst, dst_type);
+	} else {
+
+		auto val = append(src);
+		defer {
+			if (val.is_in_register)
+				free_register(val.reg);
+		};
+
+		append_cast(val, src->type, dst, dst_type);
+	}
+}
+
+
 void FrameBuilder::append(AstExpression *expression, RegisterOrAddress destination) {
 	scoped_replace(current_node, expression);
 	switch (expression->kind) {
-		case Ast_Identifier:     return append((AstIdentifier     *)expression, destination);
-		case Ast_Literal:        return append((AstLiteral        *)expression, destination);
-		case Ast_Call:           return append((AstCall           *)expression, destination);
-		case Ast_BinaryOperator: return append((AstBinaryOperator *)expression, destination);
-		case Ast_UnaryOperator:  return append((AstUnaryOperator  *)expression, destination);
-		case Ast_Subscript:      return append((AstSubscript      *)expression, destination);
-		case Ast_Lambda:         return append((AstLambda         *)expression, destination);
-		case Ast_Ifx:            return append((AstIfx            *)expression, destination);
-		case Ast_ArrayLiteral:   return append((AstArrayLiteral   *)expression, destination);
+		case Ast_Identifier:       return append((AstIdentifier       *)expression, destination);
+		case Ast_Literal:          return append((AstLiteral          *)expression, destination);
+		case Ast_Call:             return append((AstCall             *)expression, destination);
+		case Ast_BinaryOperator:   return append((AstBinaryOperator   *)expression, destination);
+		case Ast_UnaryOperator:    return append((AstUnaryOperator    *)expression, destination);
+		case Ast_Subscript:        return append((AstSubscript        *)expression, destination);
+		case Ast_Lambda:           return append((AstLambda           *)expression, destination);
+		case Ast_Ifx:              return append((AstIfx              *)expression, destination);
+		case Ast_ArrayInitializer: return append((AstArrayInitializer *)expression, destination);
 		default: invalid_code_path();
 	}
 }
@@ -2446,316 +2755,7 @@ void FrameBuilder::append(AstBinaryOperator *bin, RegisterOrAddress destination)
 			break;
 		}
 		case as: {
-			auto cast = bin;
-
-			auto get_internal_representation = [&](AstExpression *type) -> AstExpression * {
-				if (is_pointer_internally(type))
-					return builtin_u64.Struct;
-				else if (auto Enum = direct_as<AstEnum>(type)) {
-					assert(!Enum->underlying_type, "not implemented");
-					return builtin_s64.Struct;
-				} else
-					return direct(type);
-				return 0;
-			};
-
-			AstExpression *from = get_internal_representation(cast->left->type);
-			AstExpression *to   = get_internal_representation(cast->type);
-
-			{
-				auto array = as_array(from);
-				auto subtype = get_span_subtype(to);
-				if (array && subtype) {
-					assert(!destination.is_in_register);
-					assert(compiler.stack_word_size == 8);
-
-					if (is_addressable(left)) {
-						load_address_of(left, destination);
-					} else {
-						auto size = ceil(get_size(array), compiler.stack_word_size);
-						auto tmp = allocate_temporary_space(size);
-
-						append(left, tmp);
-
-						tmpreg(r0);
-						I(lea, r0, tmp);
-						I(mov8_mr, destination.address, r0);
-					}
-					I(mov8_mc, destination.address+8, (s64)get_constant_integer(array->index_expression).value());
-					return;
-				}
-			}
-
-
-			// TODO: FIXME: HACK:
-			// extremely dumb way to access data and count members of span
-			if (auto span = as_span(from)) {
-				auto from_value = append(cast->left);
-
-				assert(!from_value.is_in_register, "not implemented");
-
-				if (::is_integer(bin->right)) {
-					auto count_addr = from_value.address + compiler.stack_word_size;
-					if (destination.is_in_register) {
-						I(mov8_rm, destination.reg, count_addr);
-					} else {
-						tmpreg(r0);
-						I(mov8_rm, r0, count_addr);
-						I(mov8_mr, destination.address, r0);
-					}
-				} else if (::is_pointer(bin->right)) {
-					auto data_addr = from_value.address;
-					if (destination.is_in_register) {
-						I(mov8_rm, destination.reg, data_addr);
-					} else {
-						tmpreg(r0);
-						I(mov8_rm, r0, data_addr);
-						I(mov8_mr, destination.address, r0);
-					}
-				} else {
-					invalid_code_path();
-				}
-				return;
-			}
-
-
-			// Integer conversions:
-			// If destination is bigger than source:
-			//    extend the size depending on the signedness of source operand (sign extend for signed, zero extend for unsigned).
-			// Otherwise this is a noop.
-
-			if (::is_integer(from) && ::is_integer(to)) {
-				//auto uncasted = destination;
-				//append(cast->left, destination);
-				auto uncasted = append(cast->left);
-				defer { if (uncasted.is_in_register) free_register(uncasted.reg); };
-
-				bool extended = false;
-
-#define C(z,d,s) \
-	extended = true; \
-	if (destination.is_in_register) { \
-		if (uncasted.is_in_register) I(mov##z##x##d##s##_rr, destination.reg, uncasted.reg); \
-		else                      I(mov##z##x##d##s##_rm, destination.reg, uncasted.address); \
-	} else { \
-		tmpreg(r0); \
-		if (uncasted.is_in_register) I(mov##z##x##d##s##_rr, r0, uncasted.reg); /* NOTE: movsx/movzx into a memory is not a thing! */ \
-		else                      I(mov##z##x##d##s##_rm, r0, uncasted.address); \
-		I(mov##d##_mr, destination.address, r0); \
-	}
-
-				if (false) {
-				} else if (from == builtin_u8.Struct) {
-					if (false) {}
-					else if (to == builtin_u16.Struct) { C(z,2,1); }
-					else if (to == builtin_u32.Struct) { C(z,4,1); }
-					else if (to == builtin_u64.Struct) { C(z,8,1); }
-					else if (to == builtin_s16.Struct) { C(z,2,1); }
-					else if (to == builtin_s32.Struct) { C(z,4,1); }
-					else if (to == builtin_s64.Struct) { C(z,8,1); }
-				} else if (from == builtin_u16.Struct) {
-					if (false) {}
-					else if (to == builtin_u32.Struct) { C(z,4,2); }
-					else if (to == builtin_u64.Struct) { C(z,8,2); }
-					else if (to == builtin_s32.Struct) { C(z,4,2); }
-					else if (to == builtin_s64.Struct) { C(z,8,2); }
-				} else if (from == builtin_u32.Struct) {
-					if (false) {}
-					else if (to == builtin_u64.Struct) { C(z,8,4); }
-					else if (to == builtin_s64.Struct) { C(z,8,4); }
-				} else if (from == builtin_s8.Struct) {
-					if (false) {}
-					else if (to == builtin_u16.Struct) { C(s,2,1); }
-					else if (to == builtin_u32.Struct) { C(s,4,1); }
-					else if (to == builtin_u64.Struct) { C(s,8,1); }
-					else if (to == builtin_s16.Struct) { C(s,2,1); }
-					else if (to == builtin_s32.Struct) { C(s,4,1); }
-					else if (to == builtin_s64.Struct) { C(s,8,1); }
-				} else if (from == builtin_s16.Struct) {
-					if (false) {}
-					else if (to == builtin_u32.Struct) { C(s,4,2); }
-					else if (to == builtin_u64.Struct) { C(s,8,2); }
-					else if (to == builtin_s32.Struct) { C(s,4,2); }
-					else if (to == builtin_s64.Struct) { C(s,8,2); }
-				} else if (from == builtin_s32.Struct) {
-					if (false) {}
-					else if (to == builtin_u64.Struct) { C(s,8,4); }
-					else if (to == builtin_s64.Struct) { C(s,8,4); }
-				}
-#undef C
-				if (!extended) {
-					copy(destination, uncasted, get_size(to), false);
-				}
-				return;
-			}
-			if (::is_integer(from) && ::is_float(to)) {
-				// FIXME: cast->left may be bigger than destination!!!
-				append(cast->left, destination);
-
-				if (destination.is_in_register) {
-					if (false) {
-					} else if (from == builtin_s32.Struct) {
-						if (false) {}
-						else if (to == builtin_f32.Struct) { I(cvt_s32_f32, destination.reg); }
-						else { invalid_code_path(); }
-					} else if (from == builtin_s64.Struct) {
-						if (false) {}
-						else if (to == builtin_f64.Struct) { I(cvt_s64_f64, destination.reg); }
-						else { invalid_code_path(); }
-					} else {
-						invalid_code_path();
-					}
-				} else {
-					tmpreg(r0);
-					if (false) {
-					} else if (from == builtin_s32.Struct) {
-						I(mov4_rm, r0, destination.address);
-						if (false) {}
-						else if (to == builtin_f32.Struct) { I(cvt_s32_f32, r0); }
-						else { invalid_code_path(); }
-						I(mov4_mr, destination.address, r0);
-					} else if (from == builtin_s64.Struct) {
-						I(mov8_rm, r0, destination.address);
-						if (false) {}
-						else if (to == builtin_f64.Struct) { I(cvt_s64_f64, r0); }
-						else { invalid_code_path(); }
-						I(mov8_mr, destination.address, r0);
-					} else {
-						invalid_code_path();
-					}
-				}
-				return;
-			}
-
-			if (::is_integer(to) && ::is_float(from)) {
-				// FIXME: cast->left may be bigger than destination!!!
-				append(cast->left, destination);
-
-				if (destination.is_in_register) {
-					if (false) {
-					} else if (from == builtin_f64.Struct) {
-						if (false) {}
-						else if (to == builtin_s64.Struct) { I(cvt_f64_s64, destination.reg); }
-						else { invalid_code_path(); }
-					} else if (from == builtin_f32.Struct) {
-						if (false) {}
-						else if (to == builtin_s32.Struct) { I(cvt_f32_s32, destination.reg); }
-						else { invalid_code_path(); }
-					} else {
-						invalid_code_path();
-					}
-				} else {
-					tmpreg(r0);
-					if (false) {
-					} else if (from == builtin_f64.Struct) {
-						I(mov8_rm, r0, destination.address);
-						if (false) {}
-						else if (to == builtin_s64.Struct) { I(cvt_f64_s64, r0); }
-						else { invalid_code_path(); }
-						I(mov8_mr, destination.address, r0);
-					} else if (from == builtin_f32.Struct) {
-						I(mov4_rm, r0, destination.address);
-						if (false) {}
-						else if (to == builtin_s32.Struct) { I(cvt_f32_s32, r0); }
-						else { invalid_code_path(); }
-						I(mov4_mr, destination.address, r0);
-					} else {
-						invalid_code_path();
-					}
-				}
-				return;
-			}
-
-			if (::is_float(to) && ::is_float(from)) {
-				// FIXME: cast->left may be bigger than destination!!!
-				append(cast->left, destination);
-
-				if (destination.is_in_register) {
-					if (false) {
-					} else if (from == builtin_f64.Struct) {
-						if (false) {}
-						else if (to == builtin_f32.Struct) { I(cvt_f64_f32, destination.reg); }
-						else { invalid_code_path(); }
-					} else if (from == builtin_f32.Struct) {
-						if (false) {}
-						else if (to == builtin_f64.Struct) { I(cvt_f32_f64, destination.reg); }
-						else { invalid_code_path(); }
-					} else {
-						invalid_code_path();
-					}
-				} else {
-					tmpreg(r0);
-					if (false) {
-					} else if (from == builtin_f64.Struct) {
-						I(mov8_rm, r0, destination.address);
-						if (false) {}
-						else if (to == builtin_f32.Struct) { I(cvt_f64_f32, r0); }
-						else { invalid_code_path(); }
-						I(mov4_mr, destination.address, r0);
-					} else if (from == builtin_f32.Struct) {
-						I(mov4_rm, r0, destination.address);
-						if (false) {}
-						else if (to == builtin_f64.Struct) { I(cvt_f32_f64, r0); }
-						else { invalid_code_path(); }
-						I(mov8_mr, destination.address, r0);
-					} else {
-						invalid_code_path();
-					}
-				}
-				return;
-			}
-
-			if (::is_integer(from) && types_match(to, builtin_bool)) {
-				APPEND_INTO_REGISTER(integer, cast->left);
-				switch (get_size(from)) {
-					case 1: I(and_rc, integer, 0xFF); break;
-					case 2: I(and_rc, integer, 0xFFFF); break;
-					case 4: I(and_rc, integer, 0xFFFFFFFF); break;
-				}
-				I(tobool_r, integer);
-				copy(destination, integer, 1, false);
-			}
-
-			if (types_match(from, builtin_bool) && ::is_integer(to)) {
-				if (destination.is_in_register) {
-					append(cast->left, destination);
-					I(and_rc, destination.reg, 1);
-				} else {
-					APPEND_INTO_REGISTER(boolean, cast->left);
-					I(and_rc, boolean, 1);
-					mov_mr(destination.address, boolean, get_size(to));
-				}
-				return;
-			}
-
-			if (auto option = as_option(from)) {
-				if (to == builtin_bool.Struct) {
-					auto tmp_size = get_size(option);
-					auto tmp = allocate_temporary_space(tmp_size);
-					defer { temporary_cursor -= tmp_size; };
-
-					append(cast->left, tmp);
-
-					if (destination.is_in_register) {
-						I(mov1_rm, destination.reg, tmp + get_size(option->expression));
-					} else {
-						tmpreg(r0);
-						I(mov1_rm, r0, tmp + get_size(option->expression));
-						I(mov1_mr, destination.address, r0);
-					}
-
-					return;
-				}
-			}
-
-			if (auto option = as_option(to)) {
-				assert(!destination.is_in_register, "not implemented");
-				append(cast->left, destination);
-				I(mov1_mc, destination.address + get_size(option->expression), 1);
-				return;
-			}
-
-			invalid_code_path();
+			append_cast(bin->left, destination, bin->right);
 			break;
 		}
 		case lor: {
@@ -2928,6 +2928,9 @@ void FrameBuilder::append(AstCall *call, RegisterOrAddress destination) {
 
 			for (umm i = 0; i < call->sorted_arguments.count; ++i) {
 				auto arg = call->sorted_arguments[i];
+				auto param = lambda->parameters[i];
+				if (param->is_constant)
+					continue;
 
 				auto arg_addr = args_tmp + (call->sorted_arguments.count-1-i)*8;
 
@@ -3389,7 +3392,20 @@ void FrameBuilder::append(AstSubscript *subscript, RegisterOrAddress destination
 
 		copy(destination, Address(addr), size, false);
 	} else {
-		not_implemented();
+		auto tmp = allocate_temporary_space(get_size(subscript->expression->type));
+		append(subscript->expression, tmp);
+
+		APPEND_INTO_REGISTER(idx, subscript->index_expression);
+
+		auto elem_size = get_size(subscript->type);
+
+		I(mul_rc, idx, elem_size);
+
+		tmpreg(x);
+		I(lea, x, tmp);
+		I(add_rr, idx, x);
+
+		copy(destination, Address(idx), elem_size, false);
 	}
 
 	return;
@@ -3507,20 +3523,35 @@ void FrameBuilder::append(AstIfx *If, RegisterOrAddress destination) {
 	jz->offset = false_branch_first_instruction_index - true_branch_first_instruction_index;
 	jmp->offset = false_end - false_branch_first_instruction_index + 2;
 }
-void FrameBuilder::append(AstArrayLiteral *ArrayLiteral, RegisterOrAddress destination) {
+void FrameBuilder::append(AstArrayInitializer *ArrayInitializer, RegisterOrAddress destination) {
 	check_destination(destination);
 
-	push_comment(format("ArrayLiteral {}"str, ArrayLiteral->location));
-	assert(!destination.is_in_register);
+	push_comment(format("ArrayInitializer {}"str, ArrayInitializer->location));
 
-	assert(ArrayLiteral->type->kind == Ast_Subscript);
-	auto elem_type = ((AstSubscript *)ArrayLiteral->type)->expression;
+	assert(ArrayInitializer->type->kind == Ast_Subscript);
+	auto elem_type = ((AstSubscript *)ArrayInitializer->type)->expression;
 
 	auto elem_size = get_size(elem_type);
 
-	for (umm i = 0; i < ArrayLiteral->elements.count; ++i) {
-		auto element = ArrayLiteral->elements[i];
-		append(element, destination.address + i*elem_size);
+	if (destination.is_in_register) {
+		if (ArrayInitializer->elements.count == 0) {
+			// Nothing to do.
+		} else if (ArrayInitializer->elements.count == 1) {
+			append(ArrayInitializer->elements[0], destination);
+		} else {
+			immediate_error(ArrayInitializer->location, "FIXME: Bytecode generation for such small arrays is not implemented.");
+			exit(-1);
+			auto tmp = allocate_temporary_space(elem_size);
+			for (umm i = 0; i < ArrayInitializer->elements.count; ++i) {
+				auto element = ArrayInitializer->elements[i];
+				append(element, destination.address + i*elem_size);
+			}
+		}
+	} else {
+		for (umm i = 0; i < ArrayInitializer->elements.count; ++i) {
+			auto element = ArrayInitializer->elements[i];
+			append(element, destination.address + i*elem_size);
+		}
 	}
 }
 
@@ -4656,7 +4687,7 @@ void BytecodeBuilder::append(AstLambda *lambda) {
 
 
 	if (lambda->is_poly) {
-		for (auto hardened : lambda->hardened_polys) {
+		for (auto hardened : lambda->cached_instantiations) {
 			append(hardened.lambda);
 		}
 		return;
@@ -4751,6 +4782,10 @@ Bytecode build_bytecode() {
 	auto &builder = *_builder;
 
 	for (auto lambda : compiler.lambdas_with_body) {
+		if (compiler.enable_dce && lambda->definition && !lambda->definition->is_referenced) {
+			// immediate_info(lambda->location, "K.O.");
+			continue;
+		}
 		builder.append(lambda);
 	}
 

@@ -24,6 +24,7 @@
             <Item Name="[value]" Condition="kind==Ast_Tuple              " Optional="true">*(AstTuple              *)this</Item>
             <Item Name="[value]" Condition="kind==Ast_Span               " Optional="true">*(AstSpan               *)this</Item>
             <Item Name="[value]" Condition="kind==Ast_Enum               " Optional="true">*(AstEnum               *)this</Item>
+            <Item Name="[value]" Condition="kind==Ast_ArrayInitializer   " Optional="true">*(AstArrayInitializer   *)this</Item>
         </Expand>
     </Type>
     <Type Name="Token">

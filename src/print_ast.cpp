@@ -58,7 +58,7 @@ void print_ast(AstDefinition *node) {
 }
 void print_ast(AstLambda *node) {
 	if (node->is_poly) {
-		for (auto hardened : node->hardened_polys) {
+		for (auto hardened : node->cached_instantiations) {
 			print_ast(hardened.lambda);
 		}
 	} else {
@@ -331,7 +331,7 @@ void print_lowered(AstExpression* expression) {
 	void print_lowered(AstUnaryOperator *node);
 	void print_lowered(AstSubscript *node);
 	void print_lowered(AstTuple*node);
-	void print_lowered(AstArrayLiteral*node);
+	void print_lowered(AstArrayInitializer*node);
 	void print_lowered(AstSpan*node);
 
 	if (expression->is_parenthesized)
@@ -348,7 +348,7 @@ void print_lowered(AstExpression* expression) {
 		case Ast_UnaryOperator: print_lowered((AstUnaryOperator *)expression); break;
 		case Ast_Subscript: print_lowered((AstSubscript *)expression); break;
 		case Ast_Tuple: print_lowered((AstTuple*)expression); break;
-		case Ast_ArrayLiteral: print_lowered((AstArrayLiteral*)expression); break;
+		case Ast_ArrayInitializer: print_lowered((AstArrayInitializer*)expression); break;
 		case Ast_Span: print_lowered((AstSpan*)expression); break;
 		default:
 			print("!unknown expression!");
@@ -418,6 +418,10 @@ void print_lowered(AstDefinition *definition) {
 		print("!null definition!");
 		return;
 	}
+
+	if (definition->has_using)
+		print("using ");
+
 	print("{}", definition->name.count ? definition->name : "<unnamed>"str);
 	//print("{}{}", definition->name.count ? definition->name : "<unnamed>"str, FormatInt{.value=definition->uid(), .radix=62});
 
@@ -436,7 +440,7 @@ void print_lowered(AstLambda *node) {
 	if (node->is_poly) {
 		print("<poly>{\n");
 		tab_count++;
-		for (auto hardened : node->hardened_polys) {
+		for (auto hardened : node->cached_instantiations) {
 			print_tabbed("");
 			print_lowered(hardened.definition);
 			print('\n');
@@ -652,7 +656,7 @@ void print_lowered(AstWhile *While) {
 void print_lowered(AstTuple*tuple) {
 	print("!tuple!");
 }
-void print_lowered(AstArrayLiteral *pack) {
+void print_lowered(AstArrayInitializer *pack) {
 	print(".[");
 	if (pack->elements.count) print_lowered(pack->elements[0]);
 	for (auto e : pack->elements.skip(1)) print(", "), print_lowered(e);

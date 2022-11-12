@@ -35,4 +35,22 @@ main :: () {
 		// FIXME: make constexpr assert work
 		assert x.b == "n"
 	}
+	{
+
+		foo :: (a: Int, b: Int, c: Int) {
+			return a * 100 + b * 10 + c
+		}
+
+		#assert !#compiles { foo() }
+		#assert !#compiles { foo(1) }
+		#assert !#compiles { foo(1, 2) }
+		#assert !#compiles { foo(1, 2, 3, 4) }
+		#assert !#compiles { 1.foo() }
+		#assert !#compiles { 1.foo(2) }
+		#assert !#compiles { 1.foo(2, 3, 4) }
+
+		#assert foo(1, 2, 3) == 123
+		#assert 1.foo(2, 3) == 123
+		#assert 1.foo(c=2, 3) == 132
+	}
 }

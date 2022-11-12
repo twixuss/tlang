@@ -320,9 +320,12 @@ struct Compiler {
 	s64 general_purpose_register_count = 0;
 	bool do_profile = false;
 	bool keep_temp = false;
-	bool debug_poly = false;
+	bool debug_template = false;
+	bool debug_overload = false;
 	bool print_lowered = false;
 	bool optimize = false;
+	bool print_yields = false;
+	bool enable_dce = false;
 
 	u8 optimization_pass_count = 4;
 
@@ -641,6 +644,15 @@ struct Compiler {
 	}
 
 	template <class ...Args, class Char>
+	void immediate_warning(String location, Char const *format_string, Args const &...args) {
+		print_report(make_report(ReportKind::warning, location, format_string, args...));
+	}
+	template <class ...Args, class Char>
+	void immediate_warning(Char const *format_string, Args const &...args) {
+		immediate_warning(String{}, format_string, args...);
+	}
+
+	template <class ...Args, class Char>
 	void immediate_error(String location, Char const *format_string, Args const &...args) {
 		print_report(make_report(ReportKind::error, location, format_string, args...));
 	}
@@ -696,6 +708,15 @@ void immediate_info(String location, Char const *format_string, Args const &...a
 template <class ...Args, class Char>
 void immediate_info(Char const *format_string, Args const &...args) {
 	compiler.immediate_info(String{}, format_string, args...);
+}
+
+template <class ...Args, class Char>
+void immediate_warning(String location, Char const *format_string, Args const &...args) {
+	compiler.immediate_warning(location, format_string, args...);
+}
+template <class ...Args, class Char>
+void immediate_warning(Char const *format_string, Args const &...args) {
+	compiler.immediate_warning(String{}, format_string, args...);
 }
 
 template <class ...Args, class Char>

@@ -242,6 +242,10 @@ memset:
 	);
 
 	for (auto &l : compiler.lambdas_with_body) {
+		if (l->location_in_bytecode == -1) {
+			// Skipped due to DCE
+			continue;
+		}
 		append_format(builder, "global i{}\n", l->location_in_bytecode);
 	}
 
@@ -359,12 +363,13 @@ DECLARE_OUTPUT_BUILDER {
 
 		append(bat_builder, "if %errorlevel% neq 0 exit /b %errorlevel%\n");
 		append_format(bat_builder,
-			R"("{}link" /nologo "{}.obj" /out:"{}" /nodefaultlib /entry:"main" /subsystem:console /DEBUG:FULL /LIBPATH:"{}" /LIBPATH:"{}\libs" kernel32.lib)",
+			R"("{}\bin\Hostx64\x64\link" /nologo "{}.obj" /out:"{}" /nodefaultlib /entry:"main" /subsystem:console /DEBUG:FULL /LIBPATH:"{}" /LIBPATH:"{}\libs" /LIBPATH:"{}\lib\x64" kernel32.lib)",
 			msvc_directory,
 			output_path_base,
 			compiler.output_path,
 			wkits_directory,
-			compiler.compiler_directory
+			compiler.compiler_directory,
+			msvc_directory
 		);
 		for_each(compiler.extern_libraries, [&](auto library, auto) {
 			append_format(bat_builder, " {}.lib", library);

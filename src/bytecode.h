@@ -53,7 +53,6 @@ forceinline Address operator-(Address a, s64 c) { return a + (-c); }
 
 struct RegisterOrAddress {
 	bool is_in_register : 1;
-	bool value_is_address : 1;
 	union {
 		Register reg;
 		Address address;

@@ -56,7 +56,7 @@ static Span<utf8> locate_msvc() {
 	if (!found_builds.count) {
 		return {};
 	}
-	path = format(u8"{}{}\\bin\\Hostx64\\x64\\", path, found_builds.back().name);
+	path = format(u8"{}{}", path, found_builds.back().name);
 
 	return path;
 }

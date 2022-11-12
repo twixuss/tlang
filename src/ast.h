@@ -63,7 +63,6 @@ e(Tuple) \
 e(Test) \
 e(Ifx) \
 e(Assert) \
-e(Import) \
 e(Defer) \
 e(Print) \
 e(OperatorDefinition) \
@@ -74,7 +73,7 @@ e(For) \
 e(LoopControl) \
 e(Match) \
 e(Using) \
-e(ArrayLiteral) \
+e(ArrayInitializer) \
 
 enum AstKind : u8 {
 	Ast_Unknown = 0,
@@ -253,6 +252,7 @@ struct AstExpression : AstNode {
 	Expression<> directed = {};
 	// Expression<AstLiteral> evaluated = {};
 	bool is_parenthesized : 1 = false;
+	bool typechecked : 1 = false;
 };
 
 #define ENUMERATE_LITERAL_KINDS \
@@ -376,10 +376,9 @@ struct AstDefinition : AstStatement, StatementPool<AstDefinition> {
 
 	AstLiteral *evaluated = {};
 
-	// REFERENCE32(Scope, parent_scope);
+	KeyString placed_at = {};
 
 	KeyString name = {};
-	// s32 bytecode_offset = INVALID_DATA_OFFSET;
 
 	LambdaDefinitionLocation definition_location = {};
 	s32 offset = -1;
@@ -390,6 +389,7 @@ struct AstDefinition : AstStatement, StatementPool<AstDefinition> {
 	bool depends_on_poly : 1 = false;
 	bool is_pack         : 1 = false;
 	bool has_using       : 1 = false;
+	bool is_referenced   : 1 = false;
 };
 
 // Started with 176
@@ -483,18 +483,19 @@ struct AstLambda : AstExpression, ExpressionPool<AstLambda> {
 		AstCall *call;
 	};
 
-	SmallList<HardenedPoly> hardened_polys;
+	SmallList<HardenedPoly> cached_instantiations;
 	Expression<AstLambda> original_poly = {};
 
-	bool has_body                   : 1 = true;
-	bool is_type                    : 1 = false;
-	bool finished_typechecking_head : 1 = false;
-	bool is_intrinsic               : 1 = false;
-	bool is_poly                    : 1 = false;
-	bool is_member                  : 1 = false;
-	bool has_pack                   : 1 = false;
-	bool print_bytecode             : 1 = false;
+	bool has_body                     : 1 = true;
+	bool is_type                      : 1 = false;
+	bool finished_typechecking_head   : 1 = false;
+	bool is_intrinsic                 : 1 = false;
+	bool is_poly                      : 1 = false;
+	bool is_member                    : 1 = false;
+	bool has_pack                     : 1 = false;
+	bool print_bytecode               : 1 = false;
 	bool is_evaluated_at_compile_time : 1 = false;
+	bool was_instantiated             : 1 = false;
 
 	ExternLanguage extern_language = {};
 	String extern_library;
@@ -545,7 +546,6 @@ struct AstCall : AstExpression, ExpressionPool<AstCall> {
 	}
 
 	Expression<> callable = {};
-	Expression<> resolved = {};
 	SmallList<NamedArgument> unsorted_arguments = {};
 	SmallList<AstExpression *> sorted_arguments = {};
 
@@ -578,7 +578,6 @@ struct AstStruct : AstExpression, ExpressionPool<AstStruct> {
 	Scope *member_scope;
 
 	DefinitionList data_members;
-	DefinitionList methods;
 
 	Expression<AstStruct> instantiated_from = {};
 	struct Instantiation {
@@ -700,27 +699,27 @@ inline umm append(StringBuilder &builder, BinaryOperation op) {
 	return append(builder, as_string(op));
 }
 
-inline static constexpr s32 custom_precedence = 80;
+inline static constexpr s32 custom_precedence = 8;
 inline s32 get_precedence(BinaryOperation op) {
 	using enum BinaryOperation;
 
 	switch (op) {
 		case dot:
-			return 100;
+			return 10;
 
 		case as:
-			return 90;
+			return 9;
 
 		case mul:
 		case div:
 		case mod:
-			return 20;
+			return 7;
 
 		case add:
 		case sub:
 		case adds:
 		case subs:
-			return 10;
+			return 6;
 
 		case band:
 		case bor:
@@ -904,6 +903,7 @@ struct AstAssert : AstStatement, StatementPool<AstAssert> {
 		kind = Ast_Assert;
 	}
 	Expression<> condition = {};
+	String message = {};
 	bool is_constant : 1 = false;
 };
 
@@ -1005,9 +1005,9 @@ struct AstUsing : AstStatement, StatementPool<AstUsing> {
 	Expression<> expression = {};
 };
 
-struct AstArrayLiteral : AstExpression, ExpressionPool<AstArrayLiteral> {
-	AstArrayLiteral() {
-		kind = Ast_ArrayLiteral;
+struct AstArrayInitializer : AstExpression, ExpressionPool<AstArrayInitializer> {
+	AstArrayInitializer() {
+		kind = Ast_ArrayInitializer;
 		directed = this;
 	}
 
@@ -1101,6 +1101,9 @@ inline Optional<BigInteger> get_constant_integer(AstExpression *expression) {
 			auto literal = (AstLiteral *)expression;
 			if (literal->literal_kind == LiteralKind::integer) {
 				return literal->integer;
+			}
+			if (literal->literal_kind == LiteralKind::character) {
+				return make_big_int<BigInteger>((BigInteger::Part) literal->character);
 			}
 			break;
 		}
