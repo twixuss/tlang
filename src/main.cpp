@@ -3065,6 +3065,7 @@ bool is_statement(AstExpression *expression) {
 		}
 		case Ast_If:
 		case Ast_Block:
+		case Ast_Match:
 			return true;
 	}
 	return false;
