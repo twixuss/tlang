@@ -1,6 +1,8 @@
 #pragma once
 #include <bytecode.h>
-#include <ast.h>
+#include <compiler.h>
+
+#pragma warning(push, 0)
 #include <tl/hash_set.h>
 
 #define NOMINMAX
@@ -8,6 +10,8 @@
 
 #include <iostream>
 #include <string>
+#pragma warning(pop)
+
 
 inline umm append(StringBuilder &builder, Register r) {
 	switch (r) {
@@ -61,12 +65,12 @@ inline umm append(StringBuilder &builder, Address a) {
 	return result;
 }
 
-inline void run_bytecode(Compiler &compiler, Span<Instruction> _instructions_, AstLambda *main_lambda, ExternLibraries extern_libraries) {
+inline void run_bytecode(Compiler *compiler, Span<Instruction> _instructions_, AstLambda *main_lambda, ExternLibraries extern_libraries) {
 	using enum Register;
 
 	assert(main_lambda->location_in_bytecode != -1);
 
-	timed_function(compiler.profiler);
+	timed_function(compiler->profiler);
 
 	// NOTE: instructions need to be modified to efficiently run the bytecode, and the caller might not expect changed instructions.
 	auto _instructions = to_list(_instructions_);
@@ -97,8 +101,8 @@ inline void run_bytecode(Compiler &compiler, Span<Instruction> _instructions_, A
 		}
 	};
 
-	append_section(compiler.constant_section, _constants);
-	append_section(compiler.data_section, _rwdata);
+	append_section(compiler->constant_section, _constants);
+	append_section(compiler->data_section, _rwdata);
 
 	struct CallFrame {
 		u8 locals   [1024*1024];
@@ -579,8 +583,8 @@ got_breaker_name:;
 							//if (!rip) {
 							//	with(ConsoleColor::red, print("Execution error:\n"));
 							//	print("Attempt to call null.\n");
-							//	compiler.immediate_info(prev_rip->node->location, "Caused from:");
-							//	compiler.immediate_info(lambda->location, "Lambda:");
+							//	compiler->immediate_info(prev_rip->node->location, "Caused from:");
+							//	compiler->immediate_info(lambda->location, "Lambda:");
 							//
 							//	// FIXME: probably wanna return an error.
 							//	return;
@@ -927,7 +931,7 @@ got_breaker_name:;
 		if (halt)
 			break;
 	}
-	if (compiler.do_profile) {
+	if (compiler->do_profile) {
 		auto time = get_time(timer);
 		print("Interpreted {} instruction in {} ms. ({} ips)\n", total_instructions_executed, time, total_instructions_executed / time);
 	}

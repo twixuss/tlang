@@ -87,7 +87,7 @@ default_allocator: Allocator
 current_allocator: Allocator
 
 init_allocator :: () {
-    default_allocator.func = (action: Allocator.Action, data: *Void, size: Int, state: *Void) *Void {
+    default_allocator.func = (action: Allocator.Action, data: *Void, size: Int, state: *Void) _: *Void {
 		match action {
 			.allocate => return VirtualAlloc(null, @size, MEM_RESERVE|MEM_COMMIT, PAGE_READWRITE)
 			.deallocate => VirtualFree(data, 0, MEM_FREE)

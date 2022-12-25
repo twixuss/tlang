@@ -1,5 +1,5 @@
 import "tlang/windows.tl"
-main :: () UInt {
+main :: () {
     foo := WriteFile
     bar :: (a: HANDLE, b: *U8, c: U32, d: *DWORD, e: *OVERLAPPED) => WriteFile(a, b, c, d, e)
     foobar := bar

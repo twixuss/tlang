@@ -27,7 +27,7 @@
     </ProjectConfiguration>
   </ItemGroup>
   <ItemGroup>
-    <ClCompile Include="src\ast.cpp" />
+    <ClCompile Include="src\compiler.cpp" />
     <ClCompile Include="src\bytecode.cpp" />
     <ClCompile Include="src\common.cpp" />
     <ClCompile Include="src\main.cpp" />
@@ -35,12 +35,13 @@
     <ClCompile Include="src\token.cpp" />
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="src\ast.h" />
+    <ClInclude Include="src\compiler.h" />
     <ClInclude Include="src\bytecode.h" />
     <ClInclude Include="src\common.h" />
     <ClInclude Include="src\interpret.h" />
     <ClInclude Include="src\print_ast.h" />
     <ClInclude Include="src\token.h" />
+    <ClInclude Include="src\visitor.h" />
     <ClInclude Include="src\x86.h" />
     <ClInclude Include="src\x86_64.h" />
   </ItemGroup>
@@ -50,6 +51,9 @@
     </None>
   </ItemGroup>
   <ItemGroup>
+    <ProjectReference Include="cpp_x86_64_windows.vcxproj">
+      <Project>{998e8c72-a43d-4569-abb6-9b6830b17aa5}</Project>
+    </ProjectReference>
     <ProjectReference Include="fasm_x86_64_windows.vcxproj">
       <Project>{98a1bc8c-c1f5-4832-b3bd-60f7b63ba55f}</Project>
     </ProjectReference>
@@ -58,12 +62,6 @@
     </ProjectReference>
     <ProjectReference Include="nasm_x86_64_windows.vcxproj">
       <Project>{1af0bd2e-16b1-4c3d-ab7e-17a7c29e1787}</Project>
-    </ProjectReference>
-    <ProjectReference Include="nasm_x86_flat.vcxproj">
-      <Project>{babbd040-c55a-4bf1-ae0c-da7676ea8dba}</Project>
-    </ProjectReference>
-    <ProjectReference Include="x86_64_windows.vcxproj">
-      <Project>{93a7b294-a46d-471d-9eca-87872f92e205}</Project>
     </ProjectReference>
   </ItemGroup>
   <PropertyGroup Label="Globals">
@@ -151,6 +149,8 @@
     <IntDir>$(SolutionDir)temp\$(ProjectName)-$(Platform)-$(Configuration)\</IntDir>
     <IncludePath>$(SolutionDir)dep/tl/include/;$(SolutionDir)src/;$(SolutionDir)include/;$(SolutionDir)dep/coro/include/;$(IncludePath)</IncludePath>
     <EnableMicrosoftCodeAnalysis>false</EnableMicrosoftCodeAnalysis>
+    <RunCodeAnalysis>false</RunCodeAnalysis>
+    <CodeAnalysisRuleSet>D:\none.ruleset</CodeAnalysisRuleSet>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
     <LinkIncremental>false</LinkIncremental>
@@ -158,6 +158,8 @@
     <IntDir>$(SolutionDir)temp\$(ProjectName)-$(Platform)-$(Configuration)\</IntDir>
     <IncludePath>$(SolutionDir)dep/tl/include/;$(SolutionDir)src/;$(SolutionDir)include/;$(SolutionDir)dep/coro/include/;$(IncludePath)</IncludePath>
     <EnableMicrosoftCodeAnalysis>false</EnableMicrosoftCodeAnalysis>
+    <RunCodeAnalysis>false</RunCodeAnalysis>
+    <CodeAnalysisRuleSet>D:\none.ruleset</CodeAnalysisRuleSet>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='UltraSpeed|Win32'">
     <LinkIncremental>false</LinkIncremental>
@@ -165,6 +167,8 @@
     <IntDir>$(SolutionDir)temp\$(ProjectName)-$(Platform)-$(Configuration)\</IntDir>
     <IncludePath>$(SolutionDir)dep/tl/include/;$(SolutionDir)src/;$(SolutionDir)include/;$(SolutionDir)dep/coro/include/;$(IncludePath)</IncludePath>
     <EnableMicrosoftCodeAnalysis>false</EnableMicrosoftCodeAnalysis>
+    <RunCodeAnalysis>false</RunCodeAnalysis>
+    <CodeAnalysisRuleSet>D:\none.ruleset</CodeAnalysisRuleSet>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
     <LinkIncremental>true</LinkIncremental>
@@ -174,6 +178,8 @@
     <ReferencePath>$(ReferencePath)</ReferencePath>
     <LibraryPath>$(SolutionDir)dep/coro/obj;$(LibraryPath)</LibraryPath>
     <EnableMicrosoftCodeAnalysis>false</EnableMicrosoftCodeAnalysis>
+    <RunCodeAnalysis>false</RunCodeAnalysis>
+    <CodeAnalysisRuleSet>D:\none.ruleset</CodeAnalysisRuleSet>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
     <LinkIncremental>false</LinkIncremental>
@@ -183,6 +189,8 @@
     <ReferencePath>$(ReferencePath)</ReferencePath>
     <LibraryPath>$(SolutionDir)dep/coro/obj;$(LibraryPath)</LibraryPath>
     <EnableMicrosoftCodeAnalysis>false</EnableMicrosoftCodeAnalysis>
+    <RunCodeAnalysis>false</RunCodeAnalysis>
+    <CodeAnalysisRuleSet>D:\none.ruleset</CodeAnalysisRuleSet>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='UltraSpeed|x64'">
     <LinkIncremental>false</LinkIncremental>
@@ -192,10 +200,12 @@
     <ReferencePath>$(ReferencePath)</ReferencePath>
     <LibraryPath>$(SolutionDir)dep/coro/obj;$(LibraryPath)</LibraryPath>
     <EnableMicrosoftCodeAnalysis>false</EnableMicrosoftCodeAnalysis>
+    <RunCodeAnalysis>false</RunCodeAnalysis>
+    <CodeAnalysisRuleSet>D:\none.ruleset</CodeAnalysisRuleSet>
   </PropertyGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
     <ClCompile>
-      <WarningLevel>Level3</WarningLevel>
+      <WarningLevel>Level1</WarningLevel>
       <SDLCheck>false</SDLCheck>
       <PreprocessorDefinitions>WIN32;_DEBUG;_CONSOLE;%(PreprocessorDefinitions);BUILD_CONFIG=0</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
@@ -207,6 +217,7 @@
       <StringPooling>true</StringPooling>
       <PreprocessToFile>false</PreprocessToFile>
       <InlineFunctionExpansion>OnlyExplicitInline</InlineFunctionExpansion>
+      <EnablePREfast>false</EnablePREfast>
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>
@@ -222,7 +233,7 @@
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
     <ClCompile>
-      <WarningLevel>Level3</WarningLevel>
+      <WarningLevel>Level1</WarningLevel>
       <FunctionLevelLinking>true</FunctionLevelLinking>
       <IntrinsicFunctions>true</IntrinsicFunctions>
       <SDLCheck>false</SDLCheck>
@@ -236,6 +247,7 @@
       <MultiProcessorCompilation>true</MultiProcessorCompilation>
       <StringPooling>true</StringPooling>
       <PreprocessToFile>false</PreprocessToFile>
+      <EnablePREfast>false</EnablePREfast>
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>
@@ -252,7 +264,7 @@
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='UltraSpeed|Win32'">
     <ClCompile>
-      <WarningLevel>Level3</WarningLevel>
+      <WarningLevel>Level1</WarningLevel>
       <FunctionLevelLinking>true</FunctionLevelLinking>
       <IntrinsicFunctions>true</IntrinsicFunctions>
       <SDLCheck>false</SDLCheck>
@@ -270,6 +282,7 @@
       <StringPooling>true</StringPooling>
       <InlineFunctionExpansion>AnySuitable</InlineFunctionExpansion>
       <PreprocessToFile>false</PreprocessToFile>
+      <EnablePREfast>false</EnablePREfast>
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>
@@ -286,7 +299,7 @@
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
     <ClCompile>
-      <WarningLevel>Level3</WarningLevel>
+      <WarningLevel>Level1</WarningLevel>
       <SDLCheck>false</SDLCheck>
       <PreprocessorDefinitions>_DEBUG;_CONSOLE;%(PreprocessorDefinitions);BUILD_CONFIG=0</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
@@ -298,6 +311,7 @@
       <StringPooling>true</StringPooling>
       <PreprocessToFile>false</PreprocessToFile>
       <InlineFunctionExpansion>OnlyExplicitInline</InlineFunctionExpansion>
+      <EnablePREfast>false</EnablePREfast>
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>
@@ -313,7 +327,7 @@
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
     <ClCompile>
-      <WarningLevel>Level3</WarningLevel>
+      <WarningLevel>Level1</WarningLevel>
       <FunctionLevelLinking>true</FunctionLevelLinking>
       <IntrinsicFunctions>true</IntrinsicFunctions>
       <SDLCheck>false</SDLCheck>
@@ -327,6 +341,7 @@
       <MultiProcessorCompilation>true</MultiProcessorCompilation>
       <StringPooling>true</StringPooling>
       <PreprocessToFile>false</PreprocessToFile>
+      <EnablePREfast>false</EnablePREfast>
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>
@@ -343,7 +358,7 @@
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='UltraSpeed|x64'">
     <ClCompile>
-      <WarningLevel>Level3</WarningLevel>
+      <WarningLevel>Level1</WarningLevel>
       <FunctionLevelLinking>true</FunctionLevelLinking>
       <IntrinsicFunctions>true</IntrinsicFunctions>
       <SDLCheck>false</SDLCheck>
@@ -361,6 +376,7 @@
       <StringPooling>true</StringPooling>
       <InlineFunctionExpansion>AnySuitable</InlineFunctionExpansion>
       <PreprocessToFile>false</PreprocessToFile>
+      <EnablePREfast>false</EnablePREfast>
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>

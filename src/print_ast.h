@@ -1,5 +1,5 @@
 #pragma once
-#include "ast.h"
+#include "compiler.h"
 
 void print_ast(AstBinaryOperator *node);
 void print_ast(AstDefinition *node);
@@ -10,7 +10,6 @@ void print_ast(AstReturn *node);
 void print_ast(AstCall *node);
 void print_ast(AstStruct *node);
 void print_ast(AstIf *node);
-void print_ast(AstIfx *node);
 void print_ast(AstWhile *node);
 void print_ast(AstExpressionStatement *node);
 void print_ast(AstUnaryOperator *node);

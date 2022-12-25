@@ -1,3 +1,4 @@
+// PROGRAM CODE 69
 Bar :: struct {
     s: Int
 }

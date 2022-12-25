@@ -31,6 +31,7 @@ E(match,    0x100000d) \
 E(empty,    0x100000e) \
 E(using,    0x100000f) \
 E(where,    0x1000010) \
+E(yield,    0x1000011) \
 
 #define ENUMERATE_TOKEN_KINDS(E) \
 E(identifier,        0x2000000) \

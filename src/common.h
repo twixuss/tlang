@@ -1,5 +1,26 @@
 #pragma once
-#pragma warning(error: 4715) // not all path return a value
+
+// [ ---- Critical warnings ---- ]
+#pragma warning(error: 4701)  // use of potentially uninitialized variable
+#pragma warning(error: 4715)  // not all path return a value
+#pragma warning(error: 26819) // implicit fallthrough in switch case
+
+// [ ---- Insignificant warnings ---- ]
+
+#pragma warning(disable: 4061) // not all cases are explicitly handled (even if default is used ...)
+#pragma warning(disable: 4062)
+
+#pragma warning(disable: 4201) // non standard extension: unnamed struct
+
+#pragma warning(disable: 4514) // inline function was removed
+#pragma warning(disable: 4702) // unreachable code
+#pragma warning(disable: 4710) // function was not inlined
+#pragma warning(disable: 5045) // spectre
+
+
+// [ ---- Warnings that may be enabled in the future ---- ]
+#pragma warning(disable: 4820) // struct was padded with n bytes
+
 
 #define TRACK_ALLOCATIONS 0
 
@@ -14,8 +35,12 @@
 #endif
 #define TL_PARENT_SOURCE_LOCATION TRACK_ALLOCATIONS
 #define TL_ENABLE_PROFILER 0
+
+#pragma warning(push, 0)
 #include <source_location>
 #include <cstring>
+#pragma warning(pop)
+
 inline bool operator==(std::source_location a, std::source_location b) {
 	return a.column() == b.column() && a.line() == b.line() && strcmp(a.file_name(), b.file_name()) == 0;
 }
@@ -29,6 +54,7 @@ inline void print(T ...args) {
 inline void print() {
 }
 
+#pragma warning(push, 0)
 #include <tl/console.h>
 #undef ASSERTION_FAILURE
 #if TL_DEBUG
@@ -57,6 +83,7 @@ inline void print() {
 #include <tl/pool32.h>
 #include <tl/debug.h>
 #include <tl/fly_string.h>
+#pragma warning(pop)
 using namespace tl;
 
 struct MyAllocator : AllocatorBase<MyAllocator> {
@@ -72,8 +99,9 @@ void init_my_allocator();
 template <class T>
 using Ptr32 = typename Pool32<T>::template Ptr<T>;
 
+// FIXME: use custom allocator
 template <class T>
-using SmallList = List<T, MyAllocator, u32>;
+using SmallList = List<T, Allocator, u32>;
 
 using String = Span<utf8, u32>;
 using HeapString = SmallList<utf8>;
@@ -86,7 +114,7 @@ using KeyString = String;    // 6.4          5.9         12.3
 #endif
 
 // std::unordered_map is just a bit (10-15%) slower than tl::HashMap
-#if 1
+#if 0
 #include <xhash>
 namespace std {
 template <>
@@ -104,7 +132,7 @@ struct hash<Span<utf8>> {
 }
 
 #include <unordered_map>
-template <class Key, class Value, class Traits = DefaultHashTraits<Key, Value>>
+template <class Key, class Value, class Traits = DefaultHashTraits<Key>>
 struct StdHashMap {
 	using Hasher = typename Traits::Hasher;
 	using CellState = ContiguousHashMapCellState;
@@ -156,6 +184,7 @@ struct DebugHashTraits : DefaultHashTraits<K> {
 template <class K, class V>
 using Map = ContiguousHashMap<K, V, DebugHashTraits<K>>;
 #else
+// FIXME: use custom allocator
 template <class K, class V>
 //using Map = HashMap<K, V>;
 using Map = ContiguousHashMap<K, V>;
@@ -296,381 +325,6 @@ struct RelativeString {
 	u32 count;
 };
 
-struct Compiler {
-	String source_path;
-	String source_path_without_extension;
-	String output_path;
-	String compiler_path;
-	String compiler_name;
-	String compiler_directory;
-	String current_directory;
-	AstLambda *main_lambda;
-	AstLambda *build_lambda;
-	AstLambda *init_runtime_lambda;
-	Profiler profiler;
-    List<PreciseTimer> phase_timers;
-	int tabs = 0;
-
-	// Need pointer stability.
-	// Maybe use different data structure.
-	LinkedList<SourceFileInfo> sources;
-
-	s64 stack_word_size = 0;
-	s64 register_size = 0;
-	s64 general_purpose_register_count = 0;
-	bool do_profile = false;
-	bool keep_temp = false;
-	bool debug_template = false;
-	bool debug_overload = false;
-	bool print_lowered = false;
-	bool optimize = false;
-	bool print_yields = false;
-	bool enable_dce = false;
-
-	u8 optimization_pass_count = 4;
-
-	List<AstLambda *> lambdas_with_body;
-	List<AstLambda *> lambdas_without_body;
-
-	Section constant_section;
-	Section data_section;
-	s64 zero_section_size = 0;
-
-	List<RelativeString> string_set;
-
-	Strings strings;
-
-	struct BytecodeBuilder *bytecode;
-
-	ExternLibraries extern_libraries;
-
-	SourceFileInfo *get_source_info(utf8 *location) {
-		for (auto &source : sources) {
-			if (source.source.begin() <= location && location < source.source.end()) {
-				return &source;
-			}
-		}
-		return 0;
-	}
-
-	u32 get_line_number(Span<String> lines, utf8 *from) {
-		// lines will be empty at lexing time.
-		// So if an error occurs at lexing time,
-		// slower algorithm is executed.
-		if (lines.count) {
-	#if 1
-			// binary search
-			auto begin = lines.data;
-			auto end = lines.data + lines.count;
-			while (1) {
-				if (begin == end)
-					return begin - lines.data + 1;
-				assert(begin < end);
-				auto line = begin + (end - begin) / 2;
-				if (line->data <= from && from < line->data + line->count) {
-					return line - lines.data + 1;
-				}
-				if (from < line->data) {
-					end = line;
-				} else {
-					begin = line + 1;
-				}
-			}
-			invalid_code_path();
-	#else
-			for (auto &line : lines) {
-				if (line.begin() <= from && from < line.end()) {
-					return &line - lines.data;
-				}
-			}
-			invalid_code_path();
-	#endif
-		} else {
-			u32 result = 1;
-			while (*--from != 0)
-				result += (*from == '\n');
-			return result;
-		}
-	}
-	u32 get_line_number(utf8 *from) {
-		auto info = get_source_info(from);
-		return info ? get_line_number(info->lines, from) : 0;
-	}
-
-	u32 get_column_number(utf8 *from) {
-		u32 result = 0;
-		while (1) {
-			if (*from == '\n' || *from == '\0')
-				break;
-
-			if (*from == '\t')
-				result += 4;
-			else
-				result += 1;
-
-			from -= 1;
-		}
-		return result;
-	}
-
-	void print_replacing_tabs_with_4_spaces(Span<utf8> string) {
-		for (auto c : string) {
-			if (c == '\t') {
-				print("    ");
-			} else {
-				print(c);
-			}
-		}
-	}
-	ConsoleColor get_console_color(ReportKind kind) {
-		switch (kind) {
-			using enum ReportKind;
-			using enum ConsoleColor;
-			case info: return cyan;
-			case warning: return yellow;
-			case error: return red;
-		}
-		invalid_code_path();
-	}
-
-	void print_source_line(SourceFileInfo *info, ReportKind kind, Span<utf8> location) {
-
-		if (!location.data) {
-			// print("(null location)\n\n");
-			return;
-		}
-		if (!info) {
-			return;
-		}
-
-		if (location == "\n"str) {
-			auto error_line_begin = location.begin();
-			if (*error_line_begin != 0) {
-				while (1) {
-					error_line_begin--;
-					if (*error_line_begin == 0 || *error_line_begin == '\n') {
-						error_line_begin++;
-						break;
-					}
-				}
-			}
-
-			auto error_line_end = location.end();
-			while (1) {
-				if (*error_line_end == 0 || *error_line_end == '\n') {
-					break;
-				}
-				error_line_end++;
-			}
-
-
-			auto error_line = Span(error_line_begin, error_line_end);
-			auto error_line_number = get_line_number(info->lines, error_line_begin);
-
-			auto format_line = [&](auto line) {
-				return format("{} | ", Format{line, align_right(5, ' ')});
-			};
-
-			auto line_start = Span(error_line.begin(), location.begin());
-			auto line_end   = Span(location.end(), error_line.end());
-			auto line = format_line(error_line_number);
-
-			for (u32 i = 0; i < line.count; ++i) {
-				print(' ');
-			}
-			for (auto c : line_start) {
-				if (c == '\t') {
-					print("    ");
-				} else {
-					print(' ');
-				}
-			}
-			for (auto c : location) {
-				if (c == '\t') {
-					print("VVVV");
-				} else {
-					print('V');
-				}
-			}
-			print('\n');
-			print(line);
-
-			print_replacing_tabs_with_4_spaces(line_start);
-			with(get_console_color(kind), print_replacing_tabs_with_4_spaces(location));
-			print_replacing_tabs_with_4_spaces(line_end);
-
-			print("\n");
-		} else {
-			auto error_line_begin = location.begin();
-			if (*error_line_begin != 0) {
-				while (1) {
-					error_line_begin--;
-					if (*error_line_begin == 0 || *error_line_begin == '\n') {
-						error_line_begin++;
-						break;
-					}
-				}
-			}
-
-			auto error_line_end = location.end();
-			while (1) {
-				if (*error_line_end == 0 || *error_line_end == '\n') {
-					break;
-				}
-				error_line_end++;
-			}
-
-
-			auto error_line = Span(error_line_begin, error_line_end);
-			auto error_line_number = get_line_number(info->lines, error_line_begin);
-
-			auto print_line = [&](auto line) {
-				return print("{} | ", Format{line, align_right(5, ' ')});
-			};
-
-			// I don't know if previous line is really useful
-		#if 0
-			if (error_line.data[-1] != 0) {
-				auto prev_line_end = error_line.data - 1;
-				auto prev_line_begin = prev_line_end - 1;
-
-				while (1) {
-					if (*prev_line_begin == 0) {
-						prev_line_begin += 1;
-						break;
-					}
-
-					if (*prev_line_begin == '\n') {
-						++prev_line_begin;
-						break;
-					}
-
-					--prev_line_begin;
-				}
-				auto prev_line = Span(prev_line_begin, prev_line_end);
-				auto prev_line_number = get_line_number(prev_line_begin);
-
-				print_line(prev_line_number);
-				print_replacing_tabs_with_4_spaces(Print_info, prev_line);
-				print('\n');
-			}
-		#endif
-
-			auto line_start = Span(error_line.begin(), location.begin());
-			auto line_end   = Span(location.end(), error_line.end());
-			auto offset = print_line(error_line_number);
-			print_replacing_tabs_with_4_spaces(line_start);
-			with(get_console_color(kind), print_replacing_tabs_with_4_spaces(location));
-			print_replacing_tabs_with_4_spaces(line_end);
-			print('\n');
-
-			if (!find(location, u8'\n')) {
-				for (u32 i = 0; i < offset; ++i) {
-					print(' ');
-				}
-				for (auto c : line_start) {
-					if (c == '\t') {
-						print("    ");
-					} else {
-						print(' ');
-					}
-				}
-
-				withs(get_console_color(kind),
-					for (auto c : location) {
-						if (c == '\t') {
-							print("~~~~");
-						} else {
-							print('~');
-						}
-					}
-				);
-				print("\n");
-			}
-		}
-	}
-
-	List<utf8> where(SourceFileInfo *info, utf8 *location) {
-		if (location) {
-			if (info) {
-				return format(u8"{}:{}:{}", info->path, get_line_number(info->lines, location), get_column_number(location));
-			}
-		}
-		return {};
-	}
-	List<utf8> where(utf8 *location) {
-		return where(get_source_info(location), location);
-	}
-
-	void print_report(Report r) {
-		auto source_info = r.location.data ? get_source_info(r.location.data) : 0;
-		if (source_info) {
-			if (r.location.data) {
-				print("{}: ", where(source_info, r.location.data));
-			} else {
-				print(" ================ ");
-			}
-			withs(get_console_color(r.kind),
-				switch (r.kind) {
-					case ReportKind::info:    print(strings.info   ); break;
-					case ReportKind::warning: print(strings.warning); break;
-					case ReportKind::error:	  print(strings.error  ); break;
-					default: invalid_code_path();
-				}
-			);
-			print(": {}\n", r.message);
-			print_source_line(source_info, r.kind, r.location);
-		} else {
-			print(" ================ ");
-			withs(get_console_color(r.kind),
-				switch (r.kind) {
-					case ReportKind::info:    print(strings.info   ); break;
-					case ReportKind::warning: print(strings.warning); break;
-					case ReportKind::error:	  print(strings.error  ); break;
-					default: invalid_code_path();
-				}
-			);
-			print(": {}\n", r.message);
-		}
-	}
-
-	template <class ...Args, class Char>
-	void immediate_info(String location, Char const *format_string, Args const &...args) {
-		print_report(make_report(ReportKind::info, location, format_string, args...));
-	}
-	template <class ...Args, class Char>
-	void immediate_info(Char const *format_string, Args const &...args) {
-		immediate_info(String{}, format_string, args...);
-	}
-
-	template <class ...Args, class Char>
-	void immediate_warning(String location, Char const *format_string, Args const &...args) {
-		print_report(make_report(ReportKind::warning, location, format_string, args...));
-	}
-	template <class ...Args, class Char>
-	void immediate_warning(Char const *format_string, Args const &...args) {
-		immediate_warning(String{}, format_string, args...);
-	}
-
-	template <class ...Args, class Char>
-	void immediate_error(String location, Char const *format_string, Args const &...args) {
-		print_report(make_report(ReportKind::error, location, format_string, args...));
-	}
-	template <class ...Args, class Char>
-	void immediate_error(Char const *format_string, Args const &...args) {
-		immediate_error(String{}, format_string, args...);
-	}
-
-};
-extern Compiler compiler;
-
-#define scoped_phase(message) \
-		/*sleep_milliseconds(1000);*/ \
-		timed_block(compiler.profiler, as_utf8(as_span(message))); \
-        compiler.phase_timers.add(create_precise_timer()); \
-		++compiler.tabs; \
-        defer { if(!compiler.do_profile) return; --compiler.tabs; for (int i = 0; i < compiler.tabs;++i) print("  "); print("{} done in {} ms.\n", message, get_time(compiler.phase_timers.pop().value()) * 1000); }
-
 template <>
 inline umm get_hash(std::source_location const &l) {
 	return get_hash(l.column()) ^ get_hash(l.line());
@@ -680,8 +334,92 @@ inline bool operator==(String a, char const *b) {
 	return as_chars(a) == as_span(b);
 }
 
-HeapString escape_string(String string);
-Optional<HeapString> unescape_string(String string);
+inline HeapString escape_string(String string) {
+	if (!string.count)
+		return {};
+
+	HeapString new_string;
+	new_string.reserve(string.count);
+
+	auto p = string.data;
+	utf32 c = 0;
+	utf32 prev = 0;
+
+	while (1) {
+		if (p >= string.end())
+			break;
+		auto got_char = get_char_and_advance_utf8(&p);
+		if (!got_char) {
+			return {};
+		}
+
+		prev = c;
+		c = got_char.value_unchecked();
+
+		switch (c) {
+			case '"':  { new_string.add({'\\', '"'}); break; }
+			case '\n': { new_string.add({'\\', 'n'}); break; }
+			case '\r': { new_string.add({'\\', 'r'}); break; }
+			case '\t': { new_string.add({'\\', 't'}); break; }
+			case '\0': { new_string.add({'\\', '0'}); break; }
+			case '\\': { new_string.add({'\\', '\\'}); break; }
+			default: { new_string.add(c); break; }
+		}
+	}
+	return new_string;
+}
+
+inline Optional<HeapString> unescape_string(String string) {
+
+	if (!string.count)
+		return HeapString{};
+
+	if (string.front() == '"') {
+		assert(string.back() == '"');
+		string.data  += 1;
+		string.count -= 2;
+	} else if (string.front() == '\'') {
+		assert(string.back() == '\'');
+		string.data  += 1;
+		string.count -= 2;
+	}
+
+	if (!string.count)
+		return HeapString{};
+
+	HeapString new_string;
+	new_string.reserve(string.count);
+
+	auto p = string.data;
+	utf32 c = 0;
+	utf32 prev = 0;
+
+	while (1) {
+		if (p >= string.end())
+			break;
+		auto got_char = get_char_and_advance_utf8(&p);
+		if (!got_char) {
+			return {};
+		}
+
+		prev = c;
+		c = got_char.value_unchecked();
+
+		if (prev == '\\') {
+			switch (c) {
+				case 'n': { new_string.back() = '\n'; break; }
+				case 'r': { new_string.back() = '\r'; break; }
+				case 't': { new_string.back() = '\t'; break; }
+				case '0': { new_string.back() = '\0'; break; }
+				case '\\': { new_string.back() = '\\'; c = 0; break; }
+				default: { new_string.back() = c; break; }
+			}
+		} else {
+			new_string.add(c);
+		}
+	}
+	return new_string;
+}
 
 inline void tlang_assertion_failed(char const *cause, char const *file, int line, char const *expression, char const *function) {
 	with(ConsoleColor::red, ::tl::print("Assertion failed: "));
@@ -690,40 +428,4 @@ inline void tlang_assertion_failed(char const *cause, char const *file, int line
 		debug_break();
 	else
 		exit(-1);
-}
-
-inline u32 get_line_number(utf8 *from) {
-	return compiler.get_line_number(from);
-}
-inline u32 get_column_number(utf8 *from) {
-	return compiler.get_column_number(from);
-}
-inline List<utf8> where(utf8 *location) { return compiler.where(location); }
-
-
-template <class ...Args, class Char>
-void immediate_info(String location, Char const *format_string, Args const &...args) {
-	compiler.immediate_info(location, format_string, args...);
-}
-template <class ...Args, class Char>
-void immediate_info(Char const *format_string, Args const &...args) {
-	compiler.immediate_info(String{}, format_string, args...);
-}
-
-template <class ...Args, class Char>
-void immediate_warning(String location, Char const *format_string, Args const &...args) {
-	compiler.immediate_warning(location, format_string, args...);
-}
-template <class ...Args, class Char>
-void immediate_warning(Char const *format_string, Args const &...args) {
-	compiler.immediate_warning(String{}, format_string, args...);
-}
-
-template <class ...Args, class Char>
-void immediate_error(String location, Char const *format_string, Args const &...args) {
-	compiler.immediate_error(location, format_string, args...);
-}
-template <class ...Args, class Char>
-void immediate_error(Char const *format_string, Args const &...args) {
-	compiler.immediate_error(String{}, format_string, args...);
 }

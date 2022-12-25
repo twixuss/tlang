@@ -61,7 +61,6 @@ e(Span) \
 e(Block) \
 e(Tuple) \
 e(Test) \
-e(Ifx) \
 e(Assert) \
 e(Defer) \
 e(Print) \
@@ -74,6 +73,7 @@ e(LoopControl) \
 e(Match) \
 e(Using) \
 e(ArrayInitializer) \
+e(Yield) \
 
 enum AstKind : u8 {
 	Ast_Unknown = 0,
@@ -207,18 +207,11 @@ T *NEW(TL_LPC) {
 	return default_allocator.allocate<T>(TL_LAC);
 }
 
-extern s32 ast_node_uid_counter;
-
 struct AstNode {
 	AstKind kind = Ast_Unknown;
 	Span<utf8, u32> location;
 
-#if TL_DEBUG
-	s32 _uid = atomic_increment(&ast_node_uid_counter);
-	s32 uid() { return _uid; }
-#else
-	s32 uid() { return 0; }
-#endif
+	s32 uid;
 
 	AstNode();
 };
@@ -232,16 +225,6 @@ struct AstEmptyStatement : AstStatement, StatementPool<AstEmptyStatement> {
 	AstEmptyStatement() { kind = Ast_EmptyStatement; }
 };
 
-struct AstBlock : AstStatement, StatementPool<AstBlock> {
-	AstBlock() {
-		kind = Ast_Block;
-		scope = Scope::create();
-		scope->node = this;
-	}
-
-	Scope *scope;
-};
-
 struct AstExpressionStatement : AstStatement, StatementPool<AstExpressionStatement> {
 	AstExpressionStatement() { kind = Ast_ExpressionStatement; }
 	Expression<> expression = {};
@@ -253,6 +236,16 @@ struct AstExpression : AstNode {
 	// Expression<AstLiteral> evaluated = {};
 	bool is_parenthesized : 1 = false;
 	bool typechecked : 1 = false;
+};
+
+struct AstBlock : AstExpression, ExpressionPool<AstBlock> {
+	AstBlock() {
+		kind = Ast_Block;
+		scope = Scope::create();
+		scope->node = this;
+	}
+
+	Scope *scope;
 };
 
 #define ENUMERATE_LITERAL_KINDS \
@@ -289,7 +282,8 @@ inline umm append(StringBuilder &builder, LiteralKind kind) {
 	return append(builder, as_string(kind));
 }
 
-using BigInteger = tl::impl::BigInt<List<u64, MyAllocator, u32>>;
+// FIXME: use custom allocator
+using BigInteger = tl::impl::BigInt<List<u64, Allocator, u32>>;
 
 enum SectionKind : u8 {
 	constant,
@@ -303,30 +297,8 @@ struct AstLiteral : AstExpression, ExpressionPool<AstLiteral> {
 			s64 offset;
 			s64 count;
 
-			String get() const {
-				return (String)Span(compiler.constant_section.buffer.subspan(offset, count));
-			}
-			void set(String string) {
-				count = string.count;
-
-				for (auto &existing : compiler.string_set) {
-					if (String((utf8 *)compiler.constant_section.buffer.data + existing.offset, existing.count) == string) {
-						offset = existing.offset;
-						return;
-					}
-				}
-
-				compiler.constant_section.buffer.ensure_capacity(string.count + 1);
-
-				offset = compiler.constant_section.buffer.count;
-				for (auto ch : string)
-					compiler.constant_section.w1(ch);
-
-				compiler.constant_section.w1(0);
-
-				compiler.string_set.add({(u32)offset, (u32)count});
-			}
-
+			String get() const;
+			void set(String string);
 		} string;
 		u32 character;
 		f64 Float;
@@ -344,15 +316,33 @@ struct AstLiteral : AstExpression, ExpressionPool<AstLiteral> {
 			s64 offset;
 		} pointer;
 	};
+	// It has to be done.
+	[[no_unique_address]] struct {} union_end;
 
 	LiteralKind literal_kind = {};
 
 	AstLiteral() {
-		memset(this, 0, sizeof(*this));
+		// Zero out that big union. MAN THIS IS BAD
+		memset(&integer, 0, offsetof(AstLiteral, union_end) - offsetof(AstLiteral, integer));
+
 		kind = Ast_Literal;
 		directed = this;
 	}
 	~AstLiteral() {}
+
+	template <LiteralKind request>
+	inline auto as() {
+		/**/ if constexpr (request == LiteralKind::integer  ) { return literal_kind == LiteralKind::integer   ? integer    : Optional<decltype(integer   )>{}; }
+		else if constexpr (request == LiteralKind::boolean  ) { return literal_kind == LiteralKind::boolean   ? Bool       : Optional<decltype(Bool      )>{}; }
+		else if constexpr (request == LiteralKind::string   ) { return literal_kind == LiteralKind::string    ? string     : Optional<decltype(string    )>{}; }
+		else if constexpr (request == LiteralKind::character) { return literal_kind == LiteralKind::character ? character  : Optional<decltype(character )>{}; }
+		else if constexpr (request == LiteralKind::Float    ) { return literal_kind == LiteralKind::Float     ? Float      : Optional<decltype(Float     )>{}; }
+		else if constexpr (request == LiteralKind::type     ) { return literal_kind == LiteralKind::type      ? type_value : Optional<decltype(type_value)>{}; }
+		else if constexpr (request == LiteralKind::pointer  ) { return literal_kind == LiteralKind::pointer   ? pointer    : Optional<decltype(pointer   )>{}; }
+		else {
+			static_assert(false);
+		}
+	}
 };
 
 inline static constexpr auto sizeof_AstLiteral = sizeof AstLiteral;
@@ -402,6 +392,12 @@ struct AstReturn : AstStatement, StatementPool<AstReturn> {
 	Expression<AstLambda> lambda = {};
 };
 
+struct AstYield : AstStatement, StatementPool<AstYield> {
+	AstYield() { kind = Ast_Yield; }
+
+	Expression<> expression = {};
+};
+
 struct AstIdentifier : AstExpression, ExpressionPool<AstIdentifier> {
 	AstIdentifier() { kind = Ast_Identifier; }
 
@@ -445,16 +441,16 @@ struct AstLambda : AstExpression, ExpressionPool<AstLambda> {
 		kind = Ast_Lambda;
 		directed = this;
 
-		type_scope      = Scope::create();
+		constant_scope      = Scope::create();
 		parameter_scope = Scope::create();
 		body_scope      = Scope::create();
 
-		type_scope->node      = this;
+		constant_scope->node      = this;
 		parameter_scope->node = this;
 		body_scope->node      = this;
 
 		body_scope->parent = parameter_scope;
-		parameter_scope->parent = type_scope;
+		parameter_scope->parent = constant_scope;
 	}
 
 	Statement<AstDefinition> definition = {}; // not null if lambda is named
@@ -464,10 +460,10 @@ struct AstLambda : AstExpression, ExpressionPool<AstLambda> {
 
 	Statement<AstReturn> return_statement_type_deduced_from = {};
 
-	Scope *type_scope;
+	Scope *constant_scope;
 	Scope *parameter_scope;
 	Scope *body_scope;
-	Scope *outer_scope() { return type_scope; }
+	Scope *outer_scope() { return constant_scope; }
 
 	DefinitionList parameters;
 
@@ -480,7 +476,6 @@ struct AstLambda : AstExpression, ExpressionPool<AstLambda> {
 	struct HardenedPoly {
 		AstLambda *lambda;
 		AstDefinition *definition;
-		AstCall *call;
 	};
 
 	SmallList<HardenedPoly> cached_instantiations;
@@ -496,6 +491,7 @@ struct AstLambda : AstExpression, ExpressionPool<AstLambda> {
 	bool print_bytecode               : 1 = false;
 	bool is_evaluated_at_compile_time : 1 = false;
 	bool was_instantiated             : 1 = false;
+	bool is_macro                     : 1 = false;
 
 	ExternLanguage extern_language = {};
 	String extern_library;
@@ -601,21 +597,15 @@ struct AstStruct : AstExpression, ExpressionPool<AstStruct> {
 	bool is_span     : 1 = false;
 };
 
-struct AstIf : AstStatement, StatementPool<AstIf> {
+struct AstIf : AstExpression, ExpressionPool<AstIf> {
 	AstIf() {
 		kind = Ast_If;
-
-		true_scope = Scope::create();
-		false_scope = Scope::create();
-
-		true_scope->node = this;
-		false_scope->node = this;
 	}
 
 	Expression<> condition = {};
 
-	Scope *true_scope;
-	Scope *false_scope;
+	Expression<AstBlock> true_block = 0;
+	Expression<AstBlock> false_block = 0;
 
 	bool is_constant : 1 = false;
 	bool true_branch_was_taken : 1 = false;
@@ -774,26 +764,32 @@ struct AstBinaryOperator : AstExpression, ExpressionPool<AstBinaryOperator> {
 	Expression<> right = {};
 };
 
+#define ENUMERATE_UNARY_OPERATIONS \
+e(plus,        +)         /*   +           */\
+e(minus,       -)         /*   -           */\
+e(lnot,        !)         /*   !           */\
+e(bnot,        ~)         /*   ~           */\
+e(address_of,  &)         /*   &           */\
+e(dereference, *)         /*   *           */\
+e(pointer,     *)         /*   *           */\
+e(unwrap,      *)         /*   *           */\
+e(autocast,    @)         /*   @           */\
+e(Sizeof,      #sizeof)   /*   #sizeof     */\
+e(typeof,      #typeof)   /*   #typeof     */\
+e(option,      ?)         /*   ?           */\
+e(poly,        $)         /*   $           */\
+e(typeinfo,    #typeinfo) /*   #typeinfo   */\
+e(dot,         .)         /*   .           */\
+e(pack,        ..)        /*   ..          */\
+e(pointer_or_dereference_or_unwrap, *) \
+e(internal_move_to_temporary, XXX) // move the value into temporary space, result is a pointer to that space.
+
+
 enum class UnaryOperation : u8 {
-	plus,        // +
-	minus,       // -
-	lnot,        // !
-	bnot,        // ~
-	address_of,  // &
-	dereference, // *
-	pointer,     // *
-	unwrap,      // *
-	autocast,    // @
-	Sizeof,      // #sizeof
-	typeof,      // #typeof
-	option,      // ?
-	poly,        // $
-	typeinfo,    // #typeinfo
-	dot,         // .
-	pack,        // ..
+#define e(x, op) x,
+	ENUMERATE_UNARY_OPERATIONS
+#undef e
 	count,
-	pointer_or_dereference_or_unwrap,
-	internal_move_to_temporary, // move the value into temporary space, result is a pointer to that space.
 };
 
 inline String as_string(UnaryOperation unop) {
@@ -888,16 +884,6 @@ struct AstTest : AstExpression, ExpressionPool<AstTest> {
 	Scope *scope;
 };
 
-struct AstIfx : AstExpression, ExpressionPool<AstIfx> {
-	AstIfx() {
-		kind = Ast_Ifx;
-		directed = this;
-	}
-	Expression<> condition = {};
-	Expression<> true_expression = {};
-	Expression<> false_expression = {};
-};
-
 struct AstAssert : AstStatement, StatementPool<AstAssert> {
 	AstAssert() {
 		kind = Ast_Assert;
@@ -983,16 +969,16 @@ struct AstLoopControl : AstStatement, StatementPool<AstLoopControl> {
 
 struct MatchCase {
 	AstExpression *expression = 0; // will be null for default case
-	Scope *scope = Scope::create();
+	Expression<AstBlock> block = AstBlock::create();
 };
 
-struct AstMatch : AstStatement, StatementPool<AstMatch> {
+struct AstMatch : AstExpression, ExpressionPool<AstMatch> {
 	AstMatch() {
 		kind = Ast_Match;
 	}
 
 	Expression<> expression = {};
-	BlockList<MatchCase> cases; // elements need to be persistent in memory cause they contain Scope.
+	BlockList<MatchCase> cases;
 	MatchCase *default_case = 0;
 	String default_case_location = {};
 };
@@ -1038,58 +1024,8 @@ struct BuiltinEnum {
 	AstIdentifier    *span;	   // []type_kind
 };
 
-extern BuiltinStruct builtin_void;
-extern BuiltinStruct builtin_bool;
-extern BuiltinStruct builtin_u8;
-extern BuiltinStruct builtin_u16;
-extern BuiltinStruct builtin_u32;
-extern BuiltinStruct builtin_u64;
-extern BuiltinStruct builtin_s8;
-extern BuiltinStruct builtin_s16;
-extern BuiltinStruct builtin_s32;
-extern BuiltinStruct builtin_s64;
-extern BuiltinStruct builtin_f32;
-extern BuiltinStruct builtin_f64;
-
-extern BuiltinStruct builtin_type;
-extern BuiltinStruct builtin_string;
-extern BuiltinStruct builtin_struct_member;
-extern BuiltinStruct builtin_typeinfo;
-extern BuiltinStruct builtin_any;
-extern BuiltinStruct builtin_range;
-extern BuiltinStruct builtin_enum_member;
-
-extern BuiltinEnum builtin_type_kind;
-
-extern BuiltinStruct builtin_unsized_integer;
-extern BuiltinStruct builtin_unsized_float;
-extern BuiltinStruct builtin_noinit;
-extern BuiltinStruct builtin_unknown;
-extern BuiltinStruct builtin_unknown_enum;
-extern BuiltinStruct builtin_poly;
-extern BuiltinStruct builtin_overload_set;
-
-extern HashMap<AstExpression *, AstStruct *> span_instantiations;
-
-extern BuiltinStruct *builtin_default_signed_integer;
-extern BuiltinStruct *builtin_default_unsigned_integer;
-extern BuiltinStruct *builtin_default_integer;
-extern BuiltinStruct *builtin_default_float;
-
-extern AstIdentifier *type_int;
-extern AstIdentifier *type_sint;
-extern AstIdentifier *type_uint;
-extern AstIdentifier *type_float;
-
-extern Scope global_scope;
-
-extern Mutex global_scope_mutex;
 void lock(Scope *scope);
 void unlock(Scope *scope);
-
-extern Map<String, AstDefinition *> names_not_available_for_globals;
-
-bool can_be_global(AstStatement *statement);
 
 AstStruct &get_built_in_type_from_token(TokenKind t);
 AstStruct *find_built_in_type_from_token(TokenKind t);
@@ -1188,12 +1124,43 @@ myint2 :: myint;
 
 direct(identifier myint2) returns struct s64
 */
-AstExpression *direct(AstExpression *type);
+inline AstExpression *direct(AstExpression *type) {
+	while (1) {
+		switch (type->kind) {
+			case Ast_Identifier: {
+				auto identifier = (AstIdentifier *)type;
+				if (!identifier->definition())
+					return 0;
+				type = identifier->definition()->expression;
+				if (!type)
+					return 0;
+				break;
+			}
+			case Ast_BinaryOperator: {
+				auto binop = (AstBinaryOperator *)type;
+				type = binop->right;
+				break;
+			}
+			case Ast_UnaryOperator: {
+				auto unop = (AstUnaryOperator *)type;
+				if (unop->operation == UnaryOperation::typeof) {
+					type = unop->expression->type;
+				} else {
+					return type;
+				}
+				break;
+			}
+			default:
+				return type;
+		}
+	}
+}
+
 
 template <class T>
-T *as(AstExpression *expression) {
-	if (expression->kind == kind_of<T>) {
-		return (T *)expression;
+T *as(AstNode *node) {
+	if (node->kind == kind_of<T>) {
+		return (T *)node;
 	}
 	return 0;
 }
@@ -1268,7 +1235,654 @@ AstSpan *as_span(AstExpression *type);
 
 bool is_addressable(AstExpression *expression);
 
-// :span hack:
+AstExpression *get_span_subtype(AstExpression *span);
+
+
+
+
+
+
+
+enum class BuildFrom {
+	bytecode,
+	ast,
+};
+
+struct Compiler {
+	String source_path;
+	String source_path_without_extension;
+	String output_path;
+	String compiler_path;
+	String compiler_name;
+	String compiler_directory;
+	String current_directory;
+	AstLambda *main_lambda;
+	AstLambda *build_lambda;
+	AstLambda *init_runtime_lambda;
+	Profiler profiler;
+    List<PreciseTimer> phase_timers;
+	int tabs = 0;
+
+	// Need pointer stability.
+	// Maybe use different data structure.
+	LinkedList<SourceFileInfo> sources;
+
+	s64 stack_word_size = 0;
+	s64 register_size = 0;
+	s64 general_purpose_register_count = 0;
+	bool do_profile = false;
+	bool keep_temp = false;
+	bool debug_template = false;
+	bool debug_overload = false;
+	bool print_lowered = false;
+	bool optimize = false;
+	bool print_yields = false;
+	bool enable_dce = false;
+
+	String print_lowered_filter = {};
+
+	BuildFrom build_from = BuildFrom::bytecode;
+
+	u8 optimization_pass_count = 4;
+
+	List<AstLambda *> lambdas_with_body;
+	List<AstLambda *> lambdas_without_body;
+
+	Section constant_section;
+	Section data_section;
+	s64 zero_section_size = 0;
+
+	List<RelativeString> string_set;
+
+	Strings strings;
+
+	struct BytecodeBuilder *bytecode;
+
+	ExternLibraries extern_libraries;
+
+	s32 ast_node_uid_counter;
+
+	BuiltinStruct builtin_type;
+	BuiltinStruct builtin_void;
+	BuiltinStruct builtin_bool;
+	BuiltinStruct builtin_u8;
+	BuiltinStruct builtin_u16;
+	BuiltinStruct builtin_u32;
+	BuiltinStruct builtin_u64;
+	BuiltinStruct builtin_s8;
+	BuiltinStruct builtin_s16;
+	BuiltinStruct builtin_s32;
+	BuiltinStruct builtin_s64;
+	BuiltinStruct builtin_f32;
+	BuiltinStruct builtin_f64;
+
+	BuiltinStruct builtin_string;
+	BuiltinStruct builtin_struct_member;
+	BuiltinStruct builtin_enum_member;
+	BuiltinStruct builtin_typeinfo;
+	BuiltinStruct builtin_any;
+	BuiltinStruct builtin_range;
+
+	BuiltinEnum builtin_type_kind;
+
+	BuiltinStruct builtin_unsized_integer;
+	BuiltinStruct builtin_unsized_float;
+	BuiltinStruct builtin_noinit;
+	BuiltinStruct builtin_unknown;
+	BuiltinStruct builtin_unknown_enum;
+	BuiltinStruct builtin_poly;
+	BuiltinStruct builtin_overload_set;
+	BuiltinStruct builtin_unreachable; // NOTE: this type is assigned to a block that always returns
+
+	HashMap<AstExpression *, AstStruct *> span_instantiations;
+
+	BuiltinStruct *builtin_default_signed_integer;
+	BuiltinStruct *builtin_default_unsigned_integer;
+	BuiltinStruct *builtin_default_integer;
+	BuiltinStruct *builtin_default_float;
+
+	AstIdentifier *type_int;
+	AstIdentifier *type_sint;
+	AstIdentifier *type_uint;
+	AstIdentifier *type_float;
+
+	Scope global_scope;
+
+	Mutex global_scope_mutex;
+
+	SourceFileInfo *get_source_info(utf8 *location) {
+		for (auto &source : sources) {
+			if (source.source.begin() <= location && location < source.source.end()) {
+				return &source;
+			}
+		}
+		return 0;
+	}
+
+	u32 get_line_number(Span<String> lines, utf8 *from) {
+		// lines will be empty at lexing time.
+		// So if an error occurs at lexing time,
+		// slower algorithm is executed.
+		if (lines.count) {
+	#if 1
+			// binary search
+			auto begin = lines.data;
+			auto end = lines.data + lines.count;
+			while (1) {
+				if (begin == end)
+					return begin - lines.data + 1;
+				assert(begin < end);
+				auto line = begin + (end - begin) / 2;
+				if (line->data <= from && from < line->data + line->count) {
+					return line - lines.data + 1;
+				}
+				if (from < line->data) {
+					end = line;
+				} else {
+					begin = line + 1;
+				}
+			}
+			invalid_code_path();
+	#else
+			for (auto &line : lines) {
+				if (line.begin() <= from && from < line.end()) {
+					return &line - lines.data;
+				}
+			}
+			invalid_code_path();
+	#endif
+		} else {
+			u32 result = 1;
+			while (*--from != 0)
+				result += (*from == '\n');
+			return result;
+		}
+	}
+	u32 get_line_number(utf8 *from) {
+		auto info = get_source_info(from);
+		return info ? get_line_number(info->lines, from) : 0;
+	}
+
+	u32 get_column_number(utf8 *from) {
+		u32 result = 0;
+		while (1) {
+			if (*from == '\n' || *from == '\0')
+				break;
+
+			if (*from == '\t')
+				result += 4;
+			else
+				result += 1;
+
+			from -= 1;
+		}
+		return result;
+	}
+
+	void print_replacing_tabs_with_4_spaces(Span<utf8> string) {
+		for (auto c : string) {
+			if (c == '\t') {
+				print("    ");
+			} else {
+				print(c);
+			}
+		}
+	}
+	ConsoleColor get_console_color(ReportKind kind) {
+		switch (kind) {
+			using enum ReportKind;
+			using enum ConsoleColor;
+			case info: return cyan;
+			case warning: return yellow;
+			case error: return red;
+		}
+		invalid_code_path();
+	}
+
+	void print_source_line(SourceFileInfo *info, ReportKind kind, Span<utf8> location) {
+
+		if (!location.data) {
+			// print("(null location)\n\n");
+			return;
+		}
+		if (!info) {
+			return;
+		}
+
+		if (location == "\n"str) {
+			auto error_line_begin = location.begin();
+			if (*error_line_begin != 0) {
+				while (1) {
+					error_line_begin--;
+					if (*error_line_begin == 0 || *error_line_begin == '\n') {
+						error_line_begin++;
+						break;
+					}
+				}
+			}
+
+			auto error_line_end = location.end();
+			while (1) {
+				if (*error_line_end == 0 || *error_line_end == '\n') {
+					break;
+				}
+				error_line_end++;
+			}
+
+
+			auto error_line = Span(error_line_begin, error_line_end);
+			auto error_line_number = get_line_number(info->lines, error_line_begin);
+
+			auto format_line = [&](auto line) {
+				return format("{} | ", Format{line, align_right(5, ' ')});
+			};
+
+			auto line_start = Span(error_line.begin(), location.begin());
+			auto line_end   = Span(location.end(), error_line.end());
+			auto line = format_line(error_line_number);
+
+			for (u32 i = 0; i < line.count; ++i) {
+				print(' ');
+			}
+			for (auto c : line_start) {
+				if (c == '\t') {
+					print("    ");
+				} else {
+					print(' ');
+				}
+			}
+			for (auto c : location) {
+				if (c == '\t') {
+					print("VVVV");
+				} else {
+					print('V');
+				}
+			}
+			print('\n');
+			print(line);
+
+			print_replacing_tabs_with_4_spaces(line_start);
+			with(get_console_color(kind), print_replacing_tabs_with_4_spaces(location));
+			print_replacing_tabs_with_4_spaces(line_end);
+
+			print("\n");
+		} else {
+			auto error_line_begin = location.begin();
+			if (*error_line_begin != 0) {
+				while (1) {
+					error_line_begin--;
+					if (*error_line_begin == 0 || *error_line_begin == '\n') {
+						error_line_begin++;
+						break;
+					}
+				}
+			}
+
+			auto error_line_end = location.end();
+			while (1) {
+				if (*error_line_end == 0 || *error_line_end == '\n') {
+					break;
+				}
+				error_line_end++;
+			}
+
+
+			auto error_line = Span(error_line_begin, error_line_end);
+			auto error_line_number = get_line_number(info->lines, error_line_begin);
+
+			auto print_line = [&](auto line) {
+				return print("{} | ", Format{line, align_right(5, ' ')});
+			};
+
+			// I don't know if previous line is really useful
+		#if 0
+			if (error_line.data[-1] != 0) {
+				auto prev_line_end = error_line.data - 1;
+				auto prev_line_begin = prev_line_end - 1;
+
+				while (1) {
+					if (*prev_line_begin == 0) {
+						prev_line_begin += 1;
+						break;
+					}
+
+					if (*prev_line_begin == '\n') {
+						++prev_line_begin;
+						break;
+					}
+
+					--prev_line_begin;
+				}
+				auto prev_line = Span(prev_line_begin, prev_line_end);
+				auto prev_line_number = get_line_number(prev_line_begin);
+
+				print_line(prev_line_number);
+				print_replacing_tabs_with_4_spaces(Print_info, prev_line);
+				print('\n');
+			}
+		#endif
+
+			auto line_start = Span(error_line.begin(), location.begin());
+			auto line_end   = Span(location.end(), error_line.end());
+			auto offset = print_line(error_line_number);
+			print_replacing_tabs_with_4_spaces(line_start);
+			with(get_console_color(kind), print_replacing_tabs_with_4_spaces(location));
+			print_replacing_tabs_with_4_spaces(line_end);
+			print('\n');
+
+			if (!find(location, u8'\n')) {
+				for (u32 i = 0; i < offset; ++i) {
+					print(' ');
+				}
+				for (auto c : line_start) {
+					if (c == '\t') {
+						print("    ");
+					} else {
+						print(' ');
+					}
+				}
+
+				withs(get_console_color(kind)) {
+					for (auto c : location) {
+						if (c == '\t') {
+							print("~~~~");
+						} else {
+							print('~');
+						}
+					}
+				};
+				print("\n");
+			}
+		}
+	}
+
+	List<utf8> where(SourceFileInfo *info, utf8 *location) {
+		if (location) {
+			if (info) {
+				return format(u8"{}:{}:{}", info->path, get_line_number(info->lines, location), get_column_number(location));
+			}
+		}
+		return {};
+	}
+	List<utf8> where(utf8 *location) {
+		return where(get_source_info(location), location);
+	}
+
+	void print_report(Report r) {
+		auto source_info = r.location.data ? get_source_info(r.location.data) : 0;
+		if (source_info) {
+			if (r.location.data) {
+				print("{}: ", where(source_info, r.location.data));
+			} else {
+				print(" ================ ");
+			}
+			withs(get_console_color(r.kind)) {
+				switch (r.kind) {
+					case ReportKind::info:    print(strings.info   ); break;
+					case ReportKind::warning: print(strings.warning); break;
+					case ReportKind::error:	  print(strings.error  ); break;
+					default: invalid_code_path();
+				}
+			};
+			print(": {}\n", r.message);
+			print_source_line(source_info, r.kind, r.location);
+		} else {
+			print(" ================ ");
+			withs(get_console_color(r.kind)) {
+				switch (r.kind) {
+					case ReportKind::info:    print(strings.info   ); break;
+					case ReportKind::warning: print(strings.warning); break;
+					case ReportKind::error:	  print(strings.error  ); break;
+					default: invalid_code_path();
+				}
+			};
+			print(": {}\n", r.message);
+		}
+	}
+
+	template <class ...Args, class Char>
+	void immediate_info(String location, Char const *format_string, Args const &...args) {
+		print_report(make_report(ReportKind::info, location, format_string, args...));
+	}
+	template <class ...Args, class Char>
+	void immediate_info(Char const *format_string, Args const &...args) {
+		immediate_info(String{}, format_string, args...);
+	}
+
+	template <class ...Args, class Char>
+	void immediate_warning(String location, Char const *format_string, Args const &...args) {
+		print_report(make_report(ReportKind::warning, location, format_string, args...));
+	}
+	template <class ...Args, class Char>
+	void immediate_warning(Char const *format_string, Args const &...args) {
+		immediate_warning(String{}, format_string, args...);
+	}
+
+	template <class ...Args, class Char>
+	void immediate_error(String location, Char const *format_string, Args const &...args) {
+		print_report(make_report(ReportKind::error, location, format_string, args...));
+	}
+	template <class ...Args, class Char>
+	void immediate_error(Char const *format_string, Args const &...args) {
+		immediate_error(String{}, format_string, args...);
+	}
+
+};
+
+inline Compiler *compiler;
+
+#define scoped_phase(message) \
+		/*sleep_milliseconds(1000);*/ \
+		timed_block(compiler->profiler, as_utf8(as_span(message))); \
+        compiler->phase_timers.add(create_precise_timer()); \
+		++compiler->tabs; \
+        defer { if(!compiler->do_profile) return; --compiler->tabs; for (int i = 0; i < compiler->tabs;++i) print("  "); print("{} done in {} ms.\n", message, get_time(compiler->phase_timers.pop().value()) * 1000); }
+
+inline u32 get_line_number(utf8 *from) {
+	return compiler->get_line_number(from);
+}
+inline u32 get_column_number(utf8 *from) {
+	return compiler->get_column_number(from);
+}
+inline List<utf8> where(utf8 *location) { return compiler->where(location); }
+
+
+template <class ...Args, class Char>
+void immediate_info(String location, Char const *format_string, Args const &...args) {
+	compiler->immediate_info(location, format_string, args...);
+}
+template <class ...Args, class Char>
+void immediate_info(Char const *format_string, Args const &...args) {
+	compiler->immediate_info(String{}, format_string, args...);
+}
+
+template <class ...Args, class Char>
+void immediate_warning(String location, Char const *format_string, Args const &...args) {
+	compiler->immediate_warning(location, format_string, args...);
+}
+template <class ...Args, class Char>
+void immediate_warning(Char const *format_string, Args const &...args) {
+	compiler->immediate_warning(String{}, format_string, args...);
+}
+
+template <class ...Args, class Char>
+void immediate_error(String location, Char const *format_string, Args const &...args) {
+	compiler->immediate_error(location, format_string, args...);
+}
+template <class ...Args, class Char>
+void immediate_error(Char const *format_string, Args const &...args) {
+	compiler->immediate_error(String{}, format_string, args...);
+}
+
+
+
+
+String decltype(AstLiteral::string)::get() const {
+	return (String)Span(compiler->constant_section.buffer.subspan(offset, count));
+}
+void decltype(AstLiteral::string)::set(String string) {
+	count = string.count;
+
+	for (auto &existing : compiler->string_set) {
+		if (String((utf8 *)compiler->constant_section.buffer.data + existing.offset, existing.count) == string) {
+			offset = existing.offset;
+			return;
+		}
+	}
+
+	compiler->constant_section.buffer.ensure_capacity(string.count + 1);
+
+	offset = compiler->constant_section.buffer.count;
+	for (auto ch : string)
+		compiler->constant_section.w1(ch);
+
+	compiler->constant_section.w1(0);
+
+	compiler->string_set.add({(u32)offset, (u32)count});
+}
+
+inline umm append(StringBuilder &b, AstNode *node) {
+	return append(b, node->location);
+}
+
+inline AstUnaryOperator *make_pointer_type(AstExpression *type) {
+	using enum UnaryOperation;
+	auto unop = AstUnaryOperator::create();
+	unop->expression = type;
+	unop->type = compiler->builtin_type.ident;
+	unop->operation = pointer;
+	return unop;
+}
+
+inline AstNode::AstNode() {
+	uid = atomic_increment(&compiler->ast_node_uid_counter);
+	//if (uid == 0)
+	//	debug_break();
+}
+
+inline bool struct_is_built_in(AstStruct *type) {
+	return
+		type == compiler->builtin_bool           .Struct ||
+		type == compiler->builtin_u8             .Struct ||
+		type == compiler->builtin_u16            .Struct ||
+		type == compiler->builtin_u32            .Struct ||
+		type == compiler->builtin_u64            .Struct ||
+		type == compiler->builtin_s8             .Struct ||
+		type == compiler->builtin_s16            .Struct ||
+		type == compiler->builtin_s32            .Struct ||
+		type == compiler->builtin_s64            .Struct ||
+		type == compiler->builtin_f32            .Struct ||
+		type == compiler->builtin_f64            .Struct ||
+		type == compiler->builtin_type           .Struct ||
+		type == compiler->builtin_string         .Struct ||
+		type == compiler->builtin_noinit         .Struct ||
+		type == compiler->builtin_unsized_integer.Struct ||
+		type == compiler->builtin_unsized_float  .Struct ||
+		type == compiler->builtin_void           .Struct;
+}
+
+inline bool is_type(AstExpression *expression) {
+	assert(expression->type);
+	return types_match(expression->type, compiler->builtin_type.Struct);
+}
+
+
+inline bool types_match(AstExpression *a, AstExpression *b) {
+	if (a == b)
+		return true;
+
+	// TODO: direct() is way too slow.
+	a = direct(a);
+	b = direct(b);
+	//a = a->directed ? (AstExpression *)a->directed : direct(a);
+	//b = b->directed ? (AstExpression *)b->directed : direct(b);
+
+	if (a->kind != b->kind) {
+		return false;
+	}
+
+	switch (a->kind) {
+		case Ast_Struct:
+			return a == b;
+		case Ast_Enum:
+			return a == b;
+		case Ast_UnaryOperator: {
+			auto au = (AstUnaryOperator *)a;
+			auto bu = (AstUnaryOperator *)b;
+			return types_match(au->expression, bu->expression);
+		}
+
+
+		case Ast_Subscript: {
+			auto eq = [](auto a, auto b) {
+				if (!a.has_value()) return false;
+				if (!b.has_value()) return false;
+				return a.value() == b.value();
+			};
+			auto as = (AstSubscript *)a;
+			auto bs = (AstSubscript *)b;
+			return types_match(as->expression, bs->expression) &&
+				eq(get_constant_integer(as->index_expression), get_constant_integer(bs->index_expression));
+		}
+		case Ast_Span: {
+			auto as = (AstSpan *)a;
+			auto bs = (AstSpan *)b;
+			return types_match(as->expression, bs->expression);
+		}
+		case Ast_LambdaType: {
+			auto al = ((AstLambdaType *)a)->lambda;
+			auto bl = ((AstLambdaType *)b)->lambda;
+
+			assert(al);
+			assert(bl);
+
+			if (!same_argument_and_return_types(al, bl))
+				return false;
+
+			if (al->convention != bl->convention)
+				return false;
+
+			return true;
+		}
+	}
+	invalid_code_path();
+}
+
+
+inline bool same_argument_and_return_types(AstLambda *a, AstLambda *b) {
+	if (a->parameters.count != b->parameters.count)
+		return false;
+
+	for (umm i = 0; i < a->parameters.count; ++i) {
+		if (!types_match(a->parameters[i]->type, b->parameters[i]->type))
+			return false;
+	}
+
+	if (!types_match(a->return_parameter->type, b->return_parameter->type))
+		return false;
+
+	return true;
+}
+
+inline bool is_pointer(AstExpression *type) {
+	switch (type->kind) {
+		case Ast_Identifier: {
+			auto ident = (AstIdentifier *)type;
+			return is_pointer(ident->definition()->expression);
+		}
+		case Ast_UnaryOperator: {
+			auto unop = (AstUnaryOperator *)type;
+			if (unop->operation == UnaryOperation::pointer_or_dereference_or_unwrap) {
+				// This fails at parse time.
+				// assert(is_type(unop->expression));
+				return true;
+			}
+			return unop->operation == UnaryOperation::pointer;
+		}
+	}
+	return false;
+}
+
 inline AstExpression *get_span_subtype(AstExpression *span) {
 	if (auto Struct = direct_as<AstStruct>(span)) {
 		if (!Struct->is_span)
@@ -1282,4 +1896,127 @@ inline AstExpression *get_span_subtype(AstExpression *span) {
 		return pointer->expression;
 	}
 	return 0;
+}
+
+inline AstUnaryOperator *as_pointer(AstExpression *type) {
+	switch (type->kind) {
+		case Ast_Identifier: {
+			auto ident = (AstIdentifier *)type;
+			auto definition = ident->definition();
+			if (!definition)
+				return 0;
+			return as_pointer(definition->expression);
+		}
+		case Ast_UnaryOperator: {
+			auto unop = (AstUnaryOperator *)type;
+			switch (unop->operation) {
+				case UnaryOperation::pointer_or_dereference_or_unwrap:
+				// This fails at parse time.
+				// assert(is_type(unop->expression));
+				case UnaryOperation::pointer:
+					return unop;
+			}
+			break;
+		}
+	}
+	return 0;
+}
+
+inline s64 get_size(AstExpression *_type, bool check_struct) {
+	auto type = _type->directed ? (AstExpression *)_type->directed : direct(_type);
+
+	assert(type);
+	assert(types_match(type->type, compiler->builtin_type), "attemt to get_size of an expression, not a type!");
+	switch (type->kind) {
+		case Ast_Struct: {
+			auto Struct = (AstStruct *)type;
+			if (check_struct)
+				assert(Struct->size != -1, "Size for {} is not computed yet. If this happens when typechecking, use an overload that accepts TypecheckState. When generating bytecode this assert should not fire.");
+			return Struct->size;
+		}
+		case Ast_Identifier: {
+			auto identifier = (AstIdentifier *)type;
+			return get_size(identifier->definition()->expression);
+		}
+		case Ast_UnaryOperator: {
+			using enum UnaryOperation;
+			auto unop = (AstUnaryOperator *)type;
+			switch (unop->operation) {
+				case pointer:  return compiler->stack_word_size;
+				case typeof:   return get_size(unop->expression->type);
+				case option:   return get_size(unop->expression) + get_align(unop->expression);
+				case pack:     return compiler->stack_word_size*2; // pointer+count;
+				default: invalid_code_path();
+			}
+		}
+		case Ast_Subscript: {
+			auto subscript = (AstSubscript *)type;
+			auto count = get_constant_integer(subscript->index_expression);
+			if (!count.has_value()) {
+				immediate_error(subscript->index_expression->location, "Can't get the value of this expression. FIXME: This error is immediate, figure out a way to add it to report list.");
+				exit(-1);
+			}
+
+			return get_size(subscript->expression) * (s64)count.value();
+		}
+		case Ast_Span: {
+			return compiler->stack_word_size*2; // pointer+count;
+		}
+		case Ast_LambdaType: {
+			return compiler->stack_word_size;
+		}
+		case Ast_Enum: {
+			assert(!((AstEnum *)type)->underlying_type, "not implemented");
+			return compiler->stack_word_size;
+		}
+		default: {
+			invalid_code_path();
+			return -1;
+		}
+	}
+}
+
+inline s64 get_align(AstExpression *type, bool check_struct) {
+	assert(type);
+	switch (type->kind) {
+		case Ast_Struct: {
+			auto Struct = (AstStruct *)type;
+			if (check_struct)
+				assert(Struct->alignment != -1, "Alignment for {} is not computed yet. If this happens when typechecking, use an overload that accepts TypecheckState. When generating bytecode this assert should not fire.");
+			return Struct->alignment;
+		}
+		case Ast_Identifier: {
+			auto identifier = (AstIdentifier *)type;
+			return get_align(identifier->definition()->expression, check_struct);
+		}
+		case Ast_UnaryOperator: {
+			auto unop = (AstUnaryOperator *)type;
+			switch (unop->operation) {
+				using enum UnaryOperation;
+				case pointer:
+					return compiler->stack_word_size;
+				case option:
+					return get_align(unop->expression, check_struct);
+				default: invalid_code_path();
+			}
+		}
+		case Ast_Subscript: {
+			auto subscript = (AstSubscript *)type;
+			return get_align(subscript->expression, check_struct);
+		}
+		case Ast_LambdaType: {
+			return compiler->stack_word_size;
+		}
+		case Ast_Enum: {
+			assert(!((AstEnum *)type)->underlying_type);
+			return compiler->stack_word_size;
+		}
+		case Ast_Span: {
+			return compiler->stack_word_size;
+		}
+		default: {
+			invalid_code_path();
+			return 0;
+		}
+	}
 }

@@ -1,5 +1,10 @@
 import "tlang/windows.tl"
 
+bitas :: (value: $T, type: %Type) {
+    #assert #sizeof T == #sizeof type
+    return *(&value as *type)
+}
+
 CString :: *struct{}
 
 operator as implicit :: (s: CString) *U8 => @s
@@ -37,7 +42,9 @@ find :: (haystack, needle: String) ?String {
 }
 
 // FIXME: implement following syntax for templates:
-// haystack, needle: []$T
+//
+//     haystack, needle: []$T
+//
 find :: (haystack: []$T, needle: []T) ?[]T {
 	if (haystack.count - needle.count + 1) as Int <= 0
 		return null
@@ -196,8 +203,13 @@ is_nan :: (v: F64) {
 	return ((u & 0x7ff0000000000000) == 0x7ff0000000000000) && ((u & 0x000fffffffffffff) != 0)
 }
 
-is_infinity :: (v: F32) => *(&v as *U32) == 0x7f800000
-is_infinity :: (v: F64) => *(&v as *U64) == 0x7ff0000000000000
+is_infinity :: (v: F32) => v bitas U32 == 0x7f800000
+is_infinity :: (v: F64) => v bitas U64 == 0x7ff0000000000000
+
+absolute :: (v: F32) => (v bitas U32 & 0x7fff_ffff) bitas F32
+
+sign :: (v: F32) F32 => if (v bitas U32)[31] then -1 else +1
+set_sign :: (v: F32, s: F32) => (v bitas U32 & 0x7fff_ffff) | (s bitas U32 & 0x8000_0000)
 
 stringize :: (_val: F64, state: *Void, callback: StringizeCallback) {
     bytes_written: Int
@@ -343,8 +355,7 @@ stringize :: (value: Any, state: *Void, callback: StringizeCallback) Int {
 	info := value.type
     assert info != null
 
-	stringize_span :: (data: *U8, count: Int, info: *TypeInfo, state: *Void, callback: StringizeCallback) Int {
-        bytes_written: Int
+	stringize_span :: (data: *U8, count: Int, info: *TypeInfo, state: *Void, callback: StringizeCallback) bytes_written: Int {
 		bytes_written += callback(state, "[")
         if count <= 16 {
             for i in 0..count {
@@ -359,7 +370,7 @@ stringize :: (value: Any, state: *Void, callback: StringizeCallback) Int {
                 bytes_written += stringize_quoted_if_string(Any(data + i * info.size, info), state, callback)
             }
             bytes_written += callback(state, ", ...")
-            for i in (count-8)..count {
+            for i in count-8..count {
                 bytes_written += callback(state, ", ")
                 bytes_written += stringize_quoted_if_string(Any(data + i * info.size, info), state, callback)
             }
@@ -408,12 +419,12 @@ stringize :: (value: Any, state: *Void, callback: StringizeCallback) Int {
                         bytes_written += callback(state, ", ")
                     }
                     bytes_written += stringize_quoted_if_string(
-                        Any(node as *U8 + #sizeof *LinkedList(U8).Node, info.parameters[0]),
+                        Any(node as *U8 + #sizeof *Node(U8), info.parameters[0]),
                         state,
                         callback
                     )
 
-                    node = node.next
+                    node = @node.next
                 }
                 bytes_written += callback(state, "]")
 
@@ -447,6 +458,7 @@ stringize :: (value: Any, state: *Void, callback: StringizeCallback) Int {
             }
         }
 	}
+    return 0
 }
 
 stringize_format :: (state: *Void, callback: StringizeCallback, format: String, args: ..Any) Int {
@@ -720,29 +732,29 @@ operator / :: (a: Vector3($T), b: Vector3(T)) => Vector3(T)(a.x / b.x, a.y / b.y
 
 RGB_U8 :: Vector3(U8)
 
-LinkedList :: struct(T: Type) {
-    Node :: struct {
-        next: *Node
-        value: T
-    }
+Node :: struct(T: Type) {
+    // FIXME: make this work
+    // next: *Node(T)
 
-    head, tail: *Node
+    next: *Void
+    value: T
+}
+LinkedList :: struct(T: Type) {
+
+    head, tail: *Node(T)
     allocator: Allocator
 }
 
-linked_list :: (T: %Type) list: LinkedList(T) {
-    // FIXME: `using list` crashes the compiler
-    list.allocator = current_allocator
+linked_list :: (T: %Type) using list: LinkedList(T) {
+    allocator = current_allocator
 }
 
 add :: (using list: *LinkedList($T), value: T = T()) {
     if head == null {
-        // FIXME: `allocator.new(Node)` does not compile
-        // FIXME: `new(allocator, Node)` crashes at runtime. probably has to do with constant parameters
-        head = @allocator.allocate(#sizeof Node)
+        head = allocator.new(Node(T));
         tail = head
     } else {
-        tail.next = @allocator.allocate(#sizeof Node)
+        tail.next = @allocator.allocate(#sizeof Node(T))
         tail = tail.next
     }
     tail.value = value

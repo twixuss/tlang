@@ -76,8 +76,16 @@ inline umm append(StringBuilder &builder, Register r) {
 
 namespace x86_64 {
 
+inline StringBuilder debug_message_builder;
+
+inline void init() {
+	construct(debug_message_builder);
+}
+
 inline umm append_instruction(StringBuilder &builder, s64 idx, Instruction i) {
 	using enum Register64;
+
+	current_instruction = i;
 
 	switch (i.kind) {
 		using enum InstructionKind;
@@ -655,6 +663,14 @@ inline umm append_instruction(StringBuilder &builder, s64 idx, Instruction i) {
 			return 0;
 
 		case debug_break: return append(builder, "int3"s);
+		case debug_error: {
+			auto result = append_format(builder, "mov rdx, _debug_messages + {}\ncall _debug_error\nint3; {}"s, debug_message_builder.count(), split(i.debug_error.message, u8'\n'));
+
+			append(debug_message_builder, i.debug_error.message);
+			append(debug_message_builder, (ascii)0);
+
+			return result;
+		}
 
 		case movsx21_rr: return append_format(builder, "movsx {}, {}", part2b(i.movsx21_rr.d), part1b(i.movsx21_rr.s));
 		case movsx41_rr: return append_format(builder, "movsx {}, {}", part4b(i.movsx41_rr.d), part1b(i.movsx41_rr.s));

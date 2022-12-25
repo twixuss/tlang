@@ -25,7 +25,6 @@ void print_ast(AstNode *node) {
 		case Ast_Return:     return print_ast((AstReturn     *)node);
 		case Ast_Call:       return print_ast((AstCall       *)node);
 		case Ast_If:         return print_ast((AstIf         *)node);
-		case Ast_Ifx:        return print_ast((AstIfx        *)node);
 		case Ast_While:      return print_ast((AstWhile      *)node);
 		case Ast_Match:      return print_ast((AstMatch      *)node);
 		case Ast_ExpressionStatement: return print_ast((AstExpressionStatement *)node);
@@ -37,7 +36,7 @@ void print_ast(AstNode *node) {
 		case Ast_Assert: return print_ast((AstAssert*)node);
 		case Ast_Parse: return print_ast((AstParse*)node);
 		default:
-			print_tabbed("unknown - uid: {}\n", node->uid());
+			print_tabbed("unknown - uid: {}\n", node->uid);
 			break;
 	}
 }
@@ -49,7 +48,7 @@ void print_ast(Scope *scope) {
 }
 
 void print_ast(AstDefinition *node) {
-	print_tabbed("definition - name: {}, type: {}, uid: {}\n", node->name, type_to_string(node->type, true), node->uid());
+	print_tabbed("definition - name: {}, type: {}, uid: {}\n", node->name, type_to_string(node->type, true), node->uid);
 	if (node->expression) {
 		tab_count += 1;
 		print_ast(node->expression);
@@ -62,7 +61,7 @@ void print_ast(AstLambda *node) {
 			print_ast(hardened.lambda);
 		}
 	} else {
-		print_tabbed("lambda - return_type: {}, uid: {}\n", node->return_parameter ? type_to_string(node->return_parameter->type, true) : "(not defined)"str, node->uid());
+		print_tabbed("lambda - return_type: {}, uid: {}\n", node->return_parameter ? type_to_string(node->return_parameter->type, true) : "(not defined)"str, node->uid);
 		tab_count += 1;
 		print_tabbed("parameters:\n");
 		tab_count += 1;
@@ -80,10 +79,10 @@ void print_ast(AstLambda *node) {
 	}
 }
 void print_ast(AstIdentifier *node) {
-	print_tabbed("identifier - type: {}, uid: {}, definition.uid: {}\n", type_to_string(node->type, true), node->uid(), node->definition() ? node->definition()->uid() : -1);
+	print_tabbed("identifier - type: {}, uid: {}, definition.uid: {}\n", type_to_string(node->type, true), node->uid, node->definition() ? node->definition()->uid : -1);
 }
 void print_ast(AstCall *node) {
-	print_tabbed("call - type: {}, uid: {}\n", type_to_string(node->type, true), node->uid());
+	print_tabbed("call - type: {}, uid: {}\n", type_to_string(node->type, true), node->uid);
 	tab_count += 1;
 		print_label("callable:\n");
 		tab_count += 1;
@@ -98,7 +97,7 @@ void print_ast(AstCall *node) {
 	tab_count -= 1;
 }
 void print_ast(AstBinaryOperator *node) {
-	print_tabbed("binary - operation: {}, type: {}, uid: {}\n", as_string(node->operation), type_to_string(node->type, true), node->uid());
+	print_tabbed("binary - operation: {}, type: {}, uid: {}\n", as_string(node->operation), type_to_string(node->type, true), node->uid);
 	tab_count += 1;
 
 	print_label("left:\n");
@@ -114,38 +113,38 @@ void print_ast(AstBinaryOperator *node) {
 	tab_count -= 1;
 }
 void print_ast(AstUnaryOperator *node) {
-	print_tabbed("unary - operation: {}, type: {}, uid: {}\n", as_string(node->operation), type_to_string(node->type, true), node->uid());
+	print_tabbed("unary - operation: {}, type: {}, uid: {}\n", as_string(node->operation), type_to_string(node->type, true), node->uid);
 	tab_count += 1;
 	print_ast(node->expression);
 	tab_count -= 1;
 }
 void print_ast(AstLiteral *node) {
 	if (typecheck_finished) {
-			 if (types_match(node->type, builtin_u8  )) print_tabbed("u8  literal - value: {}, uid: {}\n", (u8 )node->integer, node->uid());
-		else if (types_match(node->type, builtin_u16 )) print_tabbed("u16 literal - value: {}, uid: {}\n", (u16)node->integer, node->uid());
-		else if (types_match(node->type, builtin_u32 )) print_tabbed("u32 literal - value: {}, uid: {}\n", (u32)node->integer, node->uid());
-		else if (types_match(node->type, builtin_u64 )) print_tabbed("u64 literal - value: {}, uid: {}\n", (u64)node->integer, node->uid());
-		else if (types_match(node->type, builtin_s8  )) print_tabbed("s8  literal - value: {}, uid: {}\n", (s8 )node->integer, node->uid());
-		else if (types_match(node->type, builtin_s16 )) print_tabbed("s16 literal - value: {}, uid: {}\n", (s16)node->integer, node->uid());
-		else if (types_match(node->type, builtin_s32 )) print_tabbed("s32 literal - value: {}, uid: {}\n", (s32)node->integer, node->uid());
-		else if (types_match(node->type, builtin_s64 )) print_tabbed("s64 literal - value: {}, uid: {}\n", (s64)node->integer, node->uid());
-		else if (types_match(node->type, builtin_f32 )) print_tabbed("f32 literal - value: {}, uid: {}\n", (f32)node->Float, node->uid());
-		else if (types_match(node->type, builtin_f64 )) print_tabbed("f64 literal - value: {}, uid: {}\n", (f64)node->Float, node->uid());
-		else if (types_match(node->type, builtin_bool)) print_tabbed("bool literal - value: {}, uid: {}\n", node->Bool, node->uid());
-		else if (types_match(node->type, builtin_string)) print_tabbed("string literal - value: {}, uid: {}\n", node->location, node->uid());
-		else if (types_match(node->type, builtin_unsized_integer)) print_tabbed("unsized integer literal - value: {}, uid: {}\n", (u64)node->integer, node->uid());
-		else if (types_match(node->type, builtin_unsized_float)) print_tabbed("unsized float literal - value: {}, uid: {}\n", (f64)node->Float, node->uid());
-		else if (node->type->kind == Ast_UnaryOperator) print_tabbed("pointer literal - value: {}, uid: {}\n", (s64)node->integer, node->uid());
+			 if (types_match(node->type, compiler->builtin_u8  )) print_tabbed("u8  literal - value: {}, uid: {}\n", (u8 )node->integer, node->uid);
+		else if (types_match(node->type, compiler->builtin_u16 )) print_tabbed("u16 literal - value: {}, uid: {}\n", (u16)node->integer, node->uid);
+		else if (types_match(node->type, compiler->builtin_u32 )) print_tabbed("u32 literal - value: {}, uid: {}\n", (u32)node->integer, node->uid);
+		else if (types_match(node->type, compiler->builtin_u64 )) print_tabbed("u64 literal - value: {}, uid: {}\n", (u64)node->integer, node->uid);
+		else if (types_match(node->type, compiler->builtin_s8  )) print_tabbed("s8  literal - value: {}, uid: {}\n", (s8 )node->integer, node->uid);
+		else if (types_match(node->type, compiler->builtin_s16 )) print_tabbed("s16 literal - value: {}, uid: {}\n", (s16)node->integer, node->uid);
+		else if (types_match(node->type, compiler->builtin_s32 )) print_tabbed("s32 literal - value: {}, uid: {}\n", (s32)node->integer, node->uid);
+		else if (types_match(node->type, compiler->builtin_s64 )) print_tabbed("s64 literal - value: {}, uid: {}\n", (s64)node->integer, node->uid);
+		else if (types_match(node->type, compiler->builtin_f32 )) print_tabbed("f32 literal - value: {}, uid: {}\n", (f32)node->Float, node->uid);
+		else if (types_match(node->type, compiler->builtin_f64 )) print_tabbed("f64 literal - value: {}, uid: {}\n", (f64)node->Float, node->uid);
+		else if (types_match(node->type, compiler->builtin_bool)) print_tabbed("bool literal - value: {}, uid: {}\n", node->Bool, node->uid);
+		else if (types_match(node->type, compiler->builtin_string)) print_tabbed("string literal - value: {}, uid: {}\n", node->location, node->uid);
+		else if (types_match(node->type, compiler->builtin_unsized_integer)) print_tabbed("unsized integer literal - value: {}, uid: {}\n", (u64)node->integer, node->uid);
+		else if (types_match(node->type, compiler->builtin_unsized_float)) print_tabbed("unsized float literal - value: {}, uid: {}\n", (f64)node->Float, node->uid);
+		else if (node->type->kind == Ast_UnaryOperator) print_tabbed("pointer literal - value: {}, uid: {}\n", (s64)node->integer, node->uid);
 		else invalid_code_path();
 	} else {
 		switch (node->literal_kind) {
-			case LiteralKind::integer:   print_tabbed(  "integer literal - value: {}, uid: {}\n", (s64)node->integer, node->uid()); break;
-			case LiteralKind::boolean:   print_tabbed(  "boolean literal - value: {}, uid: {}\n", node->Bool, node->uid()); break;
-			case LiteralKind::string:    print_tabbed(   "string literal - value: {}, uid: {}\n", node->location, node->uid()); break;
-			case LiteralKind::Float:     print_tabbed(    "float literal - value: {}, uid: {}\n", node->Float, node->uid()); break;
-			case LiteralKind::character: print_tabbed("character literal - value: {}, uid: {}\n", node->character, node->uid()); break;
+			case LiteralKind::integer:   print_tabbed(  "integer literal - value: {}, uid: {}\n", (s64)node->integer, node->uid); break;
+			case LiteralKind::boolean:   print_tabbed(  "boolean literal - value: {}, uid: {}\n", node->Bool, node->uid); break;
+			case LiteralKind::string:    print_tabbed(   "string literal - value: {}, uid: {}\n", node->location, node->uid); break;
+			case LiteralKind::Float:     print_tabbed(    "float literal - value: {}, uid: {}\n", node->Float, node->uid); break;
+			case LiteralKind::character: print_tabbed("character literal - value: {}, uid: {}\n", node->character, node->uid); break;
 			case LiteralKind::Struct: {
-				print_tabbed("struct literal - uid: {}\n", node->uid());
+				print_tabbed("struct literal - uid: {}\n", node->uid);
 				++tab_count;
 
 				auto Struct = direct_as<AstStruct>(node->type);
@@ -164,12 +163,12 @@ void print_ast(AstLiteral *node) {
 				--tab_count;
 				break;
 			}
-			default: print_tabbed("unknown literal - kind: {}, uid: {}\n", node->literal_kind, node->uid()); break;
+			default: print_tabbed("unknown literal - kind: {}, uid: {}\n", node->literal_kind, node->uid); break;
 		}
 	}
 }
 void print_ast(AstReturn *node) {
-	print_tabbed("return - uid: {}\n", node->uid());
+	print_tabbed("return - uid: {}\n", node->uid);
 	if (node->expression) {
 		tab_count += 1;
 		print_ast(node->expression);
@@ -178,9 +177,9 @@ void print_ast(AstReturn *node) {
 }
 void print_ast(AstStruct *node) {
 	if (node->definition)
-		print_tabbed("struct - name: {}, uid: {}\n", node->definition->name, node->uid());
+		print_tabbed("struct - name: {}, uid: {}\n", node->definition->name, node->uid);
 	else
-		print_tabbed("struct - unnamed, uid: {}\n", node->uid());
+		print_tabbed("struct - unnamed, uid: {}\n", node->uid);
 	tab_count += 1;
 	for (auto &member : node->member_scope->statement_list) {
 		print_ast(member);
@@ -188,7 +187,7 @@ void print_ast(AstStruct *node) {
 	tab_count -= 1;
 }
 void print_ast(AstIf *node) {
-	print_tabbed("if - uid: {}\n", node->uid());
+	print_tabbed("if - uid: {}\n", node->uid);
 	tab_count += 1;
 	print_label("condition:\n");
 	tab_count += 1;
@@ -196,32 +195,11 @@ void print_ast(AstIf *node) {
 	tab_count -= 1;
 	print_label("true statements:\n");
 	tab_count += 1;
-	for (auto statement : node->true_scope->statement_list) {
-		print_ast(statement);
-	}
+	print_ast(node->true_block);
 	tab_count -= 1;
 	print_label("false statements:\n");
 	tab_count += 1;
-	for (auto statement : node->false_scope->statement_list) {
-		print_ast(statement);
-	}
-	tab_count -= 1;
-	tab_count -= 1;
-}
-void print_ast(AstIfx *node) {
-	print_tabbed("ifx - uid: {}\n", node->uid());
-	tab_count += 1;
-	print_label("condition:\n");
-	tab_count += 1;
-	print_ast(node->condition);
-	tab_count -= 1;
-	print_label("true expression:\n");
-	tab_count += 1;
-	print_ast(node->true_expression);
-	tab_count -= 1;
-	print_label("false expression:\n");
-	tab_count += 1;
-	print_ast(node->false_expression);
+	print_ast(node->false_block);
 	tab_count -= 1;
 	tab_count -= 1;
 }
@@ -229,7 +207,7 @@ void print_ast(AstExpressionStatement *node) {
 	print_ast(node->expression);
 }
 void print_ast(AstSubscript *node) {
-	print_tabbed("subscript - type: {}, uid: {}\n", type_to_string(node->type, true), node->uid());
+	print_tabbed("subscript - type: {}, uid: {}\n", type_to_string(node->type, true), node->uid);
 	tab_count += 1;
 	print_label("index expression:\n");
 	tab_count += 1;
@@ -242,7 +220,7 @@ void print_ast(AstSubscript *node) {
 	tab_count -= 1;
 }
 void print_ast(AstWhile *node) {
-	print_tabbed("while - uid: {}\n", node->uid());
+	print_tabbed("while - uid: {}\n", node->uid);
 	tab_count += 1;
 	print_label("condition:\n");
 	tab_count += 1;
@@ -255,7 +233,7 @@ void print_ast(AstWhile *node) {
 	tab_count -= 1;
 }
 void print_ast(AstTuple*tuple) {
-	print_tabbed("tuple - type: {}, uid: {}\n", type_to_string(tuple->type), tuple->uid());
+	print_tabbed("tuple - type: {}, uid: {}\n", type_to_string(tuple->type), tuple->uid);
 	tab_count += 1;
 	for (auto experssion : tuple->expressions) {
 		print_ast(experssion);
@@ -263,19 +241,19 @@ void print_ast(AstTuple*tuple) {
 	tab_count -= 1;
 }
 void print_ast(AstAssert* assert) {
-	print_tabbed("assert - uid: {}\n", assert->uid());
+	print_tabbed("assert - uid: {}\n", assert->uid);
 	tab_count += 1;
 	print_ast(assert->condition);
 	tab_count -= 1;
 }
 void print_ast(AstParse* parse) {
-	print_tabbed("parse - uid: {}\n", parse->uid());
+	print_tabbed("parse - uid: {}\n", parse->uid);
 	tab_count += 1;
 	print_ast(parse->expression);
 	tab_count -= 1;
 }
 void print_ast(AstMatch* match) {
-	print_tabbed("match - uid: {}\n", match->uid());
+	print_tabbed("match - uid: {}\n", match->uid);
 	tab_count += 1;
 
 	print_tabbed("expression:\n");
@@ -300,9 +278,7 @@ void print_ast(AstMatch* match) {
 		}
 
 		print_tabbed("scope:\n");
-		tab_count += 1;
-		print_ast(Case.scope);
-		tab_count -= 1;
+		print_ast(Case.block);
 
 		tab_count -= 1;
 	}
@@ -312,8 +288,8 @@ void print_ast(AstMatch* match) {
 }
 
 void print_ast() {
-	timed_function(context.profiler);
-	for (auto statement : global_scope.statement_list) {
+	timed_function(compiler->profiler);
+	for (auto statement : compiler->global_scope.statement_list) {
 		print_ast(statement);
 	}
 }
@@ -327,12 +303,13 @@ void print_lowered(AstExpression* expression) {
 	void print_lowered(AstLiteral *node);
 	void print_lowered(AstCall *node);
 	void print_lowered(AstStruct *node);
-	void print_lowered(AstIfx *node);
+	void print_lowered(AstIf *node);
 	void print_lowered(AstUnaryOperator *node);
 	void print_lowered(AstSubscript *node);
 	void print_lowered(AstTuple*node);
 	void print_lowered(AstArrayInitializer*node);
 	void print_lowered(AstSpan*node);
+	void print_lowered(AstBlock*node);
 
 	if (expression->is_parenthesized)
 		print("(");
@@ -342,7 +319,7 @@ void print_lowered(AstExpression* expression) {
 		case Ast_Identifier: print_lowered((AstIdentifier *)expression); break;
 		case Ast_Literal:    print_lowered((AstLiteral    *)expression); break;
 		case Ast_Call:       print_lowered((AstCall       *)expression); break;
-		case Ast_Ifx:        print_lowered((AstIfx        *)expression); break;
+		case Ast_If:        print_lowered((AstIf        *)expression); break;
 		case Ast_BinaryOperator: print_lowered((AstBinaryOperator *)expression); break;
 		case Ast_Struct: print_lowered((AstStruct *)expression); break;
 		case Ast_UnaryOperator: print_lowered((AstUnaryOperator *)expression); break;
@@ -350,6 +327,7 @@ void print_lowered(AstExpression* expression) {
 		case Ast_Tuple: print_lowered((AstTuple*)expression); break;
 		case Ast_ArrayInitializer: print_lowered((AstArrayInitializer*)expression); break;
 		case Ast_Span: print_lowered((AstSpan*)expression); break;
+		case Ast_Block: print_lowered((AstBlock*)expression); break;
 		default:
 			print("!unknown expression!");
 			break;
@@ -362,7 +340,6 @@ void print_lowered(AstNode *node) {
 	void print_lowered(AstExpression *);
 	void print_lowered(AstDefinition  *);
 	void print_lowered(AstReturn  *);
-	void print_lowered(AstIf  *);
 	void print_lowered(AstWhile  *);
 	void print_lowered(AstExpressionStatement  *);
 	void print_lowered(AstAssert *);
@@ -371,26 +348,25 @@ void print_lowered(AstNode *node) {
 	void print_lowered(AstBlock  *);
 	void print_lowered(AstMatch  *);
 	void print_lowered(AstOperatorDefinition  *);
+	void print_lowered(AstLoopControl  *);
 
 	print_tabbed("");
 	switch (node->kind) {
 		case Ast_Definition: return (print_lowered((AstDefinition *)node), print(";\n"), void());
 		case Ast_Return:     return print_lowered((AstReturn     *)node);
-		case Ast_If:         return print_lowered((AstIf         *)node);
 		case Ast_While:      return print_lowered((AstWhile      *)node);
 		case Ast_ExpressionStatement: return print_lowered((AstExpressionStatement *)node);
 		case Ast_Assert: return print_lowered((AstAssert*)node);
 		case Ast_Parse: return print_lowered((AstParse*)node);
 		case Ast_Defer: return print_lowered((AstDefer*)node);
-		case Ast_Block: return print_lowered((AstBlock*)node);
 		case Ast_Match: return print_lowered((AstMatch*)node);
 		case Ast_OperatorDefinition: return print_lowered((AstOperatorDefinition*)node);
+		case Ast_LoopControl: return print_lowered((AstLoopControl*)node);
 		case Ast_Lambda:
 		case Ast_LambdaType:
 		case Ast_Identifier:
 		case Ast_Literal:
 		case Ast_Call:
-		case Ast_Ifx:
 		case Ast_BinaryOperator:
 		case Ast_Struct:
 		case Ast_UnaryOperator:
@@ -399,7 +375,7 @@ void print_lowered(AstNode *node) {
 			print_lowered((AstExpression *)node);
 			break;
 		default:
-			print("!unknown node {}!", node->uid());
+			print("!unknown node {}!", node->uid);
 			break;
 	}
 }
@@ -411,7 +387,7 @@ void print_lowered(Scope *scope) {
 		print_lowered(statement);
 	}
 	--tab_count;
-	print_tabbed("}\n");
+	print_tabbed("}");
 }
 void print_lowered(AstDefinition *definition) {
 	if (!definition) {
@@ -423,7 +399,7 @@ void print_lowered(AstDefinition *definition) {
 		print("using ");
 
 	print("{}", definition->name.count ? definition->name : "<unnamed>"str);
-	//print("{}{}", definition->name.count ? definition->name : "<unnamed>"str, FormatInt{.value=definition->uid(), .radix=62});
+	//print("{}{}", definition->name.count ? definition->name : "<unnamed>"str, FormatInt{.value=definition->uid, .radix=62});
 
 	if (definition->expression) {
 		print(" :");
@@ -458,7 +434,10 @@ void print_lowered(AstLambda *node) {
 		print_lowered(argument);
 	}
 	print("): ");
-	print_lowered(node->return_parameter);
+	if (node->return_parameter->name.count)
+		print_lowered(node->return_parameter);
+	else
+		print_lowered(node->return_parameter->type);
 
 	if (node->has_body) {
 		print(" {\n");
@@ -484,11 +463,25 @@ void print_lowered(AstLambdaType *node) {
 }
 void print_lowered(AstIdentifier *node) {
 	print(node->name);
-	//print("{}{}", node->name, FormatInt{.value=node->definition()?node->definition()->uid():-1, .radix=62});
+	//print("{}{}", node->name, FormatInt{.value=node->definition()?node->definition()->uid:-1, .radix=62});
 }
 void print_lowered(AstCall *node) {
 	print_lowered(node->callable);
 	print("(");
+#if 1
+	for (auto &argument : node->unsorted_arguments) {
+		if (&argument != node->unsorted_arguments.data) {
+			print(", ");
+		}
+		if (argument.expression) {
+			if (!argument.name.is_empty())
+				print("{} = ", argument.name);
+			print_lowered(argument.expression);
+		}
+		else
+			print("<default>");
+	}
+#else
 	for (auto &argument : node->sorted_arguments) {
 		if (&argument != node->sorted_arguments.data) {
 			print(", ");
@@ -496,8 +489,9 @@ void print_lowered(AstCall *node) {
 		if (argument)
 			print_lowered(argument);
 		else
-			print("<zero>");
+			print("<default>");
 	}
+#endif
 	print(")");
 }
 void print_lowered(AstBinaryOperator *node) {
@@ -527,7 +521,7 @@ void print_lowered(AstLiteral *literal) {
 			break;
 		}
 		case integer: {
-			if (types_match(literal->type, builtin_unsized_integer)) {
+			if (types_match(literal->type, compiler->builtin_unsized_integer)) {
 				print(literal->integer);
 			} else {
 				print("(");
@@ -539,7 +533,7 @@ void print_lowered(AstLiteral *literal) {
 			break;
 		}
 		case Float: {
-			if (types_match(literal->type, builtin_unsized_float)) {
+			if (types_match(literal->type, compiler->builtin_unsized_float)) {
 				print(literal->Float);
 			} else {
 				print("(");
@@ -567,6 +561,10 @@ void print_lowered(AstLiteral *literal) {
 			if (literal->array_elements.count) print_lowered(literal->array_elements[0]);
 			for (auto e : literal->array_elements.skip(1)) print(", "), print_lowered(e);
 			print("]");
+			break;
+		}
+		case boolean: {
+			print(literal->Bool);
 			break;
 		}
 		default:
@@ -599,27 +597,10 @@ void print_lowered(AstStruct *node) {
 void print_lowered(AstIf *If) {
 	print("if ");
 	print_lowered(If->condition);
-	print(" {\n");
-	++tab_count;
-	for (auto statement : If->true_scope->statement_list) {
-		print_lowered(statement);
-	}
-	--tab_count;
-	print_tabbed("} else {\n");
-	++tab_count;
-	for (auto statement : If->false_scope->statement_list) {
-		print_lowered(statement);
-	}
-	--tab_count;
-	print_tabbed("}\n");
-}
-void print_lowered(AstIfx *If) {
-	print("ifx ");
-	print_lowered(If->condition);
 	print(" then ");
-	print_lowered(If->true_expression);
+	print_lowered(If->true_block);
 	print(" else ");
-	print_lowered(If->false_expression);
+	print_lowered(If->false_block);
 }
 void print_lowered(AstExpressionStatement *node) {
 	print_lowered(node->expression);
@@ -663,7 +644,9 @@ void print_lowered(AstArrayInitializer *pack) {
 	print("]");
 }
 void print_lowered(AstAssert* assert) {
-	print("#assert ");
+	if (assert->is_constant)
+		print("#");
+	print("assert ");
 	print_lowered(assert->condition);
 	print(";\n");
 }
@@ -694,7 +677,7 @@ void print_lowered(AstMatch* match) {
 			print_tabbed("else");
 		}
 		print(" => ");
-		print_lowered(Case.scope);
+		print_lowered(Case.block);
 	}
 
 	tab_count -= 1;
@@ -704,10 +687,24 @@ void print_lowered(AstOperatorDefinition* Operator) {
 	print_lowered(Operator->definition);
 	print("\n");
 }
+void print_lowered(AstLoopControl* LoopControl) {
+	switch (LoopControl->control) {
+		case LoopControl::Break: println("break;"); break;
+		case LoopControl::Continue: println("continue;"); break;
+		default: invalid_code_path();
+	}
+}
 
 void print_lowered() {
-	timed_function(context.profiler);
-	for (auto statement : global_scope.statement_list) {
-		print_lowered(statement);
+	timed_function(compiler->profiler);
+	if (compiler->print_lowered_filter.is_empty()) {
+		for (auto statement : compiler->global_scope.statement_list) {
+			print_lowered(statement);
+		}
+	} else {
+		for (auto definition : compiler->global_scope.definition_list) {
+			if (definition->name == compiler->print_lowered_filter)
+				print_lowered(definition);
+		}
 	}
 }

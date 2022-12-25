@@ -94,7 +94,5 @@ static Span<utf8> locate_wkits() {
 		return {};
 	}
 	// NOTE: no slash at the end because link.exe does not understand that
-	path = format(u8"{}{}\\um\\x64", path, found_builds.back().name);
-
-	return path;
+	return format(u8"{}{}", path, found_builds.back().name);
 }

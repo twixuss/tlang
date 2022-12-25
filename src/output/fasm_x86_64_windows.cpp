@@ -1,7 +1,7 @@
 #define TL_IMPL
 #pragma warning(disable: 4702) // unreachable
 #include <bytecode.h>
-#include <ast.h>
+#include <compiler.h>
 #include "../x86_64_asm.h"
 #include <tl/ram.h>
 
@@ -68,7 +68,7 @@ inline umm append(StringBuilder &builder, ::Address a) {
 
 }
 
-static void append_instructions(Compiler &compiler, StringBuilder &builder, List<Instruction> instructions) {
+static void append_instructions(Compiler *compiler, StringBuilder &builder, List<Instruction> instructions) {
 	timed_function(compiler.profiler);
 
 	append_format(builder,
@@ -81,7 +81,7 @@ static void append_instructions(Compiler &compiler, StringBuilder &builder, List
 		"call i{}\n"
 		"mov rcx, [rsp]\n"
 		"call [ExitProcess]\n"
-		"ret\n", compiler.main_lambda->location_in_bytecode);
+		"ret\n", compiler->main_lambda->location_in_bytecode);
 
 	s64 idx = 0;
 	for (auto i : instructions) {
@@ -114,7 +114,7 @@ DECLARE_OUTPUT_BUILDER {
 	init_allocator();
 	init_printer();
 
-	timed_function(compiler.profiler);
+	timed_function(compiler->profiler);
 
 
 	StringBuilder builder;
@@ -174,11 +174,11 @@ section '.idata' import data readable writeable
 			}
 			append(builder, '\n');
 		};
-		append_section("'.rodata' data readable",         "constants", compiler.constant_section);
-		append_section("'.data' data readable writeable", "rwdata", compiler.data_section);
+		append_section("'.rodata' data readable",         "constants", compiler->constant_section);
+		append_section("'.data' data readable writeable", "rwdata", compiler->data_section);
 
-		if (compiler.zero_section_size) {
-			append_format(builder, "section '.bss' data readable writeable\nzeros rb {}\n", compiler.zero_section_size);
+		if (compiler->zero_section_size) {
+			append_format(builder, "section '.bss' data readable writeable\nzeros rb {}\n", compiler->zero_section_size);
 		}
 
 		{
@@ -186,16 +186,16 @@ section '.idata' import data readable writeable
 
 
 			// TODO: import kernel32 even when windows.tl is not included
-			//if (!find_if(compiler.extern_libraries, [](auto lib, auto) { return equals_case_insensitive(lib, u8"kernel32"s); })) {
+			//if (!find_if(compiler->extern_libraries, [](auto lib, auto) { return equals_case_insensitive(lib, u8"kernel32"s); })) {
 			//	append(builder, "library kernel32,'kernel32.dll'\nimport kernel32,ExitProcess,'ExitProcess'\n");
 			//}
 
-			if (is_empty(compiler.extern_libraries)) {
+			if (is_empty(compiler->extern_libraries)) {
 				append(builder, "library kernel32,'kernel32.dll'\nimport kernel32,ExitProcess,'ExitProcess'\n");
 			} else {
 				u32 library_index = 0;
 				append(builder, "library ");
-				for_each(compiler.extern_libraries, [&](auto library, auto functions) {
+				for_each(compiler->extern_libraries, [&](auto library, auto functions) {
 					if (library_index != 0)
 						append(builder, ",\\\n\t");
 					append_format(builder, "{},'{}.dll'", library, library);
@@ -204,7 +204,7 @@ section '.idata' import data readable writeable
 
 				append(builder, '\n');
 
-				for_each(compiler.extern_libraries, [&](auto library, auto functions) {
+				for_each(compiler->extern_libraries, [&](auto library, auto functions) {
 					append_format(builder, "import {}", library);
 					for (auto function : functions) {
 						append_format(builder, ",\\\n\t{},'{}'", function, function);
@@ -222,12 +222,12 @@ section '.idata' import data readable writeable
 		}
 	}
 
-	auto output_path_base = format("{}\\{}", compiler.current_directory, parse_path(compiler.source_path).name);
+	auto output_path_base = format("{}\\{}", compiler->current_directory, parse_path(compiler->source_path).name);
 
 	auto asm_path = format(u8"{}.asm", output_path_base);
 
 	write_entire_file(asm_path, as_bytes(to_string(builder)));
-	defer { if (!compiler.keep_temp) delete_file(asm_path); };
+	defer { if (!compiler->keep_temp) delete_file(asm_path); };
 
 
 	builder.clear();
@@ -240,15 +240,15 @@ section '.idata' import data readable writeable
 	append_format(bat_builder,
 		u8"@echo off\r\n"
 		"{}\\fasm\\fasm.exe -m {} \"{}\" \"{}\"\r\n",
-		compiler.compiler_directory, fasm_max_kilobytes, asm_path, compiler.output_path);
+		compiler->compiler_directory, fasm_max_kilobytes, asm_path, compiler->output_path);
 
-	auto bat_path = to_pathchars(concatenate(compiler.compiler_directory, u8"\\fasm_build.bat"s));
+	auto bat_path = to_pathchars(concatenate(compiler->compiler_directory, u8"\\fasm_build.bat"s));
 	write_entire_file(bat_path, as_bytes(to_string(bat_builder)));
-	defer { if (!compiler.keep_temp) delete_file(bat_path); };
+	defer { if (!compiler->keep_temp) delete_file(bat_path); };
 
-	_wputenv((wchar *)to_utf16(tformat(u8"Include={}\\fasm\\include{}", compiler.compiler_directory, '\0'), true).data);
+	_wputenv((wchar *)to_utf16(tformat(u8"Include={}\\fasm\\include{}", compiler->compiler_directory, '\0'), true).data);
 
-	timed_block(compiler.profiler, "fasm"s);
+	timed_block(compiler->profiler, "fasm"s);
 
 	auto process = start_process(bat_path);
 	if (!process.handle) {
@@ -285,7 +285,8 @@ section '.idata' import data readable writeable
 }
 
 DECLARE_TARGET_INFORMATION_GETTER {
-	compiler.stack_word_size = 8;
-	compiler.register_size = 8;
-	compiler.general_purpose_register_count = 16;
+	::compiler = compiler;
+	compiler->stack_word_size = 8;
+	compiler->register_size = 8;
+	compiler->general_purpose_register_count = 16;
 }

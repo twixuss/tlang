@@ -1,4 +1,5 @@
 
+// PROGRAM CODE 32
 foo :: () result: Int {
 	result = 64
 	result = 32

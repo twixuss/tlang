@@ -1,7 +1,7 @@
 #define TL_IMPL
 #pragma warning(disable: 4702) // unreachable
 #include <bytecode.h>
-#include <ast.h>
+#include <compiler.h>
 #include "../x86_64_asm.h"
 #include "msvc.h"
 #include <tl/bits.h>
@@ -69,8 +69,8 @@ inline umm append(StringBuilder &builder, ::Address a) {
 
 }
 
-static void append_instructions(Compiler &compiler, StringBuilder &builder, List<Instruction> instructions) {
-	timed_function(compiler.profiler);
+static void append_instructions(Compiler *compiler, StringBuilder &builder, List<Instruction> instructions) {
+	timed_function(compiler->profiler);
 
 	append_format(builder,
 		"section .text\n"
@@ -85,8 +85,8 @@ static void append_instructions(Compiler &compiler, StringBuilder &builder, List
 		"mov rcx, [rsp]\n"
 		"call ExitProcess\n"
 		"ret\n",
-		compiler.init_runtime_lambda->location_in_bytecode,
-		compiler.main_lambda->location_in_bytecode
+		compiler->init_runtime_lambda->location_in_bytecode,
+		compiler->main_lambda->location_in_bytecode
 	);
 
 	// prepare stack routine.
@@ -241,7 +241,29 @@ memset:
 )"
 	);
 
-	for (auto &l : compiler.lambdas_with_body) {
+	// Debug error message
+	// Inputs:
+	//     rdx - pointer to message string
+	//
+	append(builder, R"(
+_debug_error:
+	push rcx
+	push r8
+	push r9
+
+	xor rcx, rcx
+	xor r8, r8
+	xor r9, r9
+	call MessageBoxA
+
+	pop r9
+	pop r8
+	pop rcx
+	ret
+)"
+	);
+
+	for (auto &l : compiler->lambdas_with_body) {
 		if (l->location_in_bytecode == -1) {
 			// Skipped due to DCE
 			continue;
@@ -281,9 +303,11 @@ DECLARE_OUTPUT_BUILDER {
 	init_allocator();
 	init_printer();
 
-	timed_function(compiler.profiler);
+	timed_function(compiler->profiler);
 
-	auto output_path_base = format("{}\\{}", compiler.current_directory, parse_path(compiler.source_path).name);
+	x86_64::init();
+
+	auto output_path_base = format("{}\\{}", compiler->current_directory, parse_path(compiler->source_path).name);
 	auto asm_path = to_pathchars(format(u8"{}.asm", output_path_base));
 
 	auto msvc_directory = locate_msvc();
@@ -303,9 +327,9 @@ DECLARE_OUTPUT_BUILDER {
 	{
 		scoped_phase("Writing nasm");
 
-		append(builder, "bits 64\nextern ExitProcess\n");
+		append(builder, "bits 64\nextern ExitProcess\nextern MessageBoxA\n");
 
-		for_each(compiler.extern_libraries, [&](auto lib, auto fns) {
+		for_each(compiler->extern_libraries, [&](auto lib, auto fns) {
 			for (auto f : fns) {
 				append_format(builder, "extern {}\n", f);
 			}
@@ -341,12 +365,22 @@ DECLARE_OUTPUT_BUILDER {
 			}
 			append(builder, '\n');
 		};
-		append_section(".rodata", "constants", compiler.constant_section);
-		append_section(".data", "rwdata", compiler.data_section);
 
-		append_format(builder, "section .bss\nzeros: resb {}\n", compiler.zero_section_size);
+		append_section(".rodata", "constants", compiler->constant_section);
+
+		append_section(".data", "rwdata", compiler->data_section);
+
+		append_format(builder, "section .bss\nzeros: resb {}\n", compiler->zero_section_size);
 
 		append_instructions(compiler, builder, bytecode.instructions);
+
+		append(builder, "section .rodata\n_debug_messages: db ");
+		debug_message_builder.for_each_block([&](StringBuilder::Block *block) {
+			for (auto c : *block) {
+				append_format(builder, "0x{},", FormatInt{.value = c, .radix = 16});
+			}
+		});
+		append(builder, "\n");
 
 		write_entire_file(asm_path, as_bytes(to_string(builder)));
 	}
@@ -359,26 +393,26 @@ DECLARE_OUTPUT_BUILDER {
 
 		append_format(bat_builder, u8R"(@echo off
 {}\nasm -f win64 -gcv8 "{}.asm" -o "{}.obj" -w-number-overflow -w-db-empty
-)", compiler.compiler_directory, output_path_base, output_path_base);
+)", compiler->compiler_directory, output_path_base, output_path_base);
 
 		append(bat_builder, "if %errorlevel% neq 0 exit /b %errorlevel%\n");
 		append_format(bat_builder,
-			R"("{}\bin\Hostx64\x64\link" /nologo "{}.obj" /out:"{}" /nodefaultlib /entry:"main" /subsystem:console /DEBUG:FULL /LIBPATH:"{}" /LIBPATH:"{}\libs" /LIBPATH:"{}\lib\x64" kernel32.lib)",
+			R"("{}\bin\Hostx64\x64\link" /nologo "{}.obj" /out:"{}" /nodefaultlib /entry:"main" /subsystem:console /DEBUG:FULL /LIBPATH:"{}\um\x64" /LIBPATH:"{}\libs" /LIBPATH:"{}\lib\x64" kernel32.lib)",
 			msvc_directory,
 			output_path_base,
-			compiler.output_path,
+			compiler->output_path,
 			wkits_directory,
-			compiler.compiler_directory,
+			compiler->compiler_directory,
 			msvc_directory
 		);
-		for_each(compiler.extern_libraries, [&](auto library, auto) {
+		for_each(compiler->extern_libraries, [&](auto library, auto) {
 			append_format(bat_builder, " {}.lib", library);
 		});
 
 		auto bat_path = format(u8"{}.build.bat"s, output_path_base);
 		write_entire_file(bat_path, as_bytes(to_string(bat_builder)));
 #if 1
-		timed_block(compiler.profiler, "nasm + link"s);
+		timed_block(compiler->profiler, "nasm + link"s);
 
 		auto process = start_process(bat_path);
 		if (!process.handle) {
@@ -411,18 +445,19 @@ DECLARE_OUTPUT_BUILDER {
 			return false;
 		}
 #endif
-		if (!compiler.keep_temp)
+		if (!compiler->keep_temp)
 			delete_file(bat_path);
 	}
 
-	if (!compiler.keep_temp)
+	if (!compiler->keep_temp)
 		delete_file(asm_path);
 
 	return true;
 }
 
 DECLARE_TARGET_INFORMATION_GETTER {
-	compiler.stack_word_size = 8;
-	compiler.register_size = 8;
-	compiler.general_purpose_register_count = 16;
+	::compiler = compiler;
+	compiler->stack_word_size = 8;
+	compiler->register_size = 8;
+	compiler->general_purpose_register_count = 16;
 }

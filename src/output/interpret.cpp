@@ -6,12 +6,13 @@ DECLARE_OUTPUT_BUILDER {
 	init_allocator();
 	init_printer();
 
-	run_bytecode(compiler, bytecode.instructions, compiler.main_lambda, compiler.extern_libraries);
+	run_bytecode(compiler, bytecode.instructions, compiler->main_lambda, compiler->extern_libraries);
 	return true;
 }
 
 DECLARE_TARGET_INFORMATION_GETTER {
-	compiler.stack_word_size = 8;
-	compiler.register_size = 8;
-	compiler.general_purpose_register_count = 16;
+	::compiler = compiler;
+	compiler->stack_word_size = 8;
+	compiler->register_size = 8;
+	compiler->general_purpose_register_count = 16;
 }

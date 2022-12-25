@@ -1,8 +1,10 @@
 import "tlang/std.tl"
 
 main :: () {
-    a := Vector3(1, 2, 3)
-    b := Vector3(6, 5, 4)
+    Vec3 :: Vector3(Float)
+
+    a := Vector3(Float)(1, 2, 3)
+    b := Vector3(Float)(6, 5, 4)
 
     println(a + b)
     println(a - b)

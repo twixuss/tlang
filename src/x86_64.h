@@ -1,5 +1,5 @@
 #pragma once
-#include <ast.h>
+#include <compiler.h>
 #include <bytecode.h>
 
 namespace x86_64 {
@@ -38,6 +38,8 @@ inline static constexpr Register64 stdcall_int_registers[] {
 	Register64::r9,
 };
 
+inline Instruction current_instruction = {};
+
 inline static constexpr Register64 to_x86_register(Register r) {
 	using enum Register;
 	using enum Register64;
@@ -56,8 +58,8 @@ inline static constexpr Register64 to_x86_register(Register r) {
 		case rs: return rsp;
 		case rb: return rbp;
 	}
-	invalid_code_path("invalid register: {}", (u32)r);
-	return {};
+	immediate_error(current_instruction.node->location, "FIXME: Could not allocate register for this expression. Sorry, but the only thing you can do right now is simplify the expression.");
+	exit(-1);
 }
 
 inline static constexpr Register64 part8b(Register64 r) { return r; }

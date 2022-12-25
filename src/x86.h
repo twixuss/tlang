@@ -8,12 +8,12 @@ enum class Register32{eax,ebx,ecx,edx,esi,edi,esp,ebp, };
 enum class Register16{ ax, bx, cx, dx, si, di, sp, bp, };
 enum class Register8 { al, bl, cl, dl, sil,dil,spl,bpl,};
 
-inline static constexpr XRegister stdcall_float_registers[] {
-	XRegister::x0,
-	XRegister::x1,
-	XRegister::x2,
-	XRegister::x3,
-};
+//inline static constexpr XRegister stdcall_float_registers[] {
+//	XRegister::x0,
+//	XRegister::x1,
+//	XRegister::x2,
+//	XRegister::x3,
+//};
 
 static Span<utf8> cmov_string(Comparison c) {
 	using enum Comparison;
@@ -151,17 +151,17 @@ inline umm append(StringBuilder &builder, Register r) {
 	using namespace x86;
 	return append(builder, to_x86_register(r));
 }
-inline umm append(StringBuilder &builder, XRegister r) {
-	using enum XRegister;
-	switch (r) {
-		case x0: return append(builder, "xmm0");
-		case x1: return append(builder, "xmm1");
-		case x2: return append(builder, "xmm2");
-		case x3: return append(builder, "xmm3");
-	}
-	invalid_code_path();
-	return {};
-}
+//inline umm append(StringBuilder &builder, XRegister r) {
+//	using enum XRegister;
+//	switch (r) {
+//		case x0: return append(builder, "xmm0");
+//		case x1: return append(builder, "xmm1");
+//		case x2: return append(builder, "xmm2");
+//		case x3: return append(builder, "xmm3");
+//	}
+//	invalid_code_path();
+//	return {};
+//}
 }
 
 namespace x86 {

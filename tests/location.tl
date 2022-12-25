@@ -1,3 +1,4 @@
+// PROGRAM CODE 42
 import "tlang/std.tl"
 
 main :: () Int {

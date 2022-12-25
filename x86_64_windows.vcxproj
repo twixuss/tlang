@@ -134,10 +134,11 @@
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
     <LinkIncremental>true</LinkIncremental>
-    <OutDir>$(SolutionDir)bin\targets\</OutDir>
+    <OutDir>$(SolutionDir)bin\targets\$(ProjectName)\</OutDir>
     <IntDir>$(SolutionDir)temp\$(ProjectName)-$(Platform)-$(Configuration)\</IntDir>
     <IncludePath>$(SolutionDir)dep/tl/include;$(SolutionDir)src;$(SolutionDir)dep/fadec;$(SolutionDir)dep/fadec/build;$(IncludePath)</IncludePath>
     <LibraryPath>$(SolutionDir)dep/fadec/build/libfadec.a.p;$(LibraryPath)</LibraryPath>
+    <TargetName>target</TargetName>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
     <LinkIncremental>false</LinkIncremental>

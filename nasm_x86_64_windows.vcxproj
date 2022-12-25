@@ -113,39 +113,45 @@
   <PropertyGroup Label="UserMacros" />
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
     <LinkIncremental>true</LinkIncremental>
-    <OutDir>$(SolutionDir)bin\targets\</OutDir>
+    <OutDir>$(SolutionDir)bin\targets\$(ProjectName)\</OutDir>
     <IntDir>$(SolutionDir)temp\$(ProjectName)-$(Platform)-$(Configuration)\</IntDir>
     <IncludePath>$(SolutionDir)dep/tl/include;$(SolutionDir)src;$(IncludePath)</IncludePath>
+    <TargetName>target</TargetName>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
     <LinkIncremental>false</LinkIncremental>
-    <OutDir>$(SolutionDir)bin\targets\</OutDir>
+    <OutDir>$(SolutionDir)bin\targets\$(ProjectName)\</OutDir>
     <IntDir>$(SolutionDir)temp\$(ProjectName)-$(Platform)-$(Configuration)\</IntDir>
     <IncludePath>$(SolutionDir)dep/tl/include;$(SolutionDir)src;$(IncludePath)</IncludePath>
+    <TargetName>target</TargetName>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='UltraSpeed|Win32'">
     <LinkIncremental>false</LinkIncremental>
-    <OutDir>$(SolutionDir)bin\targets\</OutDir>
+    <OutDir>$(SolutionDir)bin\targets\$(ProjectName)\</OutDir>
     <IntDir>$(SolutionDir)temp\$(ProjectName)-$(Platform)-$(Configuration)\</IntDir>
     <IncludePath>$(SolutionDir)dep/tl/include;$(SolutionDir)src;$(IncludePath)</IncludePath>
+    <TargetName>target</TargetName>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
     <LinkIncremental>true</LinkIncremental>
-    <OutDir>$(SolutionDir)bin\targets\</OutDir>
+    <OutDir>$(SolutionDir)bin\targets\$(ProjectName)\</OutDir>
     <IntDir>$(SolutionDir)temp\$(ProjectName)-$(Platform)-$(Configuration)\</IntDir>
     <IncludePath>$(SolutionDir)dep/tl/include;$(SolutionDir)src;$(IncludePath)</IncludePath>
+    <TargetName>target</TargetName>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
     <LinkIncremental>false</LinkIncremental>
-    <OutDir>$(SolutionDir)bin\targets\</OutDir>
+    <OutDir>$(SolutionDir)bin\targets\$(ProjectName)\</OutDir>
     <IntDir>$(SolutionDir)temp\$(ProjectName)-$(Platform)-$(Configuration)\</IntDir>
     <IncludePath>$(SolutionDir)dep/tl/include;$(SolutionDir)src;$(IncludePath)</IncludePath>
+    <TargetName>target</TargetName>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='UltraSpeed|x64'">
     <LinkIncremental>false</LinkIncremental>
-    <OutDir>$(SolutionDir)bin\targets\</OutDir>
+    <OutDir>$(SolutionDir)bin\targets\$(ProjectName)\</OutDir>
     <IntDir>$(SolutionDir)temp\$(ProjectName)-$(Platform)-$(Configuration)\</IntDir>
     <IncludePath>$(SolutionDir)dep/tl/include;$(SolutionDir)src;$(IncludePath)</IncludePath>
+    <TargetName>target</TargetName>
   </PropertyGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
     <ClCompile>

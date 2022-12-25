@@ -1,5 +1,5 @@
 #include "bytecode.h"
-#include "ast.h"
+#include "compiler.h"
 #include "interpret.h"
 // #include "x86_64.h"
 
@@ -117,13 +117,17 @@ struct FrameBuilder {
 		return r.map<Register>();
 	}
 	void free_register(Register reg) {
+		// FIXME: Zero size register hack.
+		if (reg == Register::constants)
+			return;
+
 		assert(!available_registers.get((umm)reg));
 		available_registers.set((umm)reg);
 	}
 
 	Register allocate_temporary_register() {
 		auto result = temporary_register_set.pop().value_or([] {
-			compiler.immediate_error("INTERNAL ERROR: attempt to use too many temporary registers.");
+			compiler->immediate_error("INTERNAL ERROR: attempt to use too many temporary registers.");
 			exit(1);
 			return 0;
 		});
@@ -145,7 +149,16 @@ struct FrameBuilder {
 #define tmpreg(t) auto t = allocate_temporary_register(); defer { free_temporary_register(t); }
 
 	RegisterOrAddress allocate_register_or_temporary(u64 size) {
-		if (size <= compiler.stack_word_size) {
+		if (size == 0) {
+			// FIXME: Zero size register hack.
+			//        Since the size is zero, we should not write to the destination, so we can return anything here.
+			//        But the problem is that this will be passed to free_register, so we also have to deal with that
+			//        there.
+
+			return Register::constants;
+		}
+
+		if (size <= compiler->stack_word_size) {
 			auto reg = allocate_register();
 			if (reg.has_value())
 				return reg.value_unchecked();
@@ -156,16 +169,18 @@ struct FrameBuilder {
 
 	Instruction *add_instruction(Instruction);
 
-	void append(AstExpression     *, RegisterOrAddress);
-	void append(AstCall           *, RegisterOrAddress);
-	void append(AstIdentifier     *, RegisterOrAddress);
-	void append(AstLiteral        *, RegisterOrAddress);
-	void append(AstBinaryOperator *, RegisterOrAddress);
-	void append(AstUnaryOperator  *, RegisterOrAddress);
-	void append(AstSubscript      *, RegisterOrAddress);
-	void append(AstLambda         *, RegisterOrAddress);
-	void append(AstIfx            *, RegisterOrAddress);
-	void append(AstArrayInitializer   *, RegisterOrAddress);
+	void append(AstExpression       *, RegisterOrAddress);
+	void append(AstBlock            *, RegisterOrAddress);
+	void append(AstCall             *, RegisterOrAddress);
+	void append(AstIdentifier       *, RegisterOrAddress);
+	void append(AstLiteral          *, RegisterOrAddress);
+	void append(AstBinaryOperator   *, RegisterOrAddress);
+	void append(AstUnaryOperator    *, RegisterOrAddress);
+	void append(AstSubscript        *, RegisterOrAddress);
+	void append(AstLambda           *, RegisterOrAddress);
+	void append(AstIf               *, RegisterOrAddress);
+	void append(AstArrayInitializer *, RegisterOrAddress);
+	void append(AstMatch            *, RegisterOrAddress);
 
 	[[nodiscard]] RegisterOrAddress append(AstExpression *expression) {
 		auto destination = allocate_register_or_temporary(get_size(expression->type));
@@ -176,21 +191,18 @@ struct FrameBuilder {
 	void append(AstStatement           *);
 	void append(AstDefinition          *);
 	void append(AstReturn              *);
-	void append(AstIf                  *);
 	void append(AstExpressionStatement *);
 	void append(AstWhile               *);
-	void append(AstBlock               *);
 	void append(AstAssert              *);
 	void append(AstLoopControl         *);
-	void append(AstMatch               *);
 
-	void append(Scope *scope);
+	void append(Scope *scope, Optional<RegisterOrAddress> destination = {});
 
 	void load_address_of(AstExpression *expression, RegisterOrAddress destination);
 	void load_address_of(AstDefinition *definition, RegisterOrAddress destination);
 
-	RegisterOrAddress load_address_of(AstExpression *expression) { auto destination = allocate_register_or_temporary(compiler.stack_word_size); load_address_of(expression, destination); return destination; }
-	RegisterOrAddress load_address_of(AstDefinition *definition) { auto destination = allocate_register_or_temporary(compiler.stack_word_size); load_address_of(definition, destination); return destination; }
+	RegisterOrAddress load_address_of(AstExpression *expression) { auto destination = allocate_register_or_temporary(compiler->stack_word_size); load_address_of(expression, destination); return destination; }
+	RegisterOrAddress load_address_of(AstDefinition *definition) { auto destination = allocate_register_or_temporary(compiler->stack_word_size); load_address_of(definition, destination); return destination; }
 
 	DefinitionAddress get_address_of(AstDefinition *definition);
 
@@ -340,6 +352,8 @@ struct FrameBuilder {
 	void append_cast(RegisterOrAddress src, AstExpression *src_type, RegisterOrAddress dst, AstExpression *dst_type);
 	void append_cast(AstExpression *src, RegisterOrAddress dst, AstExpression *dst_type);
 
+	void check_null(Register pointer_reg, String location);
+
 #if BYTECODE_DEBUG
 
 	void set_comment(Instruction *i, Span<utf8> string) {
@@ -437,11 +451,11 @@ void remove_last_instruction(BytecodeBuilder &builder) {
 		name = _reg_or_addr.reg; \
 	} else { \
 		name = allocate_temporary_register(); \
-		mov_rm(name, _reg_or_addr.address, compiler.stack_word_size); \
+		mov_rm(name, _reg_or_addr.address, compiler->stack_word_size); \
 	}
 
 #define APPEND_INTO_REGISTER(name, source) \
-	assert(get_size(source->type) <= compiler.stack_word_size); \
+	assert(get_size(source->type) <= compiler->stack_word_size); \
 	auto CONCAT(_, __LINE__) = append(source); \
 	defer { \
 		if (CONCAT(_, __LINE__).is_in_register) { free_register(CONCAT(_, __LINE__).reg); } \
@@ -456,8 +470,8 @@ void remove_last_instruction(BytecodeBuilder &builder) {
 	}
 
 #define APPEND2(name1, append1, source1, name2, append2, source2) \
-	if constexpr (#append1##s == "append"s) assert(get_size(source1->type) <= compiler.stack_word_size); \
-	if constexpr (#append2##s == "append"s) assert(get_size(source2->type) <= compiler.stack_word_size); \
+	if constexpr (#append1##s == "append"s) assert(get_size(source1->type) <= compiler->stack_word_size); \
+	if constexpr (#append2##s == "append"s) assert(get_size(source2->type) <= compiler->stack_word_size); \
 	auto CONCAT(_1, __LINE__) = append1(source1); \
 	auto CONCAT(_2, __LINE__) = append2(source2); \
 	defer { \
@@ -638,7 +652,7 @@ Instruction *FrameBuilder::add_instruction(Instruction next) {
 
 					REDECLARE_REF(back, back.push_m);
 					remove_last_instruction(builder);
-					switch (compiler.register_size) {
+					switch (compiler->register_size) {
 						case 4: return II(mov4_rm, next.d, back.s);
 						case 8: return II(mov8_rm, next.d, back.s);
 					}
@@ -681,7 +695,7 @@ Instruction *FrameBuilder::add_instruction(Instruction next) {
 #endif
 
 			if (next.d == rs) {
-				assert((next.s % compiler.stack_word_size) == 0);
+				assert((next.s % compiler->stack_word_size) == 0);
 				stack_state.offset(next.s);
 			}
 
@@ -723,7 +737,7 @@ Instruction *FrameBuilder::add_instruction(Instruction next) {
 #endif
 
 			if (next.d == rs) {
-				assert((next.s % compiler.stack_word_size) == 0);
+				assert((next.s % compiler->stack_word_size) == 0);
 				stack_state.offset(-next.s);
 			}
 
@@ -895,7 +909,7 @@ Instruction *FrameBuilder::add_instruction(Instruction next) {
 		}
 	}
 #endif
-	// this does not use compiler.stack_word_size !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+	// this does not use compiler->stack_word_size !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 #if 0
 	using enum InstructionKind;
 	switch (next.kind) {
@@ -1231,20 +1245,20 @@ void FrameBuilder::load_address_of(AstDefinition *definition, RegisterOrAddress 
 						} else {
 							tmpreg(tmp);
 							I(lea, tmp, addr);
-							mov_mr(destination.address, tmp, compiler.stack_word_size);
+							mov_mr(destination.address, tmp, compiler->stack_word_size);
 						}
 						break;
 					}
 					case LambdaDefinitionLocation::return_parameter:
 					case LambdaDefinitionLocation::parameter: {
 						auto addr = get_known_address_of(definition);
-						if (get_size(definition->type) <= compiler.stack_word_size) {
+						if (get_size(definition->type) <= compiler->stack_word_size) {
 							if (destination.is_in_register) {
 								I(lea, destination.reg, addr);
 							} else {
 								tmpreg(tmp);
 								I(lea, tmp, addr);
-								mov_mr(destination.address, tmp, compiler.stack_word_size);
+								mov_mr(destination.address, tmp, compiler->stack_word_size);
 							}
 						} else {
 							if (destination.is_in_register) {
@@ -1253,7 +1267,7 @@ void FrameBuilder::load_address_of(AstDefinition *definition, RegisterOrAddress 
 							} else {
 								tmpreg(tmp);
 								I(mov8_rm, tmp, addr);
-								mov_mr(destination.address, tmp, compiler.stack_word_size);
+								mov_mr(destination.address, tmp, compiler->stack_word_size);
 							}
 						}
 						break;
@@ -1271,7 +1285,7 @@ void FrameBuilder::load_address_of(AstDefinition *definition, RegisterOrAddress 
 		} else {
 			tmpreg(tmp);
 			I(lea, tmp, addr);
-			mov_mr(destination.address, tmp, compiler.stack_word_size);
+			mov_mr(destination.address, tmp, compiler->stack_word_size);
 		}
 	}
 }
@@ -1296,7 +1310,7 @@ void FrameBuilder::load_address_of(AstExpression *expression, RegisterOrAddress 
 				} else {
 					tmpreg(tmp);
 					instr = II(lea, tmp, Address(Register::instructions));
-					mov_mr(destination.address, tmp, compiler.stack_word_size);
+					mov_mr(destination.address, tmp, compiler->stack_word_size);
 				}
 
 				instructions_that_reference_lambdas.add({.instruction=instr, .lambda=lambda});
@@ -1307,7 +1321,7 @@ void FrameBuilder::load_address_of(AstExpression *expression, RegisterOrAddress 
 				} else {
 					tmpreg(tmp);
 					I(mov_re, tmp, (String)lambda->definition->name);
-					mov_mr(destination.address, tmp, compiler.stack_word_size);
+					mov_mr(destination.address, tmp, compiler->stack_word_size);
 				}
 			}
 			break;
@@ -1350,7 +1364,7 @@ void FrameBuilder::load_address_of(AstExpression *expression, RegisterOrAddress 
 				if (destination.is_in_register) {
 					I(add_rc, destination.reg, offset);
 				} else {
-					add_mc(destination.address, offset, compiler.stack_word_size);
+					add_mc(destination.address, offset, compiler->stack_word_size);
 				}
 			}
 
@@ -1365,12 +1379,12 @@ void FrameBuilder::load_address_of(AstExpression *expression, RegisterOrAddress 
 			if (auto subtype = get_span_subtype(subscript->expression->type)) {
 				load_address_of(subscript->expression, destination);
 				if (destination.is_in_register) {
-					mov_rm(destination.reg, Address(destination.reg), compiler.stack_word_size);
+					mov_rm(destination.reg, Address(destination.reg), compiler->stack_word_size);
 				} else {
 					tmpreg(tmp);
-					mov_rm(tmp, destination.address, compiler.stack_word_size);
-					mov_rm(tmp, Address(tmp), compiler.stack_word_size);
-					mov_mr(destination.address, tmp, compiler.stack_word_size);
+					mov_rm(tmp, destination.address, compiler->stack_word_size);
+					mov_rm(tmp, Address(tmp), compiler->stack_word_size);
+					mov_mr(destination.address, tmp, compiler->stack_word_size);
 				}
 
 				APPEND_INTO_REGISTER(index, subscript->index_expression);
@@ -1380,7 +1394,7 @@ void FrameBuilder::load_address_of(AstExpression *expression, RegisterOrAddress 
 				if (destination.is_in_register) {
 					I(add_rr, destination.reg, index);
 				} else {
-					add_mr(destination.address, index, compiler.stack_word_size);
+					add_mr(destination.address, index, compiler->stack_word_size);
 				}
 			} else if (auto pointer_type = as_pointer(subscript->expression->type)) {
 				append(subscript->expression, destination);
@@ -1392,10 +1406,10 @@ void FrameBuilder::load_address_of(AstExpression *expression, RegisterOrAddress 
 				if (destination.is_in_register) {
 					I(add_rr, destination.reg, index);
 				} else {
-					add_mr(destination.address, index, compiler.stack_word_size);
+					add_mr(destination.address, index, compiler->stack_word_size);
 				}
-			} else if (types_match(subscript->expression->type, builtin_string)) {
-				assert(get_size(subscript->index_expression->type) <= compiler.stack_word_size);
+			} else if (types_match(subscript->expression->type, compiler->builtin_string)) {
+				assert(get_size(subscript->index_expression->type) <= compiler->stack_word_size);
 
 				APPEND2(
 					string, load_address_of, subscript->expression,
@@ -1404,10 +1418,10 @@ void FrameBuilder::load_address_of(AstExpression *expression, RegisterOrAddress 
 
 				tmpreg(count);
 
-				mov_rm(count, string + compiler.stack_word_size, compiler.stack_word_size);
-				mov_rm(string, Address(string), compiler.stack_word_size);
+				mov_rm(count, string + compiler->stack_word_size, compiler->stack_word_size);
+				mov_rm(string, Address(string), compiler->stack_word_size);
 
-				switch (compiler.stack_word_size) {
+				switch (compiler->stack_word_size) {
 					case 4: I(cmpflag4, index, count); break;
 					case 8: I(cmpflag8, index, count); break;
 					default: invalid_code_path();
@@ -1423,7 +1437,7 @@ void FrameBuilder::load_address_of(AstExpression *expression, RegisterOrAddress 
 				if (destination.is_in_register)
 					I(mov_rr, destination.reg, index);
 				else
-					mov_mr(destination.address, index, compiler.stack_word_size);
+					mov_mr(destination.address, index, compiler->stack_word_size);
 			} else {
 				assert(direct_as<AstSubscript>(subscript->expression->type));
 				load_address_of(subscript->expression, destination);
@@ -1435,7 +1449,7 @@ void FrameBuilder::load_address_of(AstExpression *expression, RegisterOrAddress 
 				if (destination.is_in_register) {
 					I(add_rr, destination.reg, index);
 				} else {
-					add_mr(destination.address, index, compiler.stack_word_size);
+					add_mr(destination.address, index, compiler->stack_word_size);
 				}
 			}
 
@@ -1521,20 +1535,20 @@ DefinitionAddress FrameBuilder::get_address_of(AstDefinition *definition) {
 					case LambdaDefinitionLocation::return_parameter:
 					case LambdaDefinitionLocation::parameter: {
 						auto addr = get_known_address_of(definition);
-						if (get_size(definition->type) <= compiler.stack_word_size) {
+						if (get_size(definition->type) <= compiler->stack_word_size) {
 							return {
 								.is_known = true,
 								.known_address = addr,
 							};
 						} else {
-							auto destination = allocate_register_or_temporary(compiler.stack_word_size);
+							auto destination = allocate_register_or_temporary(compiler->stack_word_size);
 							if (destination.is_in_register) {
 								I(lea, destination.reg, addr);
-								mov_rm(destination.reg, Address(destination.reg), compiler.stack_word_size);
+								mov_rm(destination.reg, Address(destination.reg), compiler->stack_word_size);
 							} else {
 								tmpreg(tmp);
-								mov_rm(tmp, addr, compiler.stack_word_size);
-								mov_mr(destination.address, tmp, compiler.stack_word_size);
+								mov_rm(tmp, addr, compiler->stack_word_size);
+								mov_mr(destination.address, tmp, compiler->stack_word_size);
 							}
 							return {
 								.is_known = false,
@@ -1568,7 +1582,7 @@ void FrameBuilder::append_memory_set(Address d, s64 s, s64 size) {
 		case 2: instructions.add(MI(mov2_mc, d, s)); break;
 		case 4: instructions.add(MI(mov4_mc, d, s)); break;
 		case 8:
-			if (compiler.stack_word_size == 8) {
+			if (compiler->stack_word_size == 8) {
 				instructions.add(MI(mov8_mc, d, s));
 				break;
 			}
@@ -1609,11 +1623,11 @@ void FrameBuilder::append_struct_initializer(AstStruct *Struct, SmallList<AstExp
 	}
 
 	if (destination.is_in_register) {
-		mov_rm(destination.reg, tmp, compiler.stack_word_size);
+		mov_rm(destination.reg, tmp, compiler->stack_word_size);
 	}
 }
 
-void FrameBuilder::append(Scope *scope) {
+void FrameBuilder::append(Scope *scope, Optional<RegisterOrAddress> destination) {
 	scoped_replace(current_scope, scope);
 
 	temporary_size = max(temporary_size, temporary_cursor);
@@ -1633,9 +1647,13 @@ void FrameBuilder::append(Scope *scope) {
 
 		// temporary_cursor = 0;
 
-		assert(available_registers == initial_available_registers);
-		append(statement);
-		assert(available_registers == initial_available_registers);
+		if (auto est = as<AstExpressionStatement>(statement); destination && !(destination.value().is_in_register && destination.value().reg == Register::constants) && statement == scope->statement_list.back() && est) {
+			append(est->expression, destination.value());
+		} else {
+			auto registers_before = scope->node->kind == Ast_Lambda ? initial_available_registers : available_registers;
+			append(statement);
+			assert(available_registers == registers_before);
+		}
 	}
 	scope->defers_start_index = count_of(instructions);
 	for (auto Defer : reverse_iterate(scope->bytecode_defers)) {
@@ -1661,12 +1679,9 @@ void FrameBuilder::append(AstStatement *statement) {
 	switch (statement->kind) {
 		case Ast_Definition:          return append((AstDefinition          *)statement);
 		case Ast_Return:              return append((AstReturn              *)statement);
-		case Ast_If:                  return append((AstIf                  *)statement);
 		case Ast_ExpressionStatement: return append((AstExpressionStatement *)statement);
 		case Ast_While:               return append((AstWhile               *)statement);
-		case Ast_Block:               return append((AstBlock               *)statement);
 		case Ast_LoopControl:         return append((AstLoopControl         *)statement);
-		case Ast_Match:               return append((AstMatch               *)statement);
 		case Ast_OperatorDefinition:
 			not_implemented();
 			//append(((AstOperatorDefinition*)statement)->lambda, false, r0);
@@ -1772,7 +1787,7 @@ void FrameBuilder::append(AstDefinition *definition) {
 			push_comment(format(u8"definition {}", definition->name));
 			assert(!definition->is_parameter);
 
-			auto size = ceil(definition_size, compiler.stack_word_size);
+			auto size = ceil(definition_size, compiler->stack_word_size);
 
 			// definition->bytecode_offset = parent_lambda->offset_accumulator;
 			// parent_lambda->offset_accumulator += size;
@@ -1781,7 +1796,7 @@ void FrameBuilder::append(AstDefinition *definition) {
 				append(definition->expression, rb - definition->offset);
 
 
-				//if (types_match(definition->expression->type, builtin_noinit.Struct)) {
+				//if (types_match(definition->expression->type, compiler->builtin_noinit.Struct)) {
 				//	I(sub_rc, rs, size);
 				//} else {
 				//	dont_care_about_definition_spacing = true;
@@ -1791,8 +1806,8 @@ void FrameBuilder::append(AstDefinition *definition) {
 				//	append_to_stack(definition->expression);
 				//	auto cursor_after = ls->stack_state.cursor;
 				//
-				//	auto size_with_spacing = (cursor_after - cursor_before) * compiler.stack_word_size;
-				//	auto size_diff = size_with_spacing - ceil(size, compiler.stack_word_size);
+				//	auto size_with_spacing = (cursor_after - cursor_before) * compiler->stack_word_size;
+				//	auto size_diff = size_with_spacing - ceil(size, compiler->stack_word_size);
 				//
 				//	// account for spacing
 				//	assert(size_diff == 0 || size_diff == 8);
@@ -1854,51 +1869,6 @@ void FrameBuilder::append(AstReturn *ret) {
 
 	lambda->return_jumps.add({return_jump, jump_index});
 }
-void FrameBuilder::append(AstIf *If) {
-#if 0
-	if (If->is_constant) {
-		// constant if's statements were brought outside already by the typechecker. No need to append it.
-		return;
-	}
-#else
-	if (If->is_constant) {
-		// NOTE: constant if's scope is not merged into it's parent.
-		auto scope = If->true_branch_was_taken ? If->true_scope : If->false_scope;
-		append(scope);
-		//if (ls) {
-		//	// if we are in a lambda, append statements with all checks and defers etc.
-		//	append(scope);
-		//} else {
-		//	for (auto statement : scope->statements) {
-		//		append(statement);
-		//	}
-		//}
-		return;
-	}
-#endif
-
-	decltype(Instruction::jz_cr) *jz;
-	{
-		APPEND_INTO_REGISTER(condition_register, If->condition);
-		jz = I(jz_cr, 0, condition_register);
-	}
-
-	auto true_branch_first_instruction_index = count_of(instructions);
-	append(If->true_scope);
-
-	auto jmp = I(jmp, .offset=0);
-	I(jmp_label);
-
-	auto false_branch_first_instruction_index = count_of(instructions);
-	append(If->false_scope);
-
-	auto false_end = count_of(instructions);
-
-	I(jmp_label);
-
-	jz->offset = false_branch_first_instruction_index - true_branch_first_instruction_index;
-	jmp->offset = false_end - false_branch_first_instruction_index + 2;
-}
 void FrameBuilder::append(AstWhile *While) {
 	auto count_before_condition = count_of(instructions);
 	I(jmp_label);
@@ -1937,9 +1907,6 @@ void FrameBuilder::append(AstWhile *While) {
 	}
 
 }
-void FrameBuilder::append(AstBlock *block) {
-	append(block->scope);
-}
 void FrameBuilder::append(AstExpressionStatement *es) {
 	// TODO: FIXME: this may allocate temporary space.
 	// Figure a way to not produce the result.
@@ -1956,7 +1923,7 @@ void FrameBuilder::append(AstAssert *Assert) {
 
 	I(jnz_cr, 2, condition);
 	push_comment(format(u8"Assertion failed: {}", Assert->condition->location));
-	I(debug_break);
+	I(debug_error, format(u8"Assertion failed: {}\n{}", Assert->condition->location, where(Assert->condition->location.data)));
 	I(jmp_label);
 }
 void FrameBuilder::append(AstLoopControl *LoopControl) {
@@ -1977,74 +1944,14 @@ void FrameBuilder::append(AstLoopControl *LoopControl) {
 	auto index = count_of(instructions);
 	loop_control_stack.back().add({index, instr, LoopControl->control});
 }
-void FrameBuilder::append(AstMatch *Match) {
-	auto matchable = allocate_temporary_space(get_size(Match->expression->type));
-	append(Match->expression, matchable);
-
-	struct Jump {
-		Instruction *instruction;
-		umm index;
-	};
-
-	List<Jump> jumps_to_cases;
-	List<Jump> jumps_out;
-	Jump jump_to_default;
-
-	bool has_default_case = false;
-
-	{
-		tmpreg(matchable_reg);
-		mov_rm(matchable_reg, matchable, compiler.stack_word_size);
-		for (auto &Case : Match->cases) {
-			if (Case.expression) {
-				tmpreg(case_reg);
-				tmpreg(cmpresult_reg);
-				I(mov_rc, case_reg, (s64)get_constant_integer(Case.expression).value());
-				switch (compiler.stack_word_size) {
-					case 4: I(cmpu4, cmpresult_reg, matchable_reg, case_reg, Comparison::e); break;
-					case 8: I(cmpu8, cmpresult_reg, matchable_reg, case_reg, Comparison::e); break;
-					default: invalid_code_path();
-				}
-				jumps_to_cases.add({II(jnz_cr, 0, cmpresult_reg), instructions.count});
-			} else {
-				has_default_case = true;
-			}
-		}
-	}
-
-	if (has_default_case) {
-		jump_to_default = {II(jmp), instructions.count};
-	} else {
-		jumps_out.add({II(jmp), instructions.count});
-	}
-
-	umm case_index = 0;
-	for (auto &Case : Match->cases) {
-		I(jmp_label);
-		if (Case.expression) {
-			jumps_to_cases[case_index].instruction->jnz_cr.offset = instructions.count - jumps_to_cases[case_index].index;
-		} else {
-			jump_to_default.instruction->jmp.offset = instructions.count - jump_to_default.index;
-		}
-
-		append(Case.scope);
-		jumps_out.add({II(jmp), instructions.count});
-		case_index++;
-	}
-	I(jmp_label);
-
-	for (auto &jump_out : jumps_out) {
-		jump_out.instruction->jmp.offset = instructions.count - jump_out.index;
-	}
-}
 
 void FrameBuilder::append_cast(RegisterOrAddress src, AstExpression *src_type, RegisterOrAddress dst, AstExpression *dst_type) {
 	auto get_internal_representation = [&](AstExpression *type) -> AstExpression * {
 		if (is_pointer_internally(type))
-			return builtin_u64.Struct;
+			return compiler->builtin_u64.Struct;
 		else if (auto Enum = direct_as<AstEnum>(type)) {
 			assert(!Enum->underlying_type, "not implemented");
-			return builtin_s64.Struct;
+			return compiler->builtin_s64.Struct;
 		} else
 			return direct(type);
 		return 0;
@@ -2057,15 +1964,27 @@ void FrameBuilder::append_cast(RegisterOrAddress src, AstExpression *src_type, R
 		auto array = as_array(from);
 		auto subtype = get_span_subtype(to);
 		if (array && subtype) {
-			assert(!src.is_in_register);
-			assert(!dst.is_in_register);
+			if (get_literal(array->index_expression)->as<LiteralKind::integer>().value() == 0) {
+				append_memory_set(dst.address, 0, compiler->stack_word_size*2);
+			} else {
+				if (src.is_in_register) {
+					// Will this cause problems? Idk
+					auto size = get_size(array);
+					auto tmp = allocate_temporary_space(size);
+					mov_rm(src.reg, tmp, size);
 
-			tmpreg(tmp);
+					src.is_in_register = false;
+					src.address = tmp;
+				}
+				assert(!dst.is_in_register);
 
-			I(lea, tmp, src.address);
+				tmpreg(tmp);
 
-			mov_mr(dst.address + 0,                        tmp,                                                        compiler.stack_word_size);
-			mov_mc(dst.address + compiler.stack_word_size, (s64)get_constant_integer(array->index_expression).value(), compiler.stack_word_size);
+				I(lea, tmp, src.address);
+
+				mov_mr(dst.address + 0,                         tmp,                                                        compiler->stack_word_size);
+				mov_mc(dst.address + compiler->stack_word_size, (s64)get_constant_integer(array->index_expression).value(), compiler->stack_word_size);
+			}
 			return;
 		}
 	}
@@ -2081,7 +2000,7 @@ void FrameBuilder::append_cast(RegisterOrAddress src, AstExpression *src_type, R
 
 		if (::is_integer(dst_type)) {
 			invalid_code_path();
-			// auto count_addr = from_value.address + compiler.stack_word_size;
+			// auto count_addr = from_value.address + compiler->stack_word_size;
 			// if (dst.is_in_register) {
 			// 	I(mov8_rm, dst.reg, count_addr);
 			// } else {
@@ -2108,8 +2027,8 @@ void FrameBuilder::append_cast(RegisterOrAddress src, AstExpression *src_type, R
 	// it's C++ lol, why not?
 #define BEGIN if (false) {}
 #define END else { invalid_code_path(); }
-#define FROM(x) else if (from == (builtin_##x.Struct))
-#define TO(x) else if (to == (builtin_##x.Struct))
+#define FROM(x) else if (from == (compiler->builtin_##x.Struct))
+#define TO(x) else if (to == (compiler->builtin_##x.Struct))
 
 
 	// Integer to integer conversions:
@@ -2255,7 +2174,7 @@ void FrameBuilder::append_cast(RegisterOrAddress src, AstExpression *src_type, R
 	}
 
 	// Integer to boolean
-	if (::is_integer(from) && types_match(to, builtin_bool)) {
+	if (::is_integer(from) && types_match(to, compiler->builtin_bool)) {
 		tmpreg(x);
 		copy(x, src, get_size(from), false);
 		//switch (get_size(from)) {
@@ -2269,7 +2188,7 @@ void FrameBuilder::append_cast(RegisterOrAddress src, AstExpression *src_type, R
 	}
 
 	// Boolean to integer
-	if (types_match(from, builtin_bool) && ::is_integer(to)) {
+	if (types_match(from, compiler->builtin_bool) && ::is_integer(to)) {
 		tmpreg(x);
 		copy(x, src, 1, false);
 		I(and_rc, x, 1);
@@ -2278,7 +2197,7 @@ void FrameBuilder::append_cast(RegisterOrAddress src, AstExpression *src_type, R
 	}
 
 	if (auto option = as_option(from)) {
-		if (to == builtin_bool.Struct) {
+		if (to == compiler->builtin_bool.Struct) {
 
 			// Option to boolean
 
@@ -2338,6 +2257,8 @@ void FrameBuilder::append_cast(RegisterOrAddress src, AstExpression *src_type, R
 #undef TO
 }
 void FrameBuilder::append_cast(AstExpression *src, RegisterOrAddress dst, AstExpression *dst_type) {
+	assert(!types_match(src->type, dst_type), "Don't generate redundant casts!");
+
 	if (is_addressable(src)) {
 		LOAD_ADDRESS_INTO_REGISTER(addr, src);
 
@@ -2354,6 +2275,16 @@ void FrameBuilder::append_cast(AstExpression *src, RegisterOrAddress dst, AstExp
 	}
 }
 
+void FrameBuilder::check_null(Register pointer_reg, String location) {
+	tmpreg(cond);
+	tmpreg(lowerbound);
+
+	I(mov_rc, lowerbound, 4096);
+	I(cmpu8, cond, pointer_reg, lowerbound, Comparison::ge);
+	I(jnz_cr, 2, cond);
+	I(debug_error, format(u8"{}:\n{} was null"s, where(location.data), location));
+	I(jmp_label);
+}
 
 void FrameBuilder::append(AstExpression *expression, RegisterOrAddress destination) {
 	scoped_replace(current_node, expression);
@@ -2365,9 +2296,119 @@ void FrameBuilder::append(AstExpression *expression, RegisterOrAddress destinati
 		case Ast_UnaryOperator:    return append((AstUnaryOperator    *)expression, destination);
 		case Ast_Subscript:        return append((AstSubscript        *)expression, destination);
 		case Ast_Lambda:           return append((AstLambda           *)expression, destination);
-		case Ast_Ifx:              return append((AstIfx              *)expression, destination);
+		case Ast_If:               return append((AstIf               *)expression, destination);
 		case Ast_ArrayInitializer: return append((AstArrayInitializer *)expression, destination);
+		case Ast_Block:            return append((AstBlock            *)expression, destination);
+		case Ast_Match:            return append((AstMatch            *)expression, destination);
 		default: invalid_code_path();
+	}
+}
+void FrameBuilder::append(AstBlock *block, RegisterOrAddress destination) {
+	append(block->scope, destination);
+}
+void FrameBuilder::append(AstIf *If, RegisterOrAddress destination) {
+#if 0
+	if (If->is_constant) {
+		// constant if's statements were brought outside already by the typechecker. No need to append it.
+		return;
+	}
+#else
+	if (If->is_constant) {
+		// NOTE: constant if's scope is not merged into it's parent.
+		auto scope = If->true_branch_was_taken ? If->true_block->scope : If->false_block->scope;
+		append(scope);
+		//if (ls) {
+		//	// if we are in a lambda, append statements with all checks and defers etc.
+		//	append(scope);
+		//} else {
+		//	for (auto statement : scope->statements) {
+		//		append(statement);
+		//	}
+		//}
+		return;
+	}
+#endif
+
+	decltype(Instruction::jz_cr) *jz;
+	{
+		APPEND_INTO_REGISTER(condition_register, If->condition);
+		jz = I(jz_cr, 0, condition_register);
+	}
+
+	auto true_branch_first_instruction_index = count_of(instructions);
+	append(If->true_block, destination);
+
+	auto jmp = I(jmp, .offset=0);
+	I(jmp_label);
+
+	auto false_branch_first_instruction_index = count_of(instructions);
+	append(If->false_block, destination);
+
+	auto false_end = count_of(instructions);
+
+	I(jmp_label);
+
+	jz->offset = false_branch_first_instruction_index - true_branch_first_instruction_index;
+	jmp->offset = false_end - false_branch_first_instruction_index + 2;
+}
+void FrameBuilder::append(AstMatch *Match, RegisterOrAddress destination) {
+	auto matchable = allocate_temporary_space(get_size(Match->expression->type));
+	append(Match->expression, matchable);
+
+	struct Jump {
+		Instruction *instruction;
+		umm index;
+	};
+
+	List<Jump> jumps_to_cases;
+	List<Jump> jumps_out;
+	Jump jump_to_default = {};
+
+	bool has_default_case = false;
+
+	{
+		tmpreg(matchable_reg);
+		mov_rm(matchable_reg, matchable, compiler->stack_word_size);
+		for (auto &Case : Match->cases) {
+			if (Case.expression) {
+				tmpreg(case_reg);
+				tmpreg(cmpresult_reg);
+				I(mov_rc, case_reg, (s64)get_constant_integer(Case.expression).value());
+				switch (compiler->stack_word_size) {
+					case 4: I(cmpu4, cmpresult_reg, matchable_reg, case_reg, Comparison::e); break;
+					case 8: I(cmpu8, cmpresult_reg, matchable_reg, case_reg, Comparison::e); break;
+					default: invalid_code_path();
+				}
+				jumps_to_cases.add({II(jnz_cr, 0, cmpresult_reg), instructions.count});
+			} else {
+				has_default_case = true;
+			}
+		}
+	}
+
+	if (has_default_case) {
+		jump_to_default = {II(jmp), instructions.count};
+	} else {
+		jumps_out.add({II(jmp), instructions.count});
+	}
+
+	umm case_index = 0;
+	for (auto &Case : Match->cases) {
+		I(jmp_label);
+		if (Case.expression) {
+			jumps_to_cases[case_index].instruction->jnz_cr.offset = instructions.count - jumps_to_cases[case_index].index;
+		} else {
+			jump_to_default.instruction->jmp.offset = instructions.count - jump_to_default.index;
+		}
+
+		append(Case.block, destination);
+		jumps_out.add({II(jmp), instructions.count});
+		case_index++;
+	}
+	I(jmp_label);
+
+	for (auto &jump_out : jumps_out) {
+		jump_out.instruction->jmp.offset = instructions.count - jump_out.index;
 	}
 }
 void FrameBuilder::append(AstBinaryOperator *bin, RegisterOrAddress destination) {
@@ -2406,6 +2447,8 @@ void FrameBuilder::append(AstBinaryOperator *bin, RegisterOrAddress destination)
 						if (is_pointer) {
 							APPEND_INTO_REGISTER(_struct_address, bin->left);
 							member_address = _struct_address;
+
+							check_null(member_address, left->location);
 						} else {
 							if (is_addressable(bin->left)) {
 								LOAD_ADDRESS_INTO_REGISTER(_struct_address, bin->left);
@@ -2451,7 +2494,7 @@ void FrameBuilder::append(AstBinaryOperator *bin, RegisterOrAddress destination)
 
 			auto lt = direct(bin->left->type);
 
-			if (lt == builtin_f32.Struct) {
+			if (lt == compiler->builtin_f32.Struct) {
 				switch (bin->operation) {
 					case add:  I(add4_ff, l, r); break;
 					case sub:  I(sub4_ff, l, r); break;
@@ -2459,7 +2502,7 @@ void FrameBuilder::append(AstBinaryOperator *bin, RegisterOrAddress destination)
 					case div:  I(div4_ff, l, r); break;
 					default: invalid_code_path();
 				}
-			} else if (lt == builtin_f64.Struct) {
+			} else if (lt == compiler->builtin_f64.Struct) {
 				switch (bin->operation) {
 					case add:  I(add8_ff, l, r); break;
 					case sub:  I(sub8_ff, l, r); break;
@@ -2502,7 +2545,7 @@ void FrameBuilder::append(AstBinaryOperator *bin, RegisterOrAddress destination)
 		case ge:
 		case eq:
 		case ne: {
-			if (types_match(left->type, builtin_string)) {
+			if (types_match(left->type, compiler->builtin_string)) {
 				auto la = append(left).ensure_address();
 				auto ra = append(right).ensure_address();
 
@@ -2511,9 +2554,9 @@ void FrameBuilder::append(AstBinaryOperator *bin, RegisterOrAddress destination)
 				tmpreg(r2);
 
 				// load counts
-				mov_rm(r1, la + compiler.stack_word_size, compiler.stack_word_size);
-				mov_rm(r2, ra + compiler.stack_word_size, compiler.stack_word_size);
-				switch (compiler.stack_word_size) {
+				mov_rm(r1, la + compiler->stack_word_size, compiler->stack_word_size);
+				mov_rm(r2, ra + compiler->stack_word_size, compiler->stack_word_size);
+				switch (compiler->stack_word_size) {
 					case 4: I(cmpu4, r0, r1, r2, Comparison::e); break;
 					case 8: I(cmpu8, r0, r1, r2, Comparison::e); break;
 					default: invalid_code_path();
@@ -2528,8 +2571,8 @@ void FrameBuilder::append(AstBinaryOperator *bin, RegisterOrAddress destination)
 
 				I(jmp_label);
 				// load pointers
-				mov_rm(r0, la, compiler.stack_word_size);
-				mov_rm(r1, ra, compiler.stack_word_size);
+				mov_rm(r0, la, compiler->stack_word_size);
+				mov_rm(r1, ra, compiler->stack_word_size);
 				I(cmpstr, r2, Address(r0), Address(r1));
 				if (destination.is_in_register) {
 					I(mov_rr, destination.reg, r2);
@@ -2562,6 +2605,7 @@ void FrameBuilder::append(AstBinaryOperator *bin, RegisterOrAddress destination)
 
 			auto comparison = comparison_from_binary_operation(bin->operation);
 
+			// FIXME: deduplicate following branches
 			if (destination.is_in_register) {
 				if (::is_integer_internally(left->type)) {
 					if (::is_signed(left->type)) {
@@ -2586,6 +2630,20 @@ void FrameBuilder::append(AstBinaryOperator *bin, RegisterOrAddress destination)
 						case 4: I(cmpf4, .d=destination.reg, .a=rl, .b=rr, .c = comparison); break;
 						case 8: I(cmpf8, .d=destination.reg, .a=rl, .b=rr, .c = comparison); break;
 						default: invalid_code_path();
+					}
+				} else if (::types_match(left->type, compiler->builtin_bool)) {
+					switch (comparison) {
+						case Comparison::e:
+							I(xor_rr, rl, rr);
+							I(xor_rc, rl, 1);
+							I(mov_rr, destination.reg, rl);
+							break;
+						case Comparison::ne:
+							I(xor_rr, rl, rr);
+							I(mov_rr, destination.reg, rl);
+							break;
+						default:
+							not_implemented();
 					}
 				} else {
 					not_implemented();
@@ -2616,6 +2674,20 @@ void FrameBuilder::append(AstBinaryOperator *bin, RegisterOrAddress destination)
 						case 4: I(cmpf4, .d=r2, .a=rl, .b=rr, .c = comparison); break;
 						case 8: I(cmpf8, .d=r2, .a=rl, .b=rr, .c = comparison); break;
 						default: invalid_code_path();
+					}
+				} else if (::types_match(left->type, compiler->builtin_bool)) {
+					switch (comparison) {
+						case Comparison::e:
+							I(xor_rr, rl, rr);
+							I(xor_rc, rl, 1);
+							I(mov1_mr, destination.address, rl);
+							break;
+						case Comparison::ne:
+							I(xor_rr, rl, rr);
+							I(mov1_mr, destination.address, rl);
+							break;
+						default:
+							not_implemented();
 					}
 				} else {
 					not_implemented();
@@ -2652,7 +2724,7 @@ void FrameBuilder::append(AstBinaryOperator *bin, RegisterOrAddress destination)
 					dst = dst_addr.reg;
 				} else {
 					dst = allocate_temporary_register();
-					mov_rm(dst, dst_addr.address, compiler.stack_word_size);
+					mov_rm(dst, dst_addr.address, compiler->stack_word_size);
 				}
 
 				auto size = get_size(bin->left->type);
@@ -2693,7 +2765,7 @@ void FrameBuilder::append(AstBinaryOperator *bin, RegisterOrAddress destination)
 		case bxorass:
 		case bslass:
 		case bsrass: {
-			assert(get_size(bin->right->type) <= compiler.stack_word_size);
+			assert(get_size(bin->right->type) <= compiler->stack_word_size);
 
 			APPEND2(
 				dst, load_address_of, bin->left,
@@ -2845,7 +2917,7 @@ void FrameBuilder::append(AstIdentifier *identifier, RegisterOrAddress destinati
 				} else {
 					tmpreg(r0);
 					I(lea, r0, Register::instructions + definition->offset);
-					mov_mr(destination.address, r0, compiler.stack_word_size);
+					mov_mr(destination.address, r0, compiler->stack_word_size);
 				}
 			} else {
 				if (destination.is_in_register) {
@@ -2853,7 +2925,7 @@ void FrameBuilder::append(AstIdentifier *identifier, RegisterOrAddress destinati
 				} else {
 					tmpreg(r0);
 					I(mov_re, r0, definition->name);
-					mov_mr(destination.address, r0, compiler.stack_word_size);
+					mov_mr(destination.address, r0, compiler->stack_word_size);
 				}
 			}
 			return;
@@ -2875,7 +2947,7 @@ void FrameBuilder::append(AstIdentifier *identifier, RegisterOrAddress destinati
 			definition_address_register = computed_address.reg;
 		} else {
 			definition_address_register = allocate_temporary_register();
-			mov_rm(definition_address_register, computed_address.address, compiler.stack_word_size);
+			mov_rm(definition_address_register, computed_address.address, compiler->stack_word_size);
 		}
 		copy(destination, Address(definition_address_register), get_size(identifier->type), false);
 	}
@@ -2894,17 +2966,21 @@ void FrameBuilder::append(AstCall *call, RegisterOrAddress destination) {
 	argument_n value / address <- rsp
 	*/
 
-	auto word_size = compiler.stack_word_size;
+	auto word_size = compiler->stack_word_size;
 
 	check_destination(destination);
 
 	push_comment(format(u8"call {}", call->callable->location));
 
+	//if (call->callable->location == "foo")
+	//	debug_break();
+
 	if (call->lambda_type) {
 		auto lambda = call->lambda_type->lambda;
 
-		// each argument's size is not more than compiler.stack_word_size.
-		// bigger arguments are passed as pointers.
+		// NOTE:
+		// arguments with size <= compiler->stack_word_size are passed by value,
+		// otherwise they are passed by pointer
 		s64 parameters_bytes = tl::count(lambda->parameters, [](auto param){return !param->is_constant;}) * word_size;
 		s32 return_parameter_bytes = word_size;
 
@@ -2929,8 +3005,6 @@ void FrameBuilder::append(AstCall *call, RegisterOrAddress destination) {
 			for (umm i = 0; i < call->sorted_arguments.count; ++i) {
 				auto arg = call->sorted_arguments[i];
 				auto param = lambda->parameters[i];
-				if (param->is_constant)
-					continue;
 
 				auto arg_addr = args_tmp + (call->sorted_arguments.count-1-i)*8;
 
@@ -2967,7 +3041,7 @@ void FrameBuilder::append(AstCall *call, RegisterOrAddress destination) {
 		if (lambda->is_intrinsic) {
 			append_arguments();
 
-			assert(compiler.stack_word_size == 8);
+			assert(compiler->stack_word_size == 8);
 			auto name = lambda->definition->name;
 			if (name == "debug_break") {
 				I(debug_break);
@@ -2994,12 +3068,12 @@ void FrameBuilder::append(AstCall *call, RegisterOrAddress destination) {
 				I(sqrt8_f, r0);
 				copy(destination, r0, 8, false);
 			//} else if (name == "round") {
-			//	assert(types_match(call->sorted_arguments[0]->type, builtin_f64));
+			//	assert(types_match(call->sorted_arguments[0]->type, compiler->builtin_f64));
 			//	I(mov8_rm, r1, rs + 0);
 			//	I(mov8_rm, r0, rs + 8);
 			//	I(round8_f, r0, (RoundingMode)get_constant_integer(call->sorted_arguments[1]).value());
 			} else {
-				compiler.immediate_error(call->location, "Unknown intrinsic");
+				compiler->immediate_error(call->location, "Unknown intrinsic");
 				exit(1);
 			}
 			return;
@@ -3060,7 +3134,7 @@ void FrameBuilder::append(AstCall *call, RegisterOrAddress destination) {
 
 				::Address fnptr;
 				if (!lambda_is_constant) {
-					fnptr = allocate_temporary_space(compiler.stack_word_size);
+					fnptr = allocate_temporary_space(compiler->stack_word_size);
 					append(call->callable, fnptr);
 				}
 
@@ -3132,8 +3206,8 @@ void FrameBuilder::append(AstLiteral *literal, RegisterOrAddress destination) {
 	else
 		push_comment(format(u8"literal {}", literal->location));
 
-	assert(!types_match(literal->type, builtin_unsized_integer.Struct));
-	assert(!types_match(literal->type, builtin_unsized_float.Struct));
+	assert(!types_match(literal->type, compiler->builtin_unsized_integer.Struct));
+	assert(!types_match(literal->type, compiler->builtin_unsized_float.Struct));
 	auto dtype = direct(literal->type);
 
 	using enum LiteralKind;
@@ -3144,8 +3218,8 @@ void FrameBuilder::append(AstLiteral *literal, RegisterOrAddress destination) {
 			assert(literal->string.offset != -1);
 			tmpreg(r0);
 			I(lea, r0, Register::constants + literal->string.offset);
-			mov_mr(destination.address, r0, compiler.stack_word_size);
-			mov_mc(destination.address+8, (s64)literal->string.count, compiler.stack_word_size);
+			mov_mr(destination.address, r0, compiler->stack_word_size);
+			mov_mc(destination.address+8, (s64)literal->string.count, compiler->stack_word_size);
 			break;
 		}
 		case character:
@@ -3175,40 +3249,40 @@ void FrameBuilder::append(AstLiteral *literal, RegisterOrAddress destination) {
 			break;
 		case integer: {
 			if (destination.is_in_register) {
-				if (dtype == builtin_u8 .Struct|| dtype == builtin_s8.Struct)
+				if (dtype == compiler->builtin_u8 .Struct|| dtype == compiler->builtin_s8.Struct)
 					I(mov_rc, destination.reg, (s64)literal->integer);
-				else if (dtype == builtin_u16 .Struct|| dtype == builtin_s16.Struct)
+				else if (dtype == compiler->builtin_u16 .Struct|| dtype == compiler->builtin_s16.Struct)
 					I(mov_rc, destination.reg, (s64)literal->integer);
-				else if (dtype == builtin_u32 .Struct|| dtype == builtin_s32.Struct)
+				else if (dtype == compiler->builtin_u32 .Struct|| dtype == compiler->builtin_s32.Struct)
 					I(mov_rc, destination.reg, (s64)literal->integer);
-				else if (dtype == builtin_u64 .Struct|| dtype == builtin_s64 .Struct|| dtype == builtin_void.pointer)
+				else if (dtype == compiler->builtin_u64 .Struct|| dtype == compiler->builtin_s64 .Struct|| dtype == compiler->builtin_void.pointer)
 					I(mov_rc, destination.reg, (s64)literal->integer);
-				else if (dtype == builtin_f32.Struct) {
+				else if (dtype == compiler->builtin_f32.Struct) {
 					auto f = (f32)(s64)literal->integer;
 					I(mov_rc, destination.reg, *(s32 *)&f);
-				} else if (dtype == builtin_f64.Struct) {
+				} else if (dtype == compiler->builtin_f64.Struct) {
 					auto f = (f64)(s64)literal->integer;
 					I(mov_rc, destination.reg, *(s64 *)&f);
 				} else if (::is_pointer(literal->type) || direct_as<AstEnum>(literal->type))
 					I(mov_rc, destination.reg, (s64)literal->integer);
 				else invalid_code_path();
 			} else {
-				if (dtype == builtin_u8 .Struct|| dtype == builtin_s8.Struct)
+				if (dtype == compiler->builtin_u8 .Struct|| dtype == compiler->builtin_s8.Struct)
 					I(mov1_mc, destination.address, (s64)literal->integer);
-				else if (dtype == builtin_u16 .Struct|| dtype == builtin_s16.Struct)
+				else if (dtype == compiler->builtin_u16 .Struct|| dtype == compiler->builtin_s16.Struct)
 					I(mov2_mc, destination.address, (s64)literal->integer);
-				else if (dtype == builtin_u32 .Struct|| dtype == builtin_s32.Struct)
+				else if (dtype == compiler->builtin_u32 .Struct|| dtype == compiler->builtin_s32.Struct)
 					I(mov4_mc, destination.address, (s64)literal->integer);
-				else if (dtype == builtin_u64 .Struct|| dtype == builtin_s64 .Struct|| dtype == builtin_void.pointer)
+				else if (dtype == compiler->builtin_u64 .Struct|| dtype == compiler->builtin_s64 .Struct|| dtype == compiler->builtin_void.pointer)
 					I(mov8_mc, destination.address, (s64)literal->integer);
-				else if (dtype == builtin_f32.Struct) {
+				else if (dtype == compiler->builtin_f32.Struct) {
 					auto f = (f32)(s64)literal->integer;
 					I(mov4_mc, destination.address, *(s32 *)&f);
-				} else if (dtype == builtin_f64.Struct) {
+				} else if (dtype == compiler->builtin_f64.Struct) {
 					auto f = (f64)(s64)literal->integer;
 					I(mov8_mc, destination.address, *(s64 *)&f);
 				} else if (::is_pointer(literal->type) || direct_as<AstEnum>(literal->type))
-					mov_mc(destination.address, (s64)literal->integer, compiler.stack_word_size);
+					mov_mc(destination.address, (s64)literal->integer, compiler->stack_word_size);
 				else invalid_code_path();
 			}
 			break;
@@ -3275,12 +3349,13 @@ void FrameBuilder::append(AstUnaryOperator *unop, RegisterOrAddress destination)
 			defer { if (pointer.is_in_register) free_register(pointer.reg); };
 
 			tmpreg(r0);
-			tmpreg(r1);
-
 			auto src = pointer.is_in_register ? pointer.reg : r0;
 			if (!pointer.is_in_register)
 				I(mov8_rm, src, pointer.address);
 
+			check_null(src, unop->expression->location);
+
+			tmpreg(r1);
 			auto dst = destination.is_in_register ? destination.reg : r1;
 			if (!destination.is_in_register)
 				I(mov8_rm, dst, destination.address);
@@ -3385,27 +3460,50 @@ void FrameBuilder::append(AstUnaryOperator *unop, RegisterOrAddress destination)
 void FrameBuilder::append(AstSubscript *subscript, RegisterOrAddress destination) {
 	check_destination(destination);
 
-	if (is_addressable(subscript->expression)) {
-		LOAD_ADDRESS_INTO_REGISTER(addr, subscript);
+	auto subscriptable_type = subscript->expression->type;
 
-		auto size = get_size(subscript->type);
+	if (is_sized_array(subscriptable_type) ||
+		get_span_subtype(subscriptable_type) ||
+		types_match(subscriptable_type, compiler->builtin_string) ||
+		is_pointer(subscriptable_type)
+	) {
+		if (is_addressable(subscript->expression)) {
+			LOAD_ADDRESS_INTO_REGISTER(addr, subscript);
 
-		copy(destination, Address(addr), size, false);
+			auto size = get_size(subscript->type);
+
+			copy(destination, Address(addr), size, false);
+		} else {
+			auto tmp = allocate_temporary_space(get_size(subscriptable_type));
+			append(subscript->expression, tmp);
+
+			APPEND_INTO_REGISTER(idx, subscript->index_expression);
+
+			auto elem_size = get_size(subscript->type);
+
+			I(mul_rc, idx, elem_size);
+
+			tmpreg(x);
+			I(lea, x, tmp);
+			I(add_rr, idx, x);
+
+			copy(destination, Address(idx), elem_size, false);
+		}
+	} else if (::is_integer(subscriptable_type)) {
+		APPEND_INTO_REGISTER(value, subscript->expression);
+
+		auto big_index = get_constant_integer(subscript->index_expression);
+		assert(big_index.has_value(), "FIXME: implement getting bit of int using non constant index");
+
+		auto index = (s64)big_index.value();
+		assert(index < get_size(subscriptable_type) * 8, "Index out of bounds");
+
+		I(slr_rc, value, index);
+		I(and_rc, value, 1);
+
+		copy(destination, value, 1, false);
 	} else {
-		auto tmp = allocate_temporary_space(get_size(subscript->expression->type));
-		append(subscript->expression, tmp);
-
-		APPEND_INTO_REGISTER(idx, subscript->index_expression);
-
-		auto elem_size = get_size(subscript->type);
-
-		I(mul_rc, idx, elem_size);
-
-		tmpreg(x);
-		I(lea, x, tmp);
-		I(add_rr, idx, x);
-
-		copy(destination, Address(idx), elem_size, false);
+		invalid_code_path();
 	}
 
 	return;
@@ -3435,7 +3533,7 @@ void FrameBuilder::append(AstSubscript *subscript, RegisterOrAddress destination
 			// span indexing
 			append_to_stack(subscript->expression);
 			I(pop_r, base_register);
-			I(add_rc, rs, compiler.stack_word_size);
+			I(add_rc, rs, compiler->stack_word_size);
 		} else {
 			// array indexing
 			addr_opt = load_address_of(subscript->expression);
@@ -3497,31 +3595,6 @@ void FrameBuilder::append(AstSubscript *subscript, RegisterOrAddress destination
 void FrameBuilder::append(AstLambda *lambda, RegisterOrAddress destination) {
 	check_destination(destination);
 	load_address_of(lambda, destination);
-}
-void FrameBuilder::append(AstIfx *If, RegisterOrAddress destination) {
-	check_destination(destination);
-
-	push_comment(format(u8"ifx {}", If->location));
-
-	APPEND_INTO_REGISTER(condition_register, If->condition);
-
-	auto jz = I(jz_cr, 0, condition_register);
-
-	auto true_branch_first_instruction_index = count_of(instructions);
-	append(If->true_expression, destination);
-
-	auto jmp = I(jmp, .offset=0);
-	I(jmp_label);
-
-	auto false_branch_first_instruction_index = count_of(instructions);
-	append(If->false_expression, destination);
-
-	auto false_end = count_of(instructions);
-
-	I(jmp_label);
-
-	jz->offset = false_branch_first_instruction_index - true_branch_first_instruction_index;
-	jmp->offset = false_end - false_branch_first_instruction_index + 2;
 }
 void FrameBuilder::append(AstArrayInitializer *ArrayInitializer, RegisterOrAddress destination) {
 	check_destination(destination);
@@ -4668,6 +4741,8 @@ void BytecodeBuilder::propagate_known_values(InstructionList &instructions) {
 #endif
 
 void BytecodeBuilder::append(AstLambda *lambda) {
+	assert(!lambda->is_macro);
+
 	FrameBuilder frame;
 	frame.init();
 	defer { frame.free(); };
@@ -4702,7 +4777,7 @@ void BytecodeBuilder::append(AstLambda *lambda) {
 
 	scoped_replace(lambda, lambda);
 
-	auto return_value_size = ceil(get_size(lambda->return_parameter->type), compiler.stack_word_size);
+	auto return_value_size = ceil(get_size(lambda->return_parameter->type), compiler->stack_word_size);
 
 	//if (lambda->definition->name == u8"print_string"s)
 	//	debug_break();
@@ -4714,7 +4789,7 @@ void BytecodeBuilder::append(AstLambda *lambda) {
 		frame.push_comment(format(u8"lambda {} {}", where(lambda->location.data), lambda->location));
 	}
 	for (auto param : lambda->parameters) {
-		frame.push_comment(format("{} (__int64*)(rbp+{}),{}"str, param->name, compiler.stack_word_size + lambda->parameters_size - param->offset, ceil(get_size(param->type), 8ll)/8ll));
+		frame.push_comment(format("{} (__int64*)(rbp+{}),{}"str, param->name, compiler->stack_word_size + lambda->parameters_size - param->offset, ceil(get_size(param->type), 8ll)/8ll));
 	}
 
 
@@ -4734,9 +4809,9 @@ frame.add_instruction(MI(_kind, __VA_ARGS__))
 
 	frame.append(lambda->body_scope);
 
-	// if (compiler.optimize) {
+	// if (compiler->optimize) {
 	// 	// TODO: skip iterations if nothing was changed.
-	// 	for (umm i = 0; i < compiler.optimization_pass_count; ++i) {
+	// 	for (umm i = 0; i < compiler->optimization_pass_count; ++i) {
 	// 		optimize(instructions);
 	// 	}
 	// }
@@ -4770,9 +4845,9 @@ frame.add_instruction(MI(_kind, __VA_ARGS__))
 }
 
 Bytecode build_bytecode() {
-	timed_function(compiler.profiler);
+	timed_function(compiler->profiler);
 
-	assert(compiler.general_purpose_register_count != 0);
+	assert(compiler->general_purpose_register_count != 0);
 
 	Bytecode result;
 
@@ -4781,18 +4856,12 @@ Bytecode build_bytecode() {
 
 	auto &builder = *_builder;
 
-	for (auto lambda : compiler.lambdas_with_body) {
-		if (compiler.enable_dce && lambda->definition && !lambda->definition->is_referenced) {
+	for (auto lambda : compiler->lambdas_with_body) {
+		if (compiler->enable_dce && lambda->definition && !lambda->definition->is_referenced) {
 			// immediate_info(lambda->location, "K.O.");
 			continue;
 		}
 		builder.append(lambda);
-	}
-
-	for (auto lambda : compiler.lambdas_without_body) {
-		if (lambda->extern_library.data) {
-			compiler.extern_libraries.get_or_insert(lambda->extern_library).add(lambda->definition->name);
-		}
 	}
 
 	// for_each(global_scope.statements, [&](auto statement) {

@@ -504,7 +504,7 @@ WM_UNICHAR                      :: 0x0109
 WM_KEYLAST                      :: 0x0109
 UNICODE_NOCHAR                  :: 0xFFFF
 // #else
-WM_KEYLAST                      :: 0x0108
+//WM_KEYLAST                      :: 0x0108
 // #endif /* _WIN32_WINNT >= 0x0501 */
 
 // #if(WINVER >= 0x0400)
@@ -599,11 +599,11 @@ WM_MOUSEHWHEEL                  :: 0x020E
 // #if (_WIN32_WINNT >= 0x0600)
 WM_MOUSELAST                    :: 0x020E
 // #elif (_WIN32_WINNT >= 0x0500)
-WM_MOUSELAST                    :: 0x020D
+//WM_MOUSELAST                    :: 0x020D
 // #elif (_WIN32_WINNT >= 0x0400) || (_WIN32_WINDOWS > 0x0400)
-WM_MOUSELAST                    :: 0x020A
+//WM_MOUSELAST                    :: 0x020A
 // #else
-WM_MOUSELAST                    :: 0x0209
+//WM_MOUSELAST                    :: 0x0209
 // #endif /* (_WIN32_WINNT >= 0x0600) */
 
 

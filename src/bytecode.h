@@ -1,5 +1,5 @@
 #pragma once
-#include "ast.h"
+#include "compiler.h"
 
 #define BYTECODE_DEBUG TL_DEBUG
 
@@ -259,6 +259,7 @@ w(jmp_label           , ) \
 w(noop                , ) \
 w(prepare_stack       , m(s64, byte_count)) \
 w(debug_break         , ) \
+w(debug_error         , m(String, message)) \
 w(debug_line          , m(u32, line)) \
 w(debug_start_lambda  , m(AstLambda *, lambda)) \
 w(debug_print_int     , m(Register, r)) \
@@ -385,11 +386,11 @@ inline umm append(StringBuilder &builder, Comparison c) {
 	}
 }
 
-#define DECLARE_OUTPUT_BUILDER extern "C" __declspec(dllexport) bool tlang_build_output(Compiler &compiler, Bytecode &bytecode)
-using OutputBuilder = bool (*)(Compiler &compiler, Bytecode &bytecode);
+#define DECLARE_OUTPUT_BUILDER extern "C" __declspec(dllexport) bool tlang_build_output(Span<AstStatement *> global_statements, Bytecode const &bytecode)
+using OutputBuilder = bool (*)(Span<AstStatement *> global_statements, Bytecode const &bytecode);
 
-#define DECLARE_TARGET_INFORMATION_GETTER extern "C" __declspec(dllexport) void tlang_get_target_information(Compiler &compiler)
-using TargetInformationGetter = void (*)(Compiler &compiler);
+#define DECLARE_TARGET_INFORMATION_GETTER extern "C" __declspec(dllexport) void tlang_get_target_information(Compiler *compiler)
+using TargetInformationGetter = void (*)(Compiler *compiler);
 
 template <class T = void>
 inline umm print_instruction(Instruction i) {
