@@ -22,8 +22,6 @@
 #pragma warning(disable: 4820) // struct was padded with n bytes
 
 
-#define TRACK_ALLOCATIONS 0
-
 #if BUILD_CONFIG==0 // Debug
 	#define TL_DEBUG 1
 #elif BUILD_CONFIG==1 // Release
@@ -33,7 +31,6 @@
 	#define assert(...)
 	#define bounds_check(...)
 #endif
-#define TL_PARENT_SOURCE_LOCATION TRACK_ALLOCATIONS
 #define TL_ENABLE_PROFILER 0
 
 #pragma warning(push, 0)
@@ -95,6 +92,7 @@ struct MyAllocator : AllocatorBase<MyAllocator> {
 };
 
 void init_my_allocator();
+void deinit_my_allocator();
 
 template <class T>
 using Ptr32 = typename Pool32<T>::template Ptr<T>;
@@ -265,8 +263,8 @@ enum class Register : u8 {
 	instructions      = 246,
 };
 
-constexpr umm allocatable_register_start = 3;
-constexpr umm allocatable_register_end   = 246;
+constexpr umm allocatable_register_first = 3;
+constexpr umm allocatable_register_last  = 245;
 constexpr umm register_count = 256;
 
 using RegisterSet = BitSet<register_count>;

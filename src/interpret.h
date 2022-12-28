@@ -265,14 +265,14 @@ inline void run_bytecode(Compiler *compiler, Span<Instruction> _instructions_, A
 
 	bool broken = true;
 
-	bool debugging = false;
+	bool debugging = true;
 
 	auto help = [] {
 		print(R"(c: continue
 n: next instruction
 s: show instructions
 b <instruction>: break on instruction
-r <index> <type>: show register value
+r<index>: show register value
 m <address> <type>: show memory value
 mr <index> <type>: show memory value by register
 )");
@@ -281,7 +281,7 @@ mr <index> <type>: show memory value by register
 	if (debugging)
 		help();
 
-	auto poke = [&](std::string const &cmd, u64 address) {
+	auto peek = [&](std::string const &cmd, u64 address) {
 		__try {
 			if (false) {}
 			else if (cmd == "u8" ) { print("{}\n", *(u8  *)address); }
@@ -313,8 +313,9 @@ mr <index> <type>: show memory value by register
 	bool halt = false;
 
 	auto executable_instruction_address = [&](s64 offset) -> void * {
+		assert(offset % sizeof(Instruction) == 0);
 		auto index = offset / sizeof(Instruction);
-		return 0;
+		return _instructions.data + index;
 	};
 
 	while (1) {
@@ -328,12 +329,44 @@ mr <index> <type>: show memory value by register
 				show();
 			read_command:
 				std::string cmd;
-				std::cin >> cmd;
+				print(">>> ");
+				std::getline(std::cin, cmd);
+
+				if (cmd.starts_with("r")) {
+					try {
+						auto indstr = cmd.substr(1, cmd.find(' ')-1);
+						u32 index;
+
+						     if (indstr == "s") { index = (u32)Register::rs; }
+						else if (indstr == "b") { index = (u32)Register::rb; }
+						else                    { index = std::stoi(indstr); }
+
+						std::string type;
+						try {
+							type = cmd.substr(2 + indstr.size());
+						} catch (...) {
+						}
+
+						if (false) {}
+						else if (type == "f32") { print("{}\n", RF4(index)); }
+						else if (type == "f64") { print("{}\n", RF8(index)); }
+						else if (type == "s8" ) { print("{}\n", RS1(index)); }
+						else if (type == "s16") { print("{}\n", RS2(index)); }
+						else if (type == "s32") { print("{}\n", RS4(index)); }
+						else if (type == "s64") { print("{}\n", RS8(index)); }
+						else if (type == "u8" ) { print("{}\n", RU1(index)); }
+						else if (type == "u16") { print("{}\n", RU2(index)); }
+						else if (type == "u32") { print("{}\n", RU4(index)); }
+						else                    { print("{}\n", RU8(index)); }
+					} catch (...) {
+					}
+					goto read_command;
+				}
 
 				if (cmd == "n") {
 				} else if (cmd == "c") {
 					broken = false;
-				} else if (cmd == "h") {
+				} else if (cmd == "h" || cmd == "help") {
 					help();
 					goto read_command;
 				} else if (cmd == "s") {
@@ -348,40 +381,23 @@ ENUMERATE_INSTRUCTIONS
 #undef w
 got_breaker_name:;
 					goto read_command;
-				} else if (cmd == "r") {
-					u32 index;
-					std::cin >> index;
-					std::cin >> cmd;
-					for (auto &c : cmd) c = tolower(c);
-
-					if (false) {}
-					else if (cmd == "u8" ) { print("{}\n", RU1(index)); }
-					else if (cmd == "u16") { print("{}\n", RU2(index)); }
-					else if (cmd == "u32") { print("{}\n", RU4(index)); }
-					else if (cmd == "u64") { print("{}\n", RU8(index)); }
-					else if (cmd == "s8" ) { print("{}\n", RS1(index)); }
-					else if (cmd == "s16") { print("{}\n", RS2(index)); }
-					else if (cmd == "s32") { print("{}\n", RS4(index)); }
-					else if (cmd == "s64") { print("{}\n", RS8(index)); }
-					else if (cmd == "f32") { print("{}\n", RF4(index)); }
-					else if (cmd == "f64") { print("{}\n", RF8(index)); }
-					goto read_command;
 				} else if (cmd == "m") {
 					u64 address;
 					std::cin >> address;
 					std::cin >> cmd;
 					for (auto &c : cmd) c = tolower(c);
-					poke(cmd, address);
+					peek(cmd, address);
 					goto read_command;
 				} else if (cmd == "mr") {
 					u32 index;
 					std::cin >> index;
 					std::cin >> cmd;
 					for (auto &c : cmd) c = tolower(c);
-					poke(cmd, R(index));
+					peek(cmd, R(index));
 					goto read_command;
 				} else {
 					print("bad input\n");
+					std::cin.clear();
 					goto read_command;
 				}
 			}
@@ -917,6 +933,8 @@ got_breaker_name:;
 						}
 						break;
 					}
+
+					case not_r: { REDECLARE_REF(i, i.not_r); RU8(i.d) = ~RU8(i.d); break; }
 
 					default:
 						invalid_code_path();

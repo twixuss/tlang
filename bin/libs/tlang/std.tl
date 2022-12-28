@@ -483,7 +483,9 @@ stringize_format :: (state: *Void, callback: StringizeCallback, format: String, 
 }
 
 
-dprint :: (value: String) => write_to_stdout(value)
+dprint :: (value: String) {
+    write_to_stdout(value)
+}
 
 dprint :: (value: Any) =>
     stringize(value, null, (state: *Void, str: String) =>
@@ -509,7 +511,7 @@ dprintln :: (value: Any) {
 }
 
 dprintln :: (format: String, values: ..Any) {
-	dprint(format, ..values)
+    dprint(format, ..values)
 	write_to_stdout('\n')
 }
 

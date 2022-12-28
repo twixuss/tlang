@@ -92,6 +92,7 @@ init_allocator :: () {
 			.allocate => return VirtualAlloc(null, @size, MEM_RESERVE|MEM_COMMIT, PAGE_READWRITE)
 			.deallocate => VirtualFree(data, 0, MEM_FREE)
 		}
+		null
 	}
     current_allocator = default_allocator
 }

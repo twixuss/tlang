@@ -58,7 +58,11 @@ inline static constexpr Register64 to_x86_register(Register r) {
 		case rs: return rsp;
 		case rb: return rbp;
 	}
+#if BYTECODE_DEBUG
 	immediate_error(current_instruction.node->location, "FIXME: Could not allocate register for this expression. Sorry, but the only thing you can do right now is simplify the expression.");
+#else
+	immediate_error("FIXME: Could not allocate register for this expression. Sorry, but the only thing you can do right now is simplify the expression.");
+#endif
 	exit(-1);
 }
 

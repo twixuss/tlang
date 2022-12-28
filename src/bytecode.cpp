@@ -70,6 +70,11 @@ struct DefinitionAddress {
 
 constexpr umm temporary_register_count = 3;
 
+inline constexpr bool is_temporary_register(umm r) { return r < temporary_register_count; }
+inline constexpr bool is_temporary_register(Register r) { return (umm)r < temporary_register_count; }
+
+#define DEBUG_TEMPORARY_REGISTER_ALLOCATION BYTECODE_DEBUG
+
 struct FrameBuilder {
 	InstructionList instructions;
 
@@ -77,6 +82,9 @@ struct FrameBuilder {
 	RegisterSet initial_available_registers;
 	RegisterSet used_registers;
 	BitSet<temporary_register_count> temporary_register_set;
+#if DEBUG_TEMPORARY_REGISTER_ALLOCATION
+	std::source_location debug_temporary_register_allocation_source_locations[temporary_register_count];
+#endif
 
 	s64 temporary_cursor = 0;
 	s64 temporary_size = 0;
@@ -99,18 +107,26 @@ struct FrameBuilder {
 	String comment;
 
 	void init() {
-		for (u32 i = (u32)allocatable_register_start; i < (u32)allocatable_register_end; ++i) {
+		//constexpr umm
+		for (umm i = allocatable_register_first; i < min(allocatable_register_first + compiler->general_purpose_register_count - temporary_register_count, allocatable_register_last + 1); ++i) {
 			available_registers.set(i);
 		}
 		initial_available_registers = available_registers;
 
-		temporary_register_set.set(0);
-		temporary_register_set.set(1);
-		temporary_register_set.set(2);
+		for (umm i = 0; i < temporary_register_count; ++i)
+			temporary_register_set.set(i);
 	}
 	void free() {}
 
 	Optional<Register> allocate_register() {
+#if DEBUG_TEMPORARY_REGISTER_ALLOCATION
+		for (umm i = 0; i < temporary_register_count; ++i) {
+			if (!temporary_register_set.get(i))
+				immediate_error("{} allocated at {}", (Register)i, debug_temporary_register_allocation_source_locations[i]);
+		}
+#endif
+		assert(temporary_register_set.count() == temporary_register_count, "Attempt to call 'append' or 'load_address_of' while a temporary register is being used.");
+
 		auto r = available_registers.pop();
 		if (r.has_value())
 			used_registers.set(r.value());
@@ -125,17 +141,21 @@ struct FrameBuilder {
 		available_registers.set((umm)reg);
 	}
 
-	Register allocate_temporary_register() {
-		auto result = temporary_register_set.pop().value_or([] {
-			compiler->immediate_error("INTERNAL ERROR: attempt to use too many temporary registers.");
+	Register allocate_temporary_register(std::source_location location = std::source_location::current()) {
+		auto result = temporary_register_set.pop().value_or([this] {
+			compiler->immediate_error(current_node->location, "INTERNAL ERROR: attempt to use too many temporary registers.");
 			exit(1);
 			return 0;
 		});
-		assert(result < temporary_register_count);
+#if DEBUG_TEMPORARY_REGISTER_ALLOCATION
+		debug_temporary_register_allocation_source_locations[result] = location;
+#endif
+
+		assert(is_temporary_register(result));
 		return (Register)result;
 	}
 	void free_temporary_register(Register reg) {
-		assert((umm)reg < temporary_register_count);
+		assert(is_temporary_register(reg));
 		assert(!temporary_register_set.get((umm)reg));
 		temporary_register_set.set((umm)reg);
 	}
@@ -197,14 +217,15 @@ struct FrameBuilder {
 	void append(AstLoopControl         *);
 
 	void append(Scope *scope, Optional<RegisterOrAddress> destination = {});
+	void append_return(AstLambda *lambda, AstExpression *expression);
 
 	void load_address_of(AstExpression *expression, RegisterOrAddress destination);
 	void load_address_of(AstDefinition *definition, RegisterOrAddress destination);
 
-	RegisterOrAddress load_address_of(AstExpression *expression) { auto destination = allocate_register_or_temporary(compiler->stack_word_size); load_address_of(expression, destination); return destination; }
-	RegisterOrAddress load_address_of(AstDefinition *definition) { auto destination = allocate_register_or_temporary(compiler->stack_word_size); load_address_of(definition, destination); return destination; }
+	[[nodiscard]] RegisterOrAddress load_address_of(AstExpression *expression) { auto destination = allocate_register_or_temporary(compiler->stack_word_size); load_address_of(expression, destination); return destination; }
+	[[nodiscard]] RegisterOrAddress load_address_of(AstDefinition *definition) { auto destination = allocate_register_or_temporary(compiler->stack_word_size); load_address_of(definition, destination); return destination; }
 
-	DefinitionAddress get_address_of(AstDefinition *definition);
+	[[nodiscard]] DefinitionAddress get_address_of(AstDefinition *definition);
 
 	void append_memory_set(InstructionList &list, Address d, s64 s, s64 size);
 	void append_memory_set(Address d, s64 s, s64 size);
@@ -401,7 +422,7 @@ struct BytecodeBuilder {
 	List<Relocation> local_relocations;
 	List<Relocation> global_relocations;
 
-	HashMap<String, s64> constant_strings;
+	Map<String, s64> constant_strings;
 
 	// FrameBuilder *current_frame = 0;
 
@@ -446,7 +467,7 @@ void remove_last_instruction(BytecodeBuilder &builder) {
 		} \
 	}; \
 	Register name; \
-	defer { if ((umm)name < temporary_register_count) free_temporary_register(name); }; \
+	defer { if (is_temporary_register(name)) free_temporary_register(name); }; \
 	if (_reg_or_addr.is_in_register) { \
 		name = _reg_or_addr.reg; \
 	} else { \
@@ -461,7 +482,7 @@ void remove_last_instruction(BytecodeBuilder &builder) {
 		if (CONCAT(_, __LINE__).is_in_register) { free_register(CONCAT(_, __LINE__).reg); } \
 	}; \
 	Register name; \
-	defer { if ((umm)name < temporary_register_count) free_temporary_register(name); }; \
+	defer { if (is_temporary_register(name)) free_temporary_register(name); }; \
 	if (CONCAT(_, __LINE__).is_in_register) { \
 		name = CONCAT(_, __LINE__).reg; \
 	} else { \
@@ -480,8 +501,8 @@ void remove_last_instruction(BytecodeBuilder &builder) {
 	}; \
 	Register name1; \
 	Register name2; \
-	defer { if ((umm)name1 < temporary_register_count) free_temporary_register(name1); }; \
-	defer { if ((umm)name2 < temporary_register_count) free_temporary_register(name2); }; \
+	defer { if (is_temporary_register(name1)) free_temporary_register(name1); }; \
+	defer { if (is_temporary_register(name2)) free_temporary_register(name2); }; \
 	if (CONCAT(_1, __LINE__).is_in_register) { \
 		name1 = CONCAT(_1, __LINE__).reg; \
 	} else { \
@@ -1118,18 +1139,6 @@ inline umm append(StringBuilder &b, LambdaDefinitionLocation d) {
 	return 0;
 }
 
-void check_destination(RegisterOrAddress destination) {
-	if (destination.is_in_register) {
-		assert(destination.reg != Register::r0);
-		assert(destination.reg != Register::r1);
-		assert(destination.reg != Register::r2);
-	} else {
-		assert(destination.address.base != Register::r0);
-		assert(destination.address.r1_scale_index == 0);
-		assert(destination.address.r2_scale == 0);
-	}
-}
-
 enum class DefinitionOrigin {
 	unknown,
 	constants,
@@ -1290,11 +1299,6 @@ void FrameBuilder::load_address_of(AstDefinition *definition, RegisterOrAddress 
 	}
 }
 void FrameBuilder::load_address_of(AstExpression *expression, RegisterOrAddress destination) {
-	check_destination(destination);
-
-	//if (expression->location == "where.data[i + j]")
-	//	debug_break();
-
 	push_comment(format(u8"load_address_of {}", expression->location));
 
 	switch (expression->kind) {
@@ -1647,7 +1651,12 @@ void FrameBuilder::append(Scope *scope, Optional<RegisterOrAddress> destination)
 
 		// temporary_cursor = 0;
 
-		if (auto est = as<AstExpressionStatement>(statement); destination && !(destination.value().is_in_register && destination.value().reg == Register::constants) && statement == scope->statement_list.back() && est) {
+		if (auto est = as<AstExpressionStatement>(statement);
+			destination &&
+			!(destination.value().is_in_register && destination.value().reg == Register::constants)
+			&& statement == scope->statement_list.back()
+			&& est
+		) {
 			append(est->expression, destination.value());
 		} else {
 			auto registers_before = scope->node->kind == Ast_Lambda ? initial_available_registers : available_registers;
@@ -1672,6 +1681,27 @@ void FrameBuilder::with_definition_address_of(AstDefinition *definition, auto &&
 
 		fn(Address(computed_address.reg));
 	}
+}
+
+void FrameBuilder::append_return(AstLambda *lambda, AstExpression *expression) {
+	if (expression) {
+		with_definition_address_of(lambda->return_parameter, [&](Address address) {
+			append(expression, address);
+		});
+	}
+
+	Scope *scope = current_scope;
+	while (scope) {
+		for (auto Defer : reverse_iterate(scope->bytecode_defers)) {
+			append(Defer->scope);
+		}
+		scope = scope->parent;
+	}
+
+	auto jump_index = (s64)count_of(instructions);
+	auto return_jump = II(jmp, 0);
+
+	lambda->return_jumps.add({return_jump, jump_index});
 }
 
 void FrameBuilder::append(AstStatement *statement) {
@@ -1847,27 +1877,7 @@ void FrameBuilder::append(AstDefinition *definition) {
 }
 void FrameBuilder::append(AstReturn *ret) {
 	push_comment(u8"return"s);
-
-	auto lambda = ret->lambda;
-
-	if (ret->expression) {
-		with_definition_address_of(ret->lambda->return_parameter, [&](Address address) {
-			append(ret->expression, address);
-		});
-	}
-
-	Scope *scope = current_scope;
-	while (scope) {
-		for (auto Defer : reverse_iterate(scope->bytecode_defers)) {
-			append(Defer->scope);
-		}
-		scope = scope->parent;
-	}
-
-	auto jump_index = (s64)count_of(instructions);
-	auto return_jump = II(jmp, 0);
-
-	lambda->return_jumps.add({return_jump, jump_index});
+	append_return(ret->lambda, ret->expression);
 }
 void FrameBuilder::append(AstWhile *While) {
 	auto count_before_condition = count_of(instructions);
@@ -2336,13 +2346,13 @@ void FrameBuilder::append(AstIf *If, RegisterOrAddress destination) {
 	}
 
 	auto true_branch_first_instruction_index = count_of(instructions);
-	append(If->true_block, destination);
+	append(raw(If->true_block), destination);
 
 	auto jmp = I(jmp, .offset=0);
 	I(jmp_label);
 
 	auto false_branch_first_instruction_index = count_of(instructions);
-	append(If->false_block, destination);
+	append(raw(If->false_block), destination);
 
 	auto false_end = count_of(instructions);
 
@@ -2401,7 +2411,7 @@ void FrameBuilder::append(AstMatch *Match, RegisterOrAddress destination) {
 			jump_to_default.instruction->jmp.offset = instructions.count - jump_to_default.index;
 		}
 
-		append(Case.block, destination);
+		append(raw(Case.block), destination);
 		jumps_out.add({II(jmp), instructions.count});
 		case_index++;
 	}
@@ -2412,8 +2422,6 @@ void FrameBuilder::append(AstMatch *Match, RegisterOrAddress destination) {
 	}
 }
 void FrameBuilder::append(AstBinaryOperator *bin, RegisterOrAddress destination) {
-	check_destination(destination);
-
 	push_comment(format(u8"binary {}"s, bin->location));
 
 	auto left = bin->left;
@@ -2444,6 +2452,7 @@ void FrameBuilder::append(AstBinaryOperator *bin, RegisterOrAddress destination)
 						auto member_size = get_size(member->type);
 
 						Register member_address;
+						bool should_free_member_address = false;
 						if (is_pointer) {
 							APPEND_INTO_REGISTER(_struct_address, bin->left);
 							member_address = _struct_address;
@@ -2456,13 +2465,19 @@ void FrameBuilder::append(AstBinaryOperator *bin, RegisterOrAddress destination)
 							} else {
 								auto tmp = allocate_temporary_space(struct_size);
 								append(bin->left, tmp);
-								member_address = Register::r0;
+
+								member_address = allocate_temporary_register();
+								should_free_member_address = true;
+
 								I(lea, member_address, tmp);
 							}
 						}
 						I(add_rc, member_address, member->offset);
 
 						copy(destination, Address(member_address), member_size, false);
+
+						if (should_free_member_address)
+							free_temporary_register(member_address);
 					} else {
 						not_implemented();
 						assert(is_sized_array(left->type));
@@ -2487,10 +2502,7 @@ void FrameBuilder::append(AstBinaryOperator *bin, RegisterOrAddress destination)
 		case bxor:
 		case bsr:
 		case bsl: {
-			APPEND2(
-				l, append, left,
-				r, append, right
-			);
+			APPEND2(l, append, left, r, append, right);
 
 			auto lt = direct(bin->left->type);
 
@@ -2719,7 +2731,7 @@ void FrameBuilder::append(AstBinaryOperator *bin, RegisterOrAddress destination)
 				};
 
 				Register dst;
-				defer { if ((umm)dst < temporary_register_count) free_temporary_register(dst); };
+				defer { if (is_temporary_register(dst)) free_temporary_register(dst); };
 				if (dst_addr.is_in_register) {
 					dst = dst_addr.reg;
 				} else {
@@ -2904,8 +2916,6 @@ void FrameBuilder::append(AstBinaryOperator *bin, RegisterOrAddress destination)
 	return;
 }
 void FrameBuilder::append(AstIdentifier *identifier, RegisterOrAddress destination) {
-	check_destination(destination);
-
 	auto definition = identifier->definition();
 
 	if (definition->is_constant && definition->expression) {
@@ -2942,7 +2952,7 @@ void FrameBuilder::append(AstIdentifier *identifier, RegisterOrAddress destinati
 				free_register(computed_address.reg);
 		};
 		Register definition_address_register;
-		defer { if ((umm)definition_address_register < temporary_register_count) free_temporary_register(definition_address_register); };
+		defer { if (is_temporary_register(definition_address_register)) free_temporary_register(definition_address_register); };
 		if (computed_address.is_in_register) {
 			definition_address_register = computed_address.reg;
 		} else {
@@ -2967,8 +2977,6 @@ void FrameBuilder::append(AstCall *call, RegisterOrAddress destination) {
 	*/
 
 	auto word_size = compiler->stack_word_size;
-
-	check_destination(destination);
 
 	push_comment(format(u8"call {}", call->callable->location));
 
@@ -3199,8 +3207,6 @@ void FrameBuilder::append(AstCall *call, RegisterOrAddress destination) {
 	invalid_code_path();
 }
 void FrameBuilder::append(AstLiteral *literal, RegisterOrAddress destination) {
-	check_destination(destination);
-
 	if (literal->literal_kind == LiteralKind::string)
 		push_comment(format(u8"literal \"{}\"", escape_string(literal->string.get())));
 	else
@@ -3303,8 +3309,6 @@ void FrameBuilder::append(AstLiteral *literal, RegisterOrAddress destination) {
 	}
 }
 void FrameBuilder::append(AstUnaryOperator *unop, RegisterOrAddress destination) {
-	check_destination(destination);
-
 	push_comment(format(u8"unary {}", unop->location));
 	switch (unop->operation) {
 		using enum UnaryOperation;
@@ -3458,8 +3462,6 @@ void FrameBuilder::append(AstUnaryOperator *unop, RegisterOrAddress destination)
 	}
 }
 void FrameBuilder::append(AstSubscript *subscript, RegisterOrAddress destination) {
-	check_destination(destination);
-
 	auto subscriptable_type = subscript->expression->type;
 
 	if (is_sized_array(subscriptable_type) ||
@@ -3593,12 +3595,9 @@ void FrameBuilder::append(AstSubscript *subscript, RegisterOrAddress destination
 #endif
 }
 void FrameBuilder::append(AstLambda *lambda, RegisterOrAddress destination) {
-	check_destination(destination);
 	load_address_of(lambda, destination);
 }
 void FrameBuilder::append(AstArrayInitializer *ArrayInitializer, RegisterOrAddress destination) {
-	check_destination(destination);
-
 	push_comment(format("ArrayInitializer {}"str, ArrayInitializer->location));
 
 	assert(ArrayInitializer->type->kind == Ast_Subscript);
@@ -4749,7 +4748,6 @@ void BytecodeBuilder::append(AstLambda *lambda) {
 
 	// ls.stack_state.init(get_size(lambda->return_parameter->type));
 
-	frame.current_scope = lambda->body_scope;
 	frame.current_node = lambda;
 
 	auto first_instruction = count_of(builder);
@@ -4807,7 +4805,14 @@ frame.add_instruction(MI(_kind, __VA_ARGS__))
 		});
 	}
 
-	frame.append(lambda->body_scope);
+
+	if (types_match(lambda->body->type, lambda->return_parameter->type)) {
+		frame.with_definition_address_of(lambda->return_parameter, [&](Address address) {
+			frame.append(lambda->body, address);
+		});
+	} else {
+		frame.append(lambda->body);
+	}
 
 	// if (compiler->optimize) {
 	// 	// TODO: skip iterations if nothing was changed.

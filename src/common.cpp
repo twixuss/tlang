@@ -2,7 +2,38 @@
 #define NOMINMAX
 #pragma warning(push, 0)
 #include <Windows.h>
+#include <algorithm>
 #pragma warning(pop)
+
+#define TRACK_ALLOCATIONS 0
+
+#if TRACK_ALLOCATIONS
+
+static HashMap<std::source_location, u32> allocation_sizes;
+
+void print_allocation_count() {
+	print("Allocations:\n");
+	struct AllocationInfo {
+		std::source_location location;
+		u32 size;
+	};
+
+	List<AllocationInfo> allocations;
+	allocations.allocator = temporary_allocator; // otherwise `allocation_sizes` will update inside `for_each`
+
+	for_each(allocation_sizes, [&](std::source_location location, u32 size) {
+		allocations.add({location, size});
+	});
+
+	std::sort(allocations.begin(), allocations.end(), [](auto a, auto b) {
+		return a.size > b.size;
+	});
+
+	for (auto a : allocations) {
+		print("{}: {}\n", a.location, format_bytes(a.size));
+	}
+}
+#endif
 
 SourceFileInfo *get_source_info(utf8 *location);
 
@@ -37,10 +68,26 @@ void init_my_allocator() {
 	last_allocation_block_index = (u32)-1;
 	new_my_block();
 	ast_allocation_block_size *= 2;
+
+
+#if TRACK_ALLOCATIONS
+	debug_init();
+	allocation_sizes.allocator = os_allocator;
+	defer { print_allocation_count(); };
+#endif
+}
+void deinit_my_allocator() {
+#if TRACK_ALLOCATIONS
+	print_allocation_count();
+#endif
 }
 
 AllocationResult MyAllocator::allocate_impl(umm size, umm align, std::source_location location) {
 	scoped_lock(allocation_mutex);
+
+#if TRACK_ALLOCATIONS
+	allocation_sizes.get_or_insert(location) += size;
+#endif
 
 retry:
 	auto block = &ast_allocation_blocks[last_allocation_block_index];
