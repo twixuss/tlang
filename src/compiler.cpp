@@ -29,8 +29,6 @@ void unlock(Scope *scope) {
 	}
 }
 
-// HashMap<String, AstDefinition *> names_not_available_for_globals;
-
 void append_type(StringBuilder &builder, AstExpression *type, bool silent_error) {
 	if (!type) {
 		append(builder, "(null)");
@@ -485,24 +483,24 @@ bool is_addressable(AstExpression *expression) {
 }
 
 
-void Scope::add(AstStatement *statement) {
+void Scope::add(AstStatement *statement TL_LPD) {
 	if (!statement->parent_scope) {
 		statement->parent_scope = this;
 	}
-	statement_list.add(statement);
+	statement_list.add(statement TL_LA);
 	if (statement->kind == Ast_Definition) {
 		auto definition = (AstDefinition *)statement;
-		definition_list.add(definition);
-		definition_map.get_or_insert(definition->name).add(definition);
+		definition_list.add(definition TL_LA);
+		definition_map.get_or_insert(definition->name TL_LA).add(definition TL_LA);
 	}
 }
-void Scope::add(AstDefinition *definition) {
+void Scope::add(AstDefinition *definition TL_LPD) {
 	if (!definition->parent_scope) {
 		definition->parent_scope = this;
 	}
-	statement_list.add(definition);
-	definition_list.add(definition);
-	definition_map.get_or_insert(definition->name).add(definition);
+	statement_list.add(definition TL_LA);
+	definition_list.add(definition TL_LA);
+	definition_map.get_or_insert(definition->name TL_LA).add(definition TL_LA);
 }
 
 const Strings strings_en = {

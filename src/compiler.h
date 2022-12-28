@@ -1,43 +1,11 @@
 #pragma once
+// TODO: Store nodes inline if they have to be always present.
+
+
 #include <common.h>
 #include <token.h>
 #include <tl/big_int.h>
 
-// TODO: maybe this can be merged into tl
-// This structure allows to store data either in-place or reference it somewhere else
-// NOTE: Copying Box may or may not copy it's contents. So don't expect changes in Box's copy to reflect in original instance.
-template <class T>
-struct Box {
-    T *pointer = 0;
-    union {
-        T value;
-    };
-
-    inline Box() : pointer(0) {}
-    inline Box(std::nullptr_t) : pointer(0) {}
-    inline Box(T *that) : pointer(that) {}
-    inline Box(T const &that) : pointer(&value), value(that) {}
-    inline Box(Box const &that) {
-		if (that.owning()) {
-			pointer = &value;
-			value = that.value;
-		} else {
-			pointer = that.pointer;
-		}
-	}
-    inline ~Box() {}
-
-	inline Box &operator=(Box const &that) {
-		return *new(this) Box(that);
-	}
-
-    inline explicit operator bool() { return pointer != 0; }
-
-	inline bool owning() const { return pointer == &value; }
-
-    inline T &operator*() { return *pointer; }
-    inline T *operator->() { return pointer; }
-};
 
 // #define e(name)
 // ENUMERATE_AST_KIND
@@ -126,7 +94,7 @@ struct Pool32Allocatable {
 	}
 };
 
-#define SMALL_AST 0//!TL_DEBUG
+#define SMALL_AST 1//!TL_DEBUG
 #if SMALL_AST
 
 template <class T>
@@ -187,8 +155,8 @@ struct Scope : DefaultAllocatable<Scope> {
 	SmallList<AstDefer *> bytecode_defers;
 	u32 defers_start_index = 0;
 
-	void add(AstStatement *statement);
-	void add(AstDefinition *definition);
+	void add(AstStatement *statement TL_LP);
+	void add(AstDefinition *definition TL_LP);
 
 	void append(Scope &that) {
 		children.add(that.children);
@@ -209,9 +177,9 @@ T *NEW(TL_LPC) {
 
 struct AstNode {
 	AstKind kind = Ast_Unknown;
-	Span<utf8, u32> location;
+	String location = {};
 
-	s32 uid;
+	s32 uid = 0;
 
 	AstNode();
 };
@@ -361,10 +329,10 @@ struct AstDefinition : AstStatement, StatementPool<AstDefinition> {
 
 	Expression<> expression = {};
 	Expression<> type = {};
-	AstNode *container_node = {};
+	Expression<> container_node = {};
 	Expression<AstIdentifier> poly_ident = {};
 
-	AstLiteral *evaluated = {};
+	Expression<AstLiteral> evaluated = {};
 
 	KeyString placed_at = {};
 
@@ -441,16 +409,16 @@ struct AstLambda : AstExpression, ExpressionPool<AstLambda> {
 		kind = Ast_Lambda;
 		directed = this;
 
-		constant_scope      = Scope::create();
+		constant_scope  = Scope::create();
 		parameter_scope = Scope::create();
 		body_scope      = Scope::create();
 
-		constant_scope->node      = this;
+		constant_scope->node  = this;
 		parameter_scope->node = this;
 		body_scope->node      = this;
 
-		body_scope->parent = parameter_scope;
 		parameter_scope->parent = constant_scope;
+		body_scope->parent = parameter_scope;
 	}
 
 	Statement<AstDefinition> definition = {}; // not null if lambda is named
@@ -458,12 +426,12 @@ struct AstLambda : AstExpression, ExpressionPool<AstLambda> {
 	SmallList<AstReturn *> return_statements;
 	Statement<AstDefinition> return_parameter = {};
 
-	Statement<AstReturn> return_statement_type_deduced_from = {};
+	Expression<> return_statement_type_deduced_from = {};
 
-	Scope *constant_scope;
-	Scope *parameter_scope;
-	Scope *body_scope;
+	Scope *constant_scope = {};
+	Scope *parameter_scope = {};
 	Scope *outer_scope() { return constant_scope; }
+	Scope *body_scope = {};
 
 	DefinitionList parameters;
 
@@ -474,14 +442,16 @@ struct AstLambda : AstExpression, ExpressionPool<AstLambda> {
 	// Map<String, AstDefinition *> local_definitions;
 
 	struct HardenedPoly {
-		AstLambda *lambda;
-		AstDefinition *definition;
+		Expression<AstLambda> lambda = {};
+		Statement<AstDefinition> definition = {};
 	};
 
 	SmallList<HardenedPoly> cached_instantiations;
 	Expression<AstLambda> original_poly = {};
 
+	// FIXME: redundant, `body` can be null
 	bool has_body                     : 1 = true;
+
 	bool is_type                      : 1 = false;
 	bool finished_typechecking_head   : 1 = false;
 	bool is_intrinsic                 : 1 = false;
@@ -604,8 +574,8 @@ struct AstIf : AstExpression, ExpressionPool<AstIf> {
 
 	Expression<> condition = {};
 
-	Expression<AstBlock> true_block = 0;
-	Expression<AstBlock> false_block = 0;
+	Expression<AstBlock> true_block = {};
+	Expression<AstBlock> false_block = {};
 
 	bool is_constant : 1 = false;
 	bool true_branch_was_taken : 1 = false;
@@ -954,7 +924,7 @@ struct AstEnum : AstExpression, ExpressionPool<AstEnum> {
 	Expression<> underlying_type = {};
 };
 
-enum class LoopControl {
+enum class LoopControl : u8 {
 	Break,
 	Continue,
 };
@@ -963,8 +933,8 @@ struct AstLoopControl : AstStatement, StatementPool<AstLoopControl> {
 	AstLoopControl() {
 		kind = Ast_LoopControl;
 	}
+	Statement<AstWhile> loop;
 	LoopControl control;
-	AstWhile *loop;
 };
 
 struct MatchCase {
