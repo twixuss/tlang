@@ -4,6 +4,7 @@ main ::() {
     e: ?String
     println(unwrap(e))
     println(unwrap("Hello"))
+    0
 }
 
 unwrap :: (x: ?String) {

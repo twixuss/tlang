@@ -459,5 +459,5 @@ DECLARE_TARGET_INFORMATION_GETTER {
 	::compiler = compiler;
 	compiler->stack_word_size = 8;
 	compiler->register_size = 8;
-	compiler->general_purpose_register_count = 16;
+	compiler->general_purpose_register_count = 10;
 }

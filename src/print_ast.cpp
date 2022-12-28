@@ -71,8 +71,8 @@ void print_ast(AstLambda *node) {
 		tab_count -= 1;
 		print_tabbed("statements:\n");
 		tab_count += 1;
-		print_ast(node->body_scope);
-		//print_ast(node->body);
+		//print_ast(node->body_scope);
+		print_ast(node->body);
 		tab_count -= 1;
 		tab_count -= 1;
 	}
@@ -479,13 +479,13 @@ void print_lowered(AstLambda *node) {
 	else
 		print_lowered(node->return_parameter->type);
 
-	print_lowered(node->body_scope);
-	//if (node->has_body) {
-	//	if (node->body->kind != Ast_Block) {
-	//		print(" => ");
-	//	}
-	//	print_lowered(node->body);
-	//}
+	//print_lowered(node->body_scope);
+	if (node->has_body) {
+		if (node->body->kind != Ast_Block) {
+			print(" => ");
+		}
+		print_lowered(node->body);
+	}
 }
 void print_lowered(AstLambdaType *node) {
 	print("(#type fn (");

@@ -9,6 +9,7 @@ get_foo :: () using result: Foo {
 	a = 53
 	b = "haha"
 	println(result)
+	return
 }
 
 write :: (using foo: Foo) {
@@ -30,4 +31,5 @@ main :: () {
 		b = "world"
 		write(foo)
 	}
+	0
 }

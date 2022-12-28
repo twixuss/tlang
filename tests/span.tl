@@ -25,4 +25,6 @@ main :: () {
 	println(span)
 
 	println(([]Int)(array.data, array.count))
+
+	0
 }

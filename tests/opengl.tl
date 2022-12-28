@@ -97,4 +97,6 @@ main :: () exit_code: Int {
 
         draw()
 	}
+
+	0
 }

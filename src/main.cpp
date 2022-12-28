@@ -1547,8 +1547,8 @@ Then the body may follow:
 		auto opening_token = parser->token;
 
 
+#if 0
 		if (is_short) {
-			// NOTE: Do we need this here?
 			parser->next_solid();
 
 			auto expression = parse_expression(parser);
@@ -1565,6 +1565,21 @@ Then the body may follow:
 			if (!parse_scope(parser, lambda->body_scope, {.allow_no_braces = false}))
 				return 0;
 		}
+#else
+		if (is_short) {
+			parser->next_solid();
+
+			auto expression = parse_expression(parser);
+			if (!expression)
+				return 0;
+
+			lambda->body = expression;
+		} else {
+			lambda->body = parse_block(parser, {.allow_no_braces = false});
+			if (!lambda->body)
+				return 0;
+		}
+#endif
 	} else {
 		if (!lambda->is_type && !lambda->is_intrinsic) {
 			// Extern functions
@@ -4776,12 +4791,12 @@ bool do_all_paths_explicitly_return(AstLambda *lambda) {
 	)
 		return true;
 
-	return do_all_paths_explicitly_return(lambda, lambda->body_scope->statement_list);
+	//return do_all_paths_explicitly_return(lambda, lambda->body_scope->statement_list);
 
-	// if (auto block = as<AstBlock>(lambda->body)) {
-	// 	return do_all_paths_explicitly_return(lambda, block->scope->statement_list);
-	// }
-	// return types_match(lambda->return_parameter->type, lambda->body->type);
+	if (auto block = as<AstBlock>(lambda->body)) {
+		return do_all_paths_explicitly_return(lambda, block->scope->statement_list);
+	}
+	return true;
 }
 
 void typecheck(TypecheckState *state, CExpression auto &expression);
@@ -6865,7 +6880,7 @@ void typecheck_body(TypecheckState *state, AstLambda *lambda) {
 		} else {
 			lambda->type_name = "undefined"str;
 		}
-		typecheck(state, lambda->body_scope);
+		typecheck(state, lambda->body);
 	}
 
 
@@ -6878,23 +6893,28 @@ void typecheck_body(TypecheckState *state, AstLambda *lambda) {
 				break;
 			}
 		}
-		//if (!lambda->return_parameter) {
-		//	if (lambda->has_body && !types_match(lambda->body->type, compiler->builtin_unreachable) && !types_match(lambda->body->type, compiler->builtin_void)) {
-		//		harden_type(state, lambda->body);
-		//		lambda->return_parameter = make_retparam(lambda->body->type, lambda);
-		//		lambda->return_statement_type_deduced_from = lambda->body;
-		//	}
-		//}
+
+		if (!lambda->return_parameter) {
+			if (lambda->has_body && !types_match(lambda->body->type, compiler->builtin_unreachable) && !types_match(lambda->body->type, compiler->builtin_void)) {
+				harden_type(state, lambda->body);
+				lambda->return_parameter = make_retparam(lambda->body->type, lambda);
+				lambda->return_statement_type_deduced_from = lambda->body;
+			}
+		}
 
 		if (!lambda->return_parameter) {
 			lambda->return_parameter = make_retparam(compiler->builtin_void.ident, lambda);
 		}
 	}
 
-	//if (lambda->has_body && !types_match(lambda->body->type, compiler->builtin_unreachable) && !types_match(lambda->body->type, compiler->builtin_void)) {
-	//	// NOTE: it's not a problem if body's last expression is not convertible to return type. just don't return it.
-	//	implicitly_cast(state, 0, &lambda->body, lambda->return_parameter->type);
-	//}
+	if (lambda->has_body && !types_match(lambda->body->type, compiler->builtin_unreachable) && !types_match(lambda->body->type, compiler->builtin_void)) {
+		// FIXME: It would be cool to just not return body's last expression if it is not convertible to return type.
+		//        But for some reason when i tried that, compiled program was crashing.
+
+		if (!implicitly_cast(state, &state->reporter, &lambda->body, lambda->return_parameter->type)) {
+			yield(TypecheckResult::fail);
+		}
+	}
 
 	ensure_return_types_match(state, lambda);
 
@@ -7743,11 +7763,11 @@ void instantiate_body(TypecheckState *state, AstLambda *hardened_lambda) {
 			}
 		}
 
-		deep_copy(hardened_lambda->body_scope, original_lambda->body_scope);
-		//hardened_lambda->body = deep_copy(original_lambda->body);
-		//for_each_top_scope(hardened_lambda->body, [&] (Scope *scope) {
-		//	scope->parent = hardened_lambda->parameter_scope;
-		//});
+		//deep_copy(hardened_lambda->body_scope, original_lambda->body_scope);
+		hardened_lambda->body = deep_copy(original_lambda->body);
+		for_each_top_scope(hardened_lambda->body, [&] (Scope *scope) {
+			scope->parent = hardened_lambda->parameter_scope;
+		});
 		typecheck_body(state, hardened_lambda);
 
 		calculate_parameters_size(hardened_lambda);
@@ -8938,7 +8958,7 @@ AstExpression *typecheck(TypecheckState *state, AstCall *call) {
 				inserted_block->scope->add(raw(def));
 			}
 
-#if 1
+#if 0
 
 			for (auto &statement : lambda->body_scope->statement_list) {
 				auto new_statement = deep_copy(statement);
@@ -11523,8 +11543,8 @@ void mark_referenced_definitions(AstLambda *Lambda) {
 	if (Lambda->definition) {
 		Lambda->definition->is_referenced = true;
 	}
-	mark_referenced_definitions(Lambda->body_scope);
-	//mark_referenced_definitions(Lambda->body);
+	//mark_referenced_definitions(Lambda->body_scope);
+	mark_referenced_definitions(Lambda->body);
 }
 void mark_referenced_definitions(AstBinaryOperator *BinaryOperator) {
 	mark_referenced_definitions(BinaryOperator->left);

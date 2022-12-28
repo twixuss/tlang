@@ -13,4 +13,5 @@ main :: () {
     a += b; println(a)
     a -= b; println(a)
     a *= b; println(a)
+	0
 }

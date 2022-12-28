@@ -22,7 +22,7 @@ void visit_children(AstReturn *node, auto &&visitor) {
 void visit_children(AstLambda *node, auto &&visitor) {
 	visit(node->constant_scope, visitor);
 	visit(node->parameter_scope, visitor);
-	visit(node->body_scope, visitor);
+	visit(node->body, visitor);
 }
 void visit_children(AstLambdaType *node, auto &&visitor) {}
 void visit_children(AstIdentifier *node, auto &&visitor) {}

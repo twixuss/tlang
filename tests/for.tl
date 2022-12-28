@@ -46,4 +46,6 @@ main :: () {
 
         println(y)
     }
+
+    0
 }

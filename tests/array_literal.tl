@@ -6,4 +6,6 @@ main :: () {
 
 	b := .["hello", "world", "!"]
 	println(b)
+
+	0
 }

@@ -692,6 +692,9 @@ read_entire_file :: (path: *U8) using result: String {
     result.count = size
 
     read(file, result)
+
+    // FIXME: redundant
+    return
 }
 
 Vector2 :: struct(T: Type) {

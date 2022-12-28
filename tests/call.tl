@@ -19,4 +19,5 @@ main :: () {
     foobar(handle, data, count, null, null)
     (foobar)(handle, data, count, null, null)
     (*&foobar)(handle, data, count, null, null)
+    0
 }

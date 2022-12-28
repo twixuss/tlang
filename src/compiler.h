@@ -94,7 +94,7 @@ struct Pool32Allocatable {
 	}
 };
 
-#define SMALL_AST 1//!TL_DEBUG
+#define SMALL_AST 0//!TL_DEBUG
 #if SMALL_AST
 
 template <class T>
@@ -411,27 +411,27 @@ struct AstLambda : AstExpression, ExpressionPool<AstLambda> {
 
 		constant_scope  = Scope::create();
 		parameter_scope = Scope::create();
-		body_scope      = Scope::create();
 
 		constant_scope->node  = this;
 		parameter_scope->node = this;
-		body_scope->node      = this;
 
 		parameter_scope->parent = constant_scope;
-		body_scope->parent = parameter_scope;
 	}
+
+	Scope *outer_scope() { return constant_scope; }
 
 	Statement<AstDefinition> definition = {}; // not null if lambda is named
 
+	// FIXME: I think everybody needs only expresssion, not the whole statement
 	SmallList<AstReturn *> return_statements;
+
 	Statement<AstDefinition> return_parameter = {};
 
 	Expression<> return_statement_type_deduced_from = {};
 
 	Scope *constant_scope = {};
 	Scope *parameter_scope = {};
-	Scope *outer_scope() { return constant_scope; }
-	Scope *body_scope = {};
+	AstExpression *body = {};
 
 	DefinitionList parameters;
 

@@ -816,7 +816,7 @@ inline umm append_instruction(StringBuilder &builder, s64 idx, Instruction i) {
 				}
 
 				if (used_bytes) {
-					append_format(builder, "sub rsp, {}; reserve space for locals, temporary storage and call arguments\n", used_bytes);
+					append_format(builder, "sub rsp, {}; reserve {} bytes for locals, {} for temporary storage and {} for call arguments\n", used_bytes, lambda->locals_size, lambda->temporary_size, lambda->max_stack_space_used_for_call);
 					total_bytes_pushed += used_bytes;
 				}
 

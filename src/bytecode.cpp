@@ -4805,7 +4805,14 @@ frame.add_instruction(MI(_kind, __VA_ARGS__))
 		});
 	}
 
-	frame.append(lambda->body_scope);
+	frame.with_definition_address_of(lambda->return_parameter, [&](Address address) {
+		frame.append(lambda->body, address);
+	});
+
+	// NOTE: Because lambda->body is not necessarily a block, temporary size might not be set, because it is updated per block.
+	frame.temporary_size = max(frame.temporary_size, frame.temporary_cursor);
+
+	//frame.append(lambda->body_scope);
 
 	// if (types_match(lambda->body->type, lambda->return_parameter->type)) {
 	// 	frame.with_definition_address_of(lambda->return_parameter, [&](Address address) {

@@ -20,4 +20,5 @@ main :: () {
     // These binary operations always have the same precedence and are left-associative.
     // The following expression is parsed into add(add(a, b), b).
     println(a add b add b)
+	0
 }

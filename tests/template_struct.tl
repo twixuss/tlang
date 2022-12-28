@@ -8,4 +8,5 @@ main :: () {
 
 	vec := Vector3(Int)(x=1,y=4,z=9)
 	println(vec)
+	0
 }
