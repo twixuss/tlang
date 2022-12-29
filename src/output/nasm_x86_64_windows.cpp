@@ -137,6 +137,10 @@ _ps:
 	// NOTE: to keep stack aligned to 16 bytes there are two versions, for even and odd number of arguments.
 	append(builder, R"(
 _stdcall_even:
+	push rcx
+	push rdx
+	push r8
+	push r9
 	push rsi
 	sub rsp, 32
 	mov rsi, rbx
@@ -145,7 +149,7 @@ _stdcall_even:
 	cmp rcx, rsi
 	je ._stdcall_l1
 
-	push qword [rsp + 48 + rcx*2]
+	push qword [rsp + 80 + rcx*2]
 
 	add rcx, 8
 	jmp ._stdcall_l0
@@ -168,14 +172,22 @@ _stdcall_even:
 	movq xmm3, r9
 	call rax
 	add rsp, rsi
-	mov [rsp + 48 + rsi], rax
+	mov [rsp + 80 + rsi], rax
 	add rsp, 32
 	pop rsi
+	pop r9
+	pop r8
+	pop rdx
+	pop rcx
 	ret
 )"
 	);
 	append(builder, R"(
 _stdcall_odd:
+	push rcx
+	push rdx
+	push r8
+	push r9
 	push rsi
 	push rsi
 	sub rsp, 32
@@ -185,7 +197,7 @@ _stdcall_odd:
 	cmp rcx, rsi
 	je ._stdcall_l1
 
-	push qword [rsp + 56 + rcx*2]
+	push qword [rsp + 88 + rcx*2]
 
 	add rcx, 8
 	jmp ._stdcall_l0
@@ -208,10 +220,14 @@ _stdcall_odd:
 	movq xmm3, r9
 	call rax
 	add rsp, rsi
-	mov [rsp + 56 + rsi], rax
+	mov [rsp + 88 + rsi], rax
 	add rsp, 32
 	pop rsi
 	pop rsi
+	pop r9
+	pop r8
+	pop rdx
+	pop rcx
 	ret
 )"
 	);

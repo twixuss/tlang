@@ -6881,6 +6881,7 @@ void typecheck_body(TypecheckState *state, AstLambda *lambda) {
 			lambda->type_name = "undefined"str;
 		}
 		typecheck(state, lambda->body);
+		harden_type(state, lambda->body);
 	}
 
 
@@ -6908,12 +6909,7 @@ void typecheck_body(TypecheckState *state, AstLambda *lambda) {
 	}
 
 	if (lambda->has_body && !types_match(lambda->body->type, compiler->builtin_unreachable) && !types_match(lambda->body->type, compiler->builtin_void)) {
-		// FIXME: It would be cool to just not return body's last expression if it is not convertible to return type.
-		//        But for some reason when i tried that, compiled program was crashing.
-
-		if (!implicitly_cast(state, &state->reporter, &lambda->body, lambda->return_parameter->type)) {
-			yield(TypecheckResult::fail);
-		}
+		implicitly_cast(state, 0, &lambda->body, lambda->return_parameter->type);
 	}
 
 	ensure_return_types_match(state, lambda);
@@ -7889,42 +7885,55 @@ AstIdentifier *instantiate_span(AstExpression *subtype, String location) {
 	return ident;
 }
 
+void ensure_if_has_type(TypecheckState *state, AstIf *If) {
+	if (types_match(If->true_block->type, If->false_block->type)) {
+		If->type = If->true_block->type;
+		return;
+	}
 
-// FIXME: copypasted from typecheck(AstIdentifier)
-DefinitionList get_definitions_for_identifier_in_current_context(TypecheckState *state, KeyString name) {
+	if (types_match(If->true_block->type, compiler->builtin_unreachable)) {
+		If->type = If->false_block->type;
+		return;
+	}
 
-	DefinitionList definitions;
+	if (types_match(If->false_block->type, compiler->builtin_unreachable)) {
+		If->type = If->true_block->type;
+		return;
+	}
 
-	auto is_lambda_scope = [&] (Scope *scope) {
-		return scope->node && scope->node->kind == Ast_Lambda && scope == ((AstLambda *)scope->node)->outer_scope();
+	AstExpression* true_block = If->true_block;
+	AstExpression* false_block = If->false_block;
+	defer {
+		assert(true_block == If->true_block && false_block == If->false_block, "implicitly_cast messed up block(s) in if expression (typecheck)");
 	};
 
-	auto scope = state->current_scope;
-	while (1) {
-		if (auto found_local = scope->definition_map.find(name)) {
-			for (auto definition : found_local->value) {
-				if (definition->container_node == 0 || definition->is_constant || state->current_lambda_or_struct_or_enum == definition->container_node) {
-					definitions.add(definition);
-				}
-			}
-		}
+	bool true_is_castable_to_false = implicitly_cast(state, 0, &true_block, If->false_block->type, 0, false);
+	bool false_is_castable_to_true = implicitly_cast(state, 0, &false_block, If->true_block->type, 0, false);
 
-		// FIXME: figure out what to do with usings
-
-		if (definitions.count) {
-			break;
-		}
-
-		if (!scope->parent) {
-			assert(scope == &compiler->global_scope, "incomplete relationships between scopes. probably you forgot to set scope's parent.");
-			break;
-		}
-		scope = scope->parent;
+	if (true_is_castable_to_false && false_is_castable_to_true) {
+		state->reporter.error(If->location, "Branches of this if expression have different types, and both are implicitly castable to each other, which makes it ambiguous. The types are {} and {}", type_to_string(If->true_block->type), type_to_string(If->false_block->type));
+		yield(TypecheckResult::fail);
 	}
-	for (auto definition : definitions)
-		assert(name == definition->name);
 
-	return definitions;
+	if (!true_is_castable_to_false && !false_is_castable_to_true) {
+		state->reporter.error(If->location, "Branches of this if expression have different types, and there is no conversion from one to another. The types are {} and {}", type_to_string(If->true_block->type), type_to_string(If->false_block->type));
+		yield(TypecheckResult::fail);
+	}
+
+	if (true_is_castable_to_false) {
+		if (!implicitly_cast(state, 0, &true_block, If->false_block->type)) {
+			state->reporter.error(If->location, "INTERNAL ERROR: implicit cast failed after success.");
+			yield(TypecheckResult::fail);
+		}
+	}
+	if (false_is_castable_to_true) {
+		if (!implicitly_cast(state, 0, &false_block, If->true_block->type)) {
+			state->reporter.error(If->location, "INTERNAL ERROR: implicit cast failed after success.");
+			yield(TypecheckResult::fail);
+		}
+	}
+
+	If->type = If->true_block->type;
 }
 
 AstExpression *typecheck(TypecheckState *state, AstIdentifier *identifier) {
@@ -10670,111 +10679,6 @@ AstExpression *typecheck(TypecheckState *state, AstSpan *span) {
 
 	return instantiate_span(subtype, span->location);
 }
-// typecheck if as a statement
-/*
-auto typecheck_(TypecheckState *state, AstIf *If) {
-	typecheck(state, If->condition);
-	if (!implicitly_cast(state, &state->reporter, &If->condition, compiler->builtin_bool.ident)) {
-		yield(TypecheckResult::fail);
-	}
-
-	if (If->is_constant) {
-		auto condition = evaluate(state, If->condition);
-		if (!condition)
-			yield(TypecheckResult::fail);
-
-
-		if (condition->literal_kind != LiteralKind::boolean) {
-			state->reporter.error(If->condition->location, "Expression must have bool type");
-			yield(TypecheckResult::fail);
-		}
-
-		If->true_branch_was_taken = condition->Bool;
-		Scope *scope = condition->Bool ? If->true_scope : If->false_scope;
-
-
-		// NOTE: Instead of this:
-		//
-		//     typecheck(state, scope);
-		//
-		// We use this:
-		//
-		for (auto statement : scope->statement_list) {
-			typecheck(state, statement);
-		}
-		//
-		// Because constant if's scopes are not regular.
-		// We want all statements to be outside these scopes as if they were directly
-		// in the parent scope.
-		// `typecheck(Scope)` sets the scope as the parent, and this is unwanted in this case.
-		//
-		// Note that right now this if statement remains to be in the parent's statement list.
-		// I think a better solution to this problem would be to add all selected statements into parent scope and remove the if.
-		//
-
-		auto found = find(scope->parent->children, scope);
-		assert(found);
-		erase(scope->parent->children, found);
-		scope->parent->append(*scope);
-	} else {
-		typecheck(state, If->true_scope);
-		typecheck(state, If->false_scope);
-	}
-	return If;
-}
-*/
-
-void ensure_if_has_type(TypecheckState *state, AstIf *If) {
-	if (types_match(If->true_block->type, If->false_block->type)) {
-		If->type = If->true_block->type;
-		return;
-	}
-
-	if (types_match(If->true_block->type, compiler->builtin_unreachable)) {
-		If->type = If->false_block->type;
-		return;
-	}
-
-	if (types_match(If->false_block->type, compiler->builtin_unreachable)) {
-		If->type = If->true_block->type;
-		return;
-	}
-
-	AstExpression* true_block = If->true_block;
-	AstExpression* false_block = If->false_block;
-	defer {
-		assert(true_block == If->true_block && false_block == If->false_block, "implicitly_cast messed up block(s) in if expression (typecheck)");
-	};
-
-	bool true_is_castable_to_false = implicitly_cast(state, 0, &true_block, If->false_block->type, 0, false);
-	bool false_is_castable_to_true = implicitly_cast(state, 0, &false_block, If->true_block->type, 0, false);
-
-	if (true_is_castable_to_false && false_is_castable_to_true) {
-		state->reporter.error(If->location, "Branches of this if expression have different types, and both are implicitly castable to each other, which makes it ambiguous. The types are {} and {}", type_to_string(If->true_block->type), type_to_string(If->false_block->type));
-		yield(TypecheckResult::fail);
-	}
-
-	if (!true_is_castable_to_false && !false_is_castable_to_true) {
-		state->reporter.error(If->location, "Branches of this if expression have different types, and there is no conversion from one to another. The types are {} and {}", type_to_string(If->true_block->type), type_to_string(If->false_block->type));
-		yield(TypecheckResult::fail);
-	}
-
-	if (true_is_castable_to_false) {
-		if (!implicitly_cast(state, 0, &true_block, If->false_block->type)) {
-			state->reporter.error(If->location, "INTERNAL ERROR: implicit cast failed after success.");
-			yield(TypecheckResult::fail);
-		}
-	}
-	if (false_is_castable_to_true) {
-		if (!implicitly_cast(state, 0, &false_block, If->true_block->type)) {
-			state->reporter.error(If->location, "INTERNAL ERROR: implicit cast failed after success.");
-			yield(TypecheckResult::fail);
-		}
-	}
-
-	If->type = If->true_block->type;
-}
-
 AstExpression *typecheck(TypecheckState *state, AstIf *If) {
 	typecheck(state, If->condition);
 	if (!implicitly_cast(state, &state->reporter, &If->condition, compiler->builtin_bool.ident)) {
