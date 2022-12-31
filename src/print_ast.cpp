@@ -506,7 +506,7 @@ void print_lowered(AstIdentifier *node) {
 void print_lowered(AstCall *node) {
 	print_lowered(node->callable);
 	print("(");
-#if 1
+#if 0
 	for (auto &argument : node->unsorted_arguments) {
 		if (&argument != node->unsorted_arguments.data) {
 			print(", ");
@@ -545,8 +545,21 @@ void print_lowered(AstBinaryOperator *node) {
 }
 void print_lowered(AstUnaryOperator *node) {
 	print('(');
-	print(node->operation);
-	print_lowered(node->expression);
+	switch (node->operation) {
+		case UnaryOperation::autocast: {
+			print('(');
+			print_lowered(node->expression);
+			print(") as (");
+			print_lowered(node->type);
+			print(')');
+			break;
+		}
+		default: {
+			print(node->operation);
+			print_lowered(node->expression);
+			break;
+		}
+	}
 	print(')');
 }
 void print_lowered(AstLiteral *literal) {
@@ -669,7 +682,7 @@ void print_lowered(AstMatch * match) {
 
 	for (auto Case : match->cases) {
 		if (Case.expression) {
-			print_tabbed();
+			print_tabbed("");
 			print_lowered(Case.expression);
 		} else {
 			print_tabbed("else");

@@ -361,6 +361,14 @@ bool is_constant(AstExpression *expression) {
 			}
 			break;
 		}
+		case Ast_ArrayInitializer: {
+			auto ArrayInitializer = (AstArrayInitializer *)expression;
+			for (auto &element : ArrayInitializer->elements) {
+				if (!is_constant(element))
+					return false;
+			}
+			return true;
+		}
 	}
 
 

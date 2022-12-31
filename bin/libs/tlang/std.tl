@@ -419,12 +419,12 @@ stringize :: (value: Any, state: *Void, callback: StringizeCallback) Int {
                         bytes_written += callback(state, ", ")
                     }
                     bytes_written += stringize_quoted_if_string(
-                        Any(node as *U8 + #sizeof *Node(U8), info.parameters[0]),
+                        Any(&node.value, info.parameters[0]),
                         state,
                         callback
                     )
 
-                    node = @node.next
+                    node = node.next
                 }
                 bytes_written += callback(state, "]")
 
@@ -736,10 +736,7 @@ operator / :: (a: Vector3($T), b: Vector3(T)) => Vector3(T)(a.x / b.x, a.y / b.y
 RGB_U8 :: Vector3(U8)
 
 Node :: struct(T: Type) {
-    // FIXME: make this work
-    // next: *Node(T)
-
-    next: *Void
+    next: *Node(T)
     value: T
 }
 LinkedList :: struct(T: Type) {
@@ -757,7 +754,7 @@ add :: (using list: *LinkedList($T), value: T = T()) {
         head = allocator.new(Node(T));
         tail = head
     } else {
-        tail.next = @allocator.allocate(#sizeof Node(T))
+        tail.next = allocator.new(Node(T))
         tail = tail.next
     }
     tail.value = value

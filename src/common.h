@@ -42,31 +42,15 @@ inline bool operator==(std::source_location a, std::source_location b) {
 	return a.column() == b.column() && a.line() == b.line() && strcmp(a.file_name(), b.file_name()) == 0;
 }
 
-void tlang_assertion_failed(char const *cause, char const *file, int line, char const *expression, char const *function);
+template <class ...Args>
+void tlang_assertion_failed(char const *cause, char const *file, int line, char const *expression, char const *function, Args ...args);
 
-template <class ...T>
-inline void print(T ...args) {
-	::tl::print(args...);
-}
-inline void print() {
-}
+template <class ...Args, class Char>
+void tlang_assertion_failed(char const *cause, char const *file, int line, char const *expression, char const *function, Char const *format_string, Args ...args);
 
 #pragma warning(push, 0)
+#define ASSERTION_FAILURE(cause_string, expression, ...) tlang_assertion_failed(cause_string, __FILE__, __LINE__, expression, __FUNCSIG__, __VA_ARGS__)
 #include <tl/console.h>
-#undef ASSERTION_FAILURE
-#if TL_DEBUG
-#define ASSERTION_FAILURE(cause_string, expression, ...) (\
-	::tl::set_console_color(::tl::ConsoleColor::red),\
-	::tl::print("Assertion failed: "),\
-	::tl::set_console_color(::tl::ConsoleColor::dark_gray),\
-	::tl::print("{}\nMessage: ", expression),\
-	::print(__VA_ARGS__),\
-	::tl::print("\n{}:{}: {} at {}\n", __FILE__, __LINE__, cause_string, __FUNCSIG__),\
-	debug_break()\
-)
-#else
-#define ASSERTION_FAILURE(cause_string, expression, ...) tlang_assertion_failed(cause_string, __FILE__, __LINE__, expression, __FUNCSIG__)
-#endif
 #include <tl/common.h>
 #include <tl/file.h>
 #include <tl/thread.h>
@@ -419,11 +403,28 @@ inline Optional<HeapString> unescape_string(String string) {
 	return new_string;
 }
 
-inline void tlang_assertion_failed(char const *cause, char const *file, int line, char const *expression, char const *function) {
+template <class ...Args, class Char>
+void immediate_error(String location, Char const *format_string, Args const &...args);
+
+template <class ...Args, class Char>
+inline void tlang_assertion_failed(char const *cause, char const *file, int line, char const *expression, char const *function, String location, Char const *format_string, Args ...args) {
+	immediate_error(location, format_string, args...);
+
 	with(ConsoleColor::red, ::tl::print("Assertion failed: "));
 	::tl::print("{}\n{}:{}: {} at {}\n", expression, file, line, cause, function);
+
 	if (debugger_attached())
 		debug_break();
 	else
 		exit(-1);
+}
+
+template <class ...Args, class Char>
+inline void tlang_assertion_failed(char const *cause, char const *file, int line, char const *expression, char const *function, Char const *format_string, Args ...args) {
+	tlang_assertion_failed(cause, file, line, expression, function, String{}, format_string, args...);
+}
+
+template <class ...Args>
+inline void tlang_assertion_failed(char const *cause, char const *file, int line, char const *expression, char const *function, Args ...args) {
+	tlang_assertion_failed(cause, file, line, expression, function, String{}, "", args...);
 }

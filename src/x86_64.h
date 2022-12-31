@@ -40,7 +40,7 @@ inline static constexpr Register64 stdcall_int_registers[] {
 
 inline Instruction current_instruction = {};
 
-inline static constexpr Register64 to_x86_register(Register r) {
+inline static Register64 to_x86_register(Register r) {
 	using enum Register;
 	using enum Register64;
 	switch (r) {
@@ -58,8 +58,7 @@ inline static constexpr Register64 to_x86_register(Register r) {
 		case rs: return rsp;
 		case rb: return rbp;
 	}
-	immediate_error(current_instruction.node->location, "FIXME: Could not allocate register for this expression. Sorry, but the only thing you can do right now is simplify the expression.");
-	exit(-1);
+	invalid_code_path(current_instruction.node ? current_instruction.node->location : String{}, "Register {} does not map to x86_64 one.", (u32)r);
 }
 
 inline static constexpr Register64 part8b(Register64 r) { return r; }

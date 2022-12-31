@@ -196,4 +196,25 @@ main :: () {
 		assert foo(1) == 1
 		assert foo(44) == 44
 	}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+	{
+		foo :: (y: Int = 0) => y+69
+		assert foo() == 69
+		assert foo(1) == 70
+		assert foo(y=2) == 71
+	}
 }

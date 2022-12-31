@@ -100,6 +100,7 @@ _ps:
 	push rdi
 	lea rdi, [rsp-1]
 	mov rcx, rax
+	xor rax, rax
 	std
 	rep stosb
 	cld

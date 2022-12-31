@@ -435,6 +435,8 @@ struct AstLambda : AstExpression, ExpressionPool<AstLambda> {
 
 	DefinitionList parameters;
 
+	HashMap<AstDefinition *, AstIdentifier *> parameter_to_default_value;
+
 	//DefinitionList return_parameters;
 
 	// SmallList<AstStatement *> statements;
@@ -551,7 +553,9 @@ struct AstStruct : AstExpression, ExpressionPool<AstStruct> {
 		AstIdentifier *ident;
 		SmallList<AstExpression *> arguments;
 	};
-	SmallList<Instantiation> instantiations;
+
+	// NOTE: caching code relies on this to be non-moving
+	BlockList<Instantiation> instantiations;
 
 	Expression<AstLiteral> default_value = {};
 	u32 default_value_offset = 0;
@@ -1901,7 +1905,7 @@ inline s64 get_size(AstExpression *_type, bool check_struct) {
 		case Ast_Struct: {
 			auto Struct = (AstStruct *)type;
 			if (check_struct)
-				assert(Struct->size != -1, "Size for {} is not computed yet. If this happens when typechecking, use an overload that accepts TypecheckState. When generating bytecode this assert should not fire.");
+				assert(Struct->size != -1, Struct->location, "Size for {} is not computed yet. If this happens when typechecking, use an overload that accepts TypecheckState. When generating bytecode this assert should not fire.", type_to_string(Struct));
 			return Struct->size;
 		}
 		case Ast_Identifier: {
