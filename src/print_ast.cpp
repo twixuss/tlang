@@ -474,15 +474,19 @@ void print_lowered(AstLambda *node) {
 		print_lowered(argument);
 	}
 	print("): ");
-	if (node->return_parameter->name.count)
-		print_lowered(raw(node->return_parameter));
+	if (node->return_parameter)
+		if (node->return_parameter->name.count)
+			print_lowered(raw(node->return_parameter));
+		else
+			print_lowered(node->return_parameter->type);
 	else
-		print_lowered(node->return_parameter->type);
+		print("<unknown>");
 
 	//print_lowered(node->body_scope);
-	if (node->has_body) {
+	if (node->body) {
+		print(" ");
 		if (node->body->kind != Ast_Block) {
-			print(" => ");
+			print("=> ");
 		}
 		print_lowered(node->body);
 	}

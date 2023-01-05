@@ -22,6 +22,8 @@ void print_ast(AstNode *node);
 void print_ast();
 
 void print_lowered();
+void print_lowered(AstStatement *);
+void print_lowered(AstExpression *);
 
 inline void print_ast(Span<AstStatement *> statements) {
     for (auto statement : statements) {

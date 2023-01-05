@@ -318,6 +318,7 @@ inline static constexpr auto sizeof_AstLiteral = sizeof AstLiteral;
 #define INVALID_MEMBER_OFFSET (-1)
 #define INVALID_DATA_OFFSET (-1)
 
+// TODO: this is dumb
 enum class LambdaDefinitionLocation : u8 {
 	body,
 	parameter,
@@ -450,9 +451,6 @@ struct AstLambda : AstExpression, ExpressionPool<AstLambda> {
 
 	SmallList<HardenedPoly> cached_instantiations;
 	Expression<AstLambda> original_poly = {};
-
-	// FIXME: redundant, `body` can be null
-	bool has_body                     : 1 = true;
 
 	bool is_type                      : 1 = false;
 	bool finished_typechecking_head   : 1 = false;

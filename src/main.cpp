@@ -94,7 +94,7 @@ bool verify_block(Reporter *reporter, Scope *scope);
 AstIf *parse_if_expression_starting_with_condition(Parser *parser, String if_token);
 
 void print_help() {
-    print(compiler->strings.usage, compiler->compiler_name);
+	print(compiler->strings.usage, compiler->compiler_name);
 }
 
 u64 printed_reports_count = 0;
@@ -938,7 +938,7 @@ AstUnaryOperator *make_address_of(Reporter *reporter, AstExpression *expression)
 }
 
 AstStatement *parse_statement(Parser *parser);
-AstExpression *parse_expression(Parser *parser, int right_precedence = 0);
+AstExpression *parse_expression(Parser *parser, bool whitespace_is_skippable_before_binary_operator = false, int right_precedence = 0);
 AstExpression *parse_expression_1(Parser *parser);
 AstDefinition *parse_definition(Parser *parser);
 
@@ -1533,9 +1533,10 @@ Then the body may follow:
 	}
 
 	bool is_short = false;
+	bool has_body = true;
 
 	if (lambda->is_type) {
-		lambda->has_body = false;
+		has_body = false;
 		if (parser->token->kind == '{' || parser->token->kind == '=>') {
 			parser->reporter->error(lambda->location, "Body of a lambda can not be specified after a #type directive.");
 			return 0;
@@ -1545,14 +1546,14 @@ Then the body may follow:
 		} else if (parser->token->kind == '=>') {
 			is_short = true;
 		} else if (parser->token->kind == ';' || parser->token->kind == '\n' || parser->token->kind == 'eof') {
-			lambda->has_body = false;
+			has_body = false;
 		} else {
 			parser->reporter->error(parser->token->string, "Expected {{ or => or ; or newline or return type instead of '{}'.", parser->token->string);
 			return 0;
 		}
 	}
 
-	if (lambda->has_body) {
+	if (has_body) {
 		auto opening_token = parser->token;
 
 
@@ -2056,7 +2057,7 @@ AstExpression *parse_expression_0(Parser *parser) {
 			}
 
 
-			auto expression = parse_expression(parser);
+			auto expression = parse_expression(parser, true);
 			if (!expression) {
 				return 0;
 			}
@@ -2116,7 +2117,7 @@ AstExpression *parse_expression_0(Parser *parser) {
 
 			AstExpression *index_expression = 0;
 			if (parser->token->kind != ']') {
-				index_expression = parse_expression(parser);
+				index_expression = parse_expression(parser, true);
 				if (!index_expression)
 					return 0;
 
@@ -2717,7 +2718,7 @@ bool simplify(Reporter *reporter, CExpression auto *_expression) {
 								}
 							}
 						}
-					 	break;
+						break;
 					 }
 					 case land: {
 						auto left_literal  = get_literal(binop->left);
@@ -2731,7 +2732,7 @@ bool simplify(Reporter *reporter, CExpression auto *_expression) {
 								}
 							}
 						}
-					 	break;
+						break;
 					 }
 					default:
 						with(ConsoleColor::yellow, print("unhandled binary operation in simplify\n"));
@@ -2898,7 +2899,7 @@ bool is_right_associative(BinaryOperation operation) {
 
 // Implementation of Pratt Precedence
 // Thanks to this: https://github.com/richardjennings/prattparser
-AstExpression *parse_expression(Parser *parser, int right_precedence) {
+AstExpression *parse_expression(Parser *parser, bool whitespace_is_skippable_before_binary_operator, int right_precedence) {
 	//null denotation
 	AstExpression *left = parse_expression_1(parser);
 	if (!left)
@@ -2907,6 +2908,11 @@ AstExpression *parse_expression(Parser *parser, int right_precedence) {
 	// left binding power
 	Optional<BinaryOperation> operation;
 	while (1) {
+
+		if (whitespace_is_skippable_before_binary_operator) {
+			skip_newlines(parser);
+		}
+
 		if (parser->token->kind == Token_identifier) {
 
 			// Custom binary operator
@@ -2914,7 +2920,7 @@ AstExpression *parse_expression(Parser *parser, int right_precedence) {
 			if (right_precedence < custom_precedence) {
 				auto name = parser->token;
 				parser->next_solid();
-				auto right = parse_expression(parser, custom_precedence);
+				auto right = parse_expression(parser, whitespace_is_skippable_before_binary_operator, custom_precedence);
 				if (!right)
 					return 0;
 
@@ -2940,7 +2946,7 @@ AstExpression *parse_expression(Parser *parser, int right_precedence) {
 				auto binop = AstBinaryOperator::create();
 				binop->left = left;
 				binop->operation = operation.value();
-				binop->right = parse_expression(parser, get_precedence(binop->operation) - is_right_associative(operation.value()));
+				binop->right = parse_expression(parser, whitespace_is_skippable_before_binary_operator, get_precedence(binop->operation) - is_right_associative(operation.value()));
 
 				if (!binop->right)
 					return 0;
@@ -3562,7 +3568,12 @@ void parse_statement(Parser *parser, AstStatement *&result) {
 				case '||':
 				case '<<':
 				case '>>':
-				{
+				case '==':
+				case '!=':
+				case '>':
+				case '<':
+				case '>=':
+				case '<=': {
 					auto Operator = AstOperatorDefinition::create();
 					Operator->location = parser->token->string;
 					Operator->operation = parser->token->kind;
@@ -4392,7 +4403,7 @@ void ensure_definition_is_resolved(TypecheckState *state, AstIdentifier *identif
 	}
 }
 
-u32 put_in_section(AstLiteral *, Section &);
+u32 put_in_section(AstLiteral *, Section &, AstExpression * = 0);
 
 void put_arrays_in_section(AstLiteral *literal, Section &section) {
 	switch (literal->literal_kind) {
@@ -4427,7 +4438,10 @@ void put_arrays_in_section(AstLiteral *literal, Section &section) {
 			invalid_code_path();
 	}
 }
-u32 put_in_section(AstLiteral *literal, Section &section) {
+u32 put_in_section(AstLiteral *literal, Section &section, AstExpression *target_type) {
+	if (!target_type)
+		target_type = literal->type;
+
 	switch (literal->literal_kind) {
 		using enum LiteralKind;
 		case null: {
@@ -4480,15 +4494,16 @@ u32 put_in_section(AstLiteral *literal, Section &section) {
 			literal->struct_offset = section.buffer.count;
 			auto result = section.buffer.count;
 
-			for (auto member : literal->struct_values) {
-				put_in_section(member, section);
+			for (umm i = 0; i < literal->struct_values.count; ++i) {
+				auto member = literal->struct_values[i];
+				auto target_member_type = direct_as<AstStruct>(literal->type)->data_members[i]->type;
+				put_in_section(member, section, target_member_type);
 			}
 
 			return result;
 		}
 		case array: {
-			immediate_warning("nocheckins");
-			if (false) { // is_sized_array(literal->type)) {
+			if (is_sized_array(target_type)) {
 				// Array elements are already written, just return their offset.
 				return literal->array_offset;
 			} else {
@@ -4729,7 +4744,7 @@ AstLiteral *evaluate(TypecheckState *state, AstExpression *expression) {
 		}
 		case Ast_Lambda: {
 			auto lambda = (AstLambda *)expression;
-			assert(!lambda->has_body);
+			assert(!lambda->body);
 			assert(lambda->is_type);
 			return make_type_literal(lambda);
 		}
@@ -4952,7 +4967,7 @@ s64 get_align(TypecheckState *state, AstExpression *type) {
 }
 
 
-auto evaluate_and_put_in_section(TypecheckState *state, AstExpression *expression, Section &section) {
+auto evaluate_and_put_in_section(TypecheckState *state, AstExpression *expression, AstExpression *target_type, Section &section) {
 	struct {
 		AstLiteral *evaluated;
 		u32 offset;
@@ -4960,12 +4975,12 @@ auto evaluate_and_put_in_section(TypecheckState *state, AstExpression *expressio
 
 	result.evaluated = evaluate(state, expression);
 	put_arrays_in_section(result.evaluated, section);
-	result.offset = put_in_section(result.evaluated, section);
+	result.offset = put_in_section(result.evaluated, section, target_type);
 	return result;
 }
 
 void evaluate_and_put_definition_in_section(TypecheckState *state, AstDefinition *definition, Section &section) {
-	auto x = evaluate_and_put_in_section(state, definition->expression, section);
+	auto x = evaluate_and_put_in_section(state, definition->expression, definition->type, section);
 	definition->evaluated = x.evaluated;
 	definition->offset = x.offset;
 }
@@ -6373,7 +6388,7 @@ AstStatement *typecheck(TypecheckState *state, AstDefinition *definition) {
 			case Lambda: {
 				if (definition->definition_location == LambdaDefinitionLocation::body) {
 					assert(state->current_lambda_or_struct_or_enum->kind == Ast_Lambda);
- 					set_local_offset(state, definition, (AstLambda *)state->current_lambda_or_struct_or_enum);
+					set_local_offset(state, definition, (AstLambda *)state->current_lambda_or_struct_or_enum);
 				}
 				break;
 			}
@@ -6833,7 +6848,13 @@ AstStatement *typecheck(TypecheckState *state, AstOperatorDefinition *OperatorDe
 		case '&':
 		case '|':
 		case '<<':
-		case '>>': {
+		case '>>':
+		case '==':
+		case '!=':
+		case '<':
+		case '>':
+		case '<=':
+		case '>=': {
 			typecheck(state, (Expression<> &)OperatorDefinition->lambda);
 			binary_operators.get_or_insert(as_binary_operation(OperatorDefinition->operation).value()).add({OperatorDefinition->lambda, OperatorDefinition});
 			not_typechecked_binary_operators_count -= 1;
@@ -6920,7 +6941,7 @@ void typecheck(TypecheckState *state, AstStatement *&statement) {
 void typecheck_body(TypecheckState *state, AstLambda *lambda) {
 	bool deferred_function_name = true;
 
-	if (lambda->has_body) {
+	if (lambda->body) {
 		if (lambda->return_parameter) {
 			deferred_function_name = false;
 			lambda->type_name = type_to_string(lambda->type);
@@ -6943,7 +6964,7 @@ void typecheck_body(TypecheckState *state, AstLambda *lambda) {
 		}
 
 		if (!lambda->return_parameter) {
-			if (lambda->has_body && !types_match(lambda->body->type, compiler->builtin_unreachable) && !types_match(lambda->body->type, compiler->builtin_void)) {
+			if (lambda->body && !types_match(lambda->body->type, compiler->builtin_unreachable) && !types_match(lambda->body->type, compiler->builtin_void)) {
 				harden_type(state, lambda->body);
 				lambda->return_parameter = make_retparam(lambda->body->type, lambda);
 				lambda->return_statement_type_deduced_from = lambda->body;
@@ -6955,7 +6976,7 @@ void typecheck_body(TypecheckState *state, AstLambda *lambda) {
 		}
 	}
 
-	if (lambda->has_body && !types_match(lambda->body->type, compiler->builtin_unreachable) && !types_match(lambda->body->type, compiler->builtin_void)) {
+	if (lambda->body && !types_match(lambda->body->type, compiler->builtin_unreachable) && !types_match(lambda->body->type, compiler->builtin_void)) {
 		implicitly_cast(state, 0, &lambda->body, lambda->return_parameter->type);
 	}
 
@@ -6963,7 +6984,7 @@ void typecheck_body(TypecheckState *state, AstLambda *lambda) {
 
 
 
-	if (lambda->has_body) {
+	if (lambda->body) {
 		if (lambda->return_parameter->name.count == 0) {
 			if (!do_all_paths_explicitly_return(lambda)) {
 				state->reporter.warning(lambda->location, "Not all execution paths explicitly return a value.");
@@ -6971,7 +6992,7 @@ void typecheck_body(TypecheckState *state, AstLambda *lambda) {
 		}
 	}
 
-	if (lambda->has_body) {
+	if (lambda->body) {
 		compiler->lambdas_with_body.add(lambda);
 	} else {
 		compiler->lambdas_without_body.add(lambda);
@@ -7130,7 +7151,6 @@ AstLambda *instantiate_head(TypecheckState *state, Reporter *reporter, Resolutio
 	hardened_lambda->convention = lambda->convention;
 	hardened_lambda->extern_language = lambda->extern_language;
 	hardened_lambda->extern_library = lambda->extern_library;
-	hardened_lambda->has_body = false;
 	hardened_lambda->finished_typechecking_head = false;
 	hardened_lambda->is_intrinsic = lambda->is_intrinsic;
 	hardened_lambda->is_parenthesized = lambda->is_parenthesized;
@@ -7818,8 +7838,6 @@ void instantiate_body(TypecheckState *state, AstLambda *hardened_lambda) {
 		return;
 
 	hardened_lambda->was_instantiated = true;
-
-	hardened_lambda->has_body = original_lambda->has_body;
 
 	if (compiler->debug_template) {
 		state->reporter.info(hardened_lambda->location, "Instantiating poly body: {} with {}", type_to_string(original_lambda->type), StringizePolyTypes{hardened_lambda});
@@ -8579,6 +8597,8 @@ bool try_match_overload(TypecheckState *state, Reporter &reporter, AstCall *call
 
 	invalid_code_path("unreachable");
 }
+
+HashMap<AstStruct *, AstIdentifier *> generated_comparers;
 
 AstExpression *typecheck(TypecheckState *state, AstIdentifier *identifier) {
 	if (identifier->possible_definitions.count) {
@@ -9810,167 +9830,169 @@ AstExpression *typecheck(TypecheckState *state, AstBinaryOperator *bin) {
 				REDECLARE_VAL(l, (AstStruct *)l);
 				REDECLARE_VAL(r, (AstStruct *)r);
 
-				// BEGIN UNSIZED INTEGER DEAL
-				switch (bin->operation) {
-					case add:
-					case sub:
-					case mul:
-					case div:
-					case mod:
-					case bor:
-					case band:
-					case bxor:
-					case bsl:
-					case bsr:
-					case addass:
-					case subass:
-					case mulass:
-					case divass:
-					case modass:
-					case borass:
-					case bandass:
-					case bxorass:
-					case bslass:
-					case bsrass: {
-						if (types_match(l, compiler->builtin_unsized_integer) && types_match(r, compiler->builtin_unsized_integer) ) {
-							bin->type = compiler->builtin_unsized_integer.ident;
-							return bin;
+				if (struct_is_built_in(l) && struct_is_built_in(r)) {
+					// BEGIN UNSIZED INTEGER DEAL
+					switch (bin->operation) {
+						case add:
+						case sub:
+						case mul:
+						case div:
+						case mod:
+						case bor:
+						case band:
+						case bxor:
+						case bsl:
+						case bsr:
+						case addass:
+						case subass:
+						case mulass:
+						case divass:
+						case modass:
+						case borass:
+						case bandass:
+						case bxorass:
+						case bslass:
+						case bsrass: {
+							if (types_match(l, compiler->builtin_unsized_integer) && types_match(r, compiler->builtin_unsized_integer) ) {
+								bin->type = compiler->builtin_unsized_integer.ident;
+								return bin;
+							}
+							if (types_match(l, compiler->builtin_unsized_integer) && ri) {
+								bin->type = bin->left->type = bin->right->type;
+								return bin;
+							}
+							if (li && types_match(r, compiler->builtin_unsized_integer) ) {
+								bin->type = bin->right->type = bin->left->type;
+								return bin;
+							}
+							if (lf && types_match(r, compiler->builtin_unsized_integer) ) {
+								bin->type = bin->right->type = bin->left->type;
+								return bin;
+							}
+							break;
 						}
-						if (types_match(l, compiler->builtin_unsized_integer) && ri) {
-							bin->type = bin->left->type = bin->right->type;
-							return bin;
+						case ne:
+						case eq:
+						case lt:
+						case gt:
+						case le:
+						case ge: {
+							bin->type = compiler->builtin_bool.ident;
+							if (types_match(l, compiler->builtin_unsized_integer) && types_match(r, compiler->builtin_unsized_integer) ) {
+								return bin;
+							} else if (types_match(l, compiler->builtin_unsized_integer) && ri) {
+								bin->left->type = bin->right->type;
+								return bin;
+							} else if (types_match(r, compiler->builtin_unsized_integer) && li) {
+								bin->right->type = bin->left->type;
+								return bin;
+							}
+
+							break;
 						}
-						if (li && types_match(r, compiler->builtin_unsized_integer) ) {
-							bin->type = bin->right->type = bin->left->type;
-							return bin;
-						}
-						if (lf && types_match(r, compiler->builtin_unsized_integer) ) {
-							bin->type = bin->right->type = bin->left->type;
-							return bin;
-						}
-						break;
 					}
-					case ne:
-					case eq:
-					case lt:
-					case gt:
-					case le:
-					case ge: {
-						bin->type = compiler->builtin_bool.ident;
-						if (types_match(l, compiler->builtin_unsized_integer) && types_match(r, compiler->builtin_unsized_integer) ) {
-							return bin;
-						} else if (types_match(l, compiler->builtin_unsized_integer) && ri) {
-							bin->left->type = bin->right->type;
-							return bin;
-						} else if (types_match(r, compiler->builtin_unsized_integer) && li) {
-							bin->right->type = bin->left->type;
-							return bin;
-						}
-
-						break;
-					}
-				}
-				// END UNSIZED INTEGER DEAL
+					// END UNSIZED INTEGER DEAL
 
 
-				switch (bin->operation) {
-					case add:
-					case sub:
-					case mul:
-					case div:
-					case mod:
-					case addass:
-					case subass:
-					case mulass:
-					case divass:
-					case modass: {
-						if (li && ri) {
-							if (l->size == r->size) {
-								if (signedness_matches(l, r)) {
-									assert(l == r);
-									bin->type = bin->left->type;
+					switch (bin->operation) {
+						case add:
+						case sub:
+						case mul:
+						case div:
+						case mod:
+						case addass:
+						case subass:
+						case mulass:
+						case divass:
+						case modass: {
+							if (li && ri) {
+								if (l->size == r->size) {
+									if (signedness_matches(l, r)) {
+										assert(l == r);
+										bin->type = bin->left->type;
+										return bin;
+									}
+									break;
+								} else {
+									bin->type = l->size > r->size ? l : r;
 									return bin;
 								}
 								break;
-							} else {
+							}
+
+							if (lf && rf) {
 								bin->type = l->size > r->size ? l : r;
 								return bin;
 							}
 							break;
 						}
 
-						if (lf && rf) {
-							bin->type = l->size > r->size ? l : r;
-							return bin;
-						}
-						break;
-					}
+						case ne:
+						case eq: {
+							bin->type = compiler->builtin_bool.ident;
 
-					case ne:
-					case eq: {
-						bin->type = compiler->builtin_bool.ident;
-
-						if (types_match(l, r)) {
-							return bin;
-						}
-
-						if ((li && types_match(r, compiler->builtin_unsized_integer) ) || (ri && types_match(l, compiler->builtin_unsized_integer) )) {
-							return bin;
-						}
-
-						break;
-					}
-
-					case lt:
-					case gt:
-					case le:
-					case ge: {
-						bin->type = compiler->builtin_bool.ident;
-
-						if (li && ri) {
-							if (signedness_matches(l, r)) {
+							if (types_match(l, r)) {
 								return bin;
+							}
+
+							if ((li && types_match(r, compiler->builtin_unsized_integer) ) || (ri && types_match(l, compiler->builtin_unsized_integer) )) {
+								return bin;
+							}
+
+							break;
+						}
+
+						case lt:
+						case gt:
+						case le:
+						case ge: {
+							bin->type = compiler->builtin_bool.ident;
+
+							if (li && ri) {
+								if (signedness_matches(l, r)) {
+									return bin;
+								}
+								break;
+							}
+
+							if ((li && types_match(r, compiler->builtin_unsized_integer) ) || (ri && types_match(l, compiler->builtin_unsized_integer) )) {
+								return bin;
+							}
+
+							if (lf && rf && types_match(l, r)) {
+								return bin;
+							}
+
+							break;
+						}
+
+						case bor:
+						case band:
+						case bxor:
+						case borass:
+						case bandass:
+						case bxorass: {
+							if (li && ri) {
+								if (signedness_matches(l, r)) {
+									bin->type = l->size > r->size ? l : r;
+									return bin;
+								}
+								break;
 							}
 							break;
 						}
 
-						if ((li && types_match(r, compiler->builtin_unsized_integer) ) || (ri && types_match(l, compiler->builtin_unsized_integer) )) {
-							return bin;
-						}
-
-						if (lf && rf && types_match(l, r)) {
-							return bin;
-						}
-
-						break;
-					}
-
-					case bor:
-					case band:
-					case bxor:
-					case borass:
-					case bandass:
-					case bxorass: {
-						if (li && ri) {
-							if (signedness_matches(l, r)) {
-								bin->type = l->size > r->size ? l : r;
+						case bsl:
+						case bsr:
+						case bslass:
+						case bsrass: {
+							if ((li && types_match(r, compiler->builtin_unsized_integer) ) || (ri && types_match(l, compiler->builtin_unsized_integer) )) {
+								bin->type = types_match(r, compiler->builtin_unsized_integer) ? l : r;
 								return bin;
 							}
+
 							break;
 						}
-						break;
-					}
-
-					case bsl:
-					case bsr:
-					case bslass:
-					case bsrass: {
-						if ((li && types_match(r, compiler->builtin_unsized_integer) ) || (ri && types_match(l, compiler->builtin_unsized_integer) )) {
-							bin->type = types_match(r, compiler->builtin_unsized_integer) ? l : r;
-							return bin;
-						}
-
-						break;
 					}
 				}
 			} else if (lp && rp) {
@@ -10083,6 +10105,75 @@ AstExpression *typecheck(TypecheckState *state, AstBinaryOperator *bin) {
 						}
 
 
+						auto get_comparer_ident = [&](AstStruct *comparee) {
+
+							if (auto found = generated_comparers.find(comparee)) {
+								return found->value;
+							}
+
+							auto arg0ident = [&] { auto ident = AstIdentifier::create(); ident->name = "a"str; return ident; };
+							auto arg1ident = [&] { auto ident = AstIdentifier::create(); ident->name = "b"str; return ident; };
+
+							auto lambda = AstLambda::create();
+							lambda->convention = CallingConvention::tlang;
+							lambda->constant_scope->parent = &compiler->global_scope;
+
+							auto add_param = [&] (KeyString name) {
+								auto param = AstDefinition::create();
+								param->name = name;
+								param->definition_location = LambdaDefinitionLocation::parameter;
+								param->container_node = lambda;
+
+								// TODO: all structs, named and unnamed should have a definition.
+								assert(comparee->definition, comparee->location, "Struct has no definition and is used in ==. This case is not implemented yet.");
+
+								param->type = make_identifier(comparee->definition);
+								lambda->parameters.add(param);
+								lambda->parameter_scope->add(param);
+							};
+
+							add_param("a"str);
+							add_param("b"str);
+
+							// a.m0 == b.m0 && a.m1 == b.m1 &&  ...
+							for (auto member : comparee->data_members) {
+								auto member_ident = [&]() {
+									auto ident = AstIdentifier::create();
+									ident->name = member->name;
+									return ident;
+								};
+
+								auto comparison = make_binop(eq, make_binop(dot, arg0ident(), member_ident()), make_binop(dot, arg1ident(), member_ident()));
+								if (lambda->body) {
+									lambda->body = make_binop(land, lambda->body, comparison);
+								} else {
+									lambda->body = comparison;
+								}
+							}
+
+							auto comparer_def = AstDefinition::create();
+							comparer_def->parent_scope = &compiler->global_scope;
+							comparer_def->expression = lambda;
+							comparer_def->is_constant = true;
+							comparer_def->type = lambda->type;
+
+
+							{
+								scoped_replace(state->current_scope, &compiler->global_scope);
+								scoped_replace(state->current_lambda_or_struct_or_enum, 0);
+								typecheck(state, comparer_def);
+							}
+
+							auto comparer_ident = AstIdentifier::create();
+							comparer_ident->possible_definitions.set(comparer_def);
+							comparer_ident->type = comparer_def->type;
+
+							generated_comparers.get_or_insert(comparee) = comparer_ident;
+
+							return comparer_ident;
+						};
+
+
 					retry:
 						SWITCH_TO_FIBER(new_state.fiber);
 						switch (fiber_result) {
@@ -10091,7 +10182,32 @@ AstExpression *typecheck(TypecheckState *state, AstBinaryOperator *bin) {
 								goto retry;
 							}
 							case TypecheckResult::fail: {
-								state->reporter.reports.add(new_state.reporter.reports);
+								// HACK: this is cringe
+								if (find(new_state.reporter.reports[0].message, "was not declared"str)) {
+									if (auto ls = ::as<AstStruct>(l)) {
+										// Create default implementation for == or !=
+										if (types_match(l, r) && !struct_is_built_in(ls)) {
+											switch (bin->operation) {
+												case eq: {
+													call->callable = get_comparer_ident(ls);
+													typecheck(state, call);
+													return call;
+												}
+												case ne: {
+													call->callable = get_comparer_ident(ls);
+													auto result = make_unary(UnaryOperation::lnot, call);
+													typecheck(state, result);
+													return result;
+												}
+											}
+											break;
+										}
+									}
+
+									state->reporter.error(bin->location, "No operator {} defined for {} and {}", bin->operation, type_to_string(l), type_to_string(r));
+								} else {
+									state->reporter.reports.add(new_state.reporter.reports);
+								}
 								yield(TypecheckResult::fail);
 								break;
 							}
@@ -10187,7 +10303,12 @@ AstExpression *typecheck(TypecheckState *state, AstBinaryOperator *bin) {
 											goto retry3;
 										}
 										case TypecheckResult::fail: {
-											state->reporter.reports.add(new_state.reporter.reports);
+											// HACK: this is cringe
+											if (find(new_state.reporter.reports[0].message, "was not declared"str)) {
+												state->reporter.error(bin->location, "No operator {} nor {}= defined for {} and {}", op, op, type_to_string(l), type_to_string(r));
+											} else {
+												state->reporter.reports.add(new_state.reporter.reports);
+											}
 											yield(TypecheckResult::fail);
 											break;
 										}
@@ -11723,9 +11844,9 @@ ParsedArguments parse_arguments(Span<Span<utf8>> arguments) {
 			compiler->debug_template = true;
 		} else if (arguments[i] == "--debug-overload"str) {
 			compiler->debug_overload = true;
-		} else if (starts_with(arguments[i], "--print-lowered"str)) {
+		} else if (starts_with(arguments[i], "--lower"str)) {
 			compiler->print_lowered = true;
-			compiler->print_lowered_filter = arguments[i].subspan("--print-lowered"str.count);
+			compiler->print_lowered_filter = arguments[i].subspan("--lower"str.count);
 		} else if (arguments[i] == "--optimize"str) {
 			compiler->optimize = true;
 		} else if (arguments[i] == "--yield"str) {
@@ -12559,9 +12680,6 @@ restart_main:
 	}
 
 	construct(parsed_files);
-	construct(compiler->global_scope);
-	//construct(typechecked_globals);
-	//construct(names_not_available_for_globals);
 	construct(built_in_casts);
 
 	construct(double_char_tokens);
@@ -12574,7 +12692,8 @@ restart_main:
 	construct(has_value_overloads);
 
 	construct(typeinfo_definitinos);
-	construct(compiler->span_instantiations);
+
+	construct(generated_comparers);
 
 #if SMALL_AST
 	Pool32<AstExpression>::init();

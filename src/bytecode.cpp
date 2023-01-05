@@ -1307,7 +1307,7 @@ void FrameBuilder::load_address_of(AstExpression *expression, RegisterOrAddress 
 
 			auto lambda = (AstLambda *)expression;
 
-			if (lambda->has_body) {
+			if (lambda->body) {
 				Instruction *instr = 0;
 				if (destination.is_in_register) {
 					instr = II(lea, destination.reg, Address(Register::instructions));
@@ -2920,7 +2920,7 @@ void FrameBuilder::append(AstIdentifier *identifier, RegisterOrAddress destinati
 
 	if (definition->is_constant && definition->expression) {
 		if (auto lambda = get_lambda(definition->expression)) {
-			if (lambda->has_body) {
+			if (lambda->body) {
 				assert(definition->offset != -1);
 				if (destination.is_in_register) {
 					I(lea, destination.reg, Register::instructions + definition->offset);
