@@ -1129,173 +1129,63 @@ Instruction *FrameBuilder::add_instruction(Instruction next) {
 	return &instructions.add(next);
 }
 
-inline umm append(StringBuilder &b, LambdaDefinitionLocation d) {
-	switch (d) {
-		using enum LambdaDefinitionLocation;
-		case body:			  return append(b, "body");
-		case parameter:		  return append(b, "parameter");
-		case return_parameter: return append(b, "return_parameter");
-	}
-	return 0;
-}
-
-enum class DefinitionOrigin {
-	unknown,
-	constants,
-	rwdata,
-	zeros,
-	return_parameter,
-	parameter,
-	local,
-};
-
-DefinitionOrigin get_definition_origin(AstDefinition *definition) {
-	if (definition->container_node && !definition->is_constant) {
-		switch (definition->container_node->kind) {
-			case Ast_Lambda: {
-				switch (definition->definition_location) {
-					case LambdaDefinitionLocation::return_parameter:
-					case LambdaDefinitionLocation::parameter:
-					case LambdaDefinitionLocation::body: {
-
-						auto parent_lambda = (AstLambda *)definition->container_node;
-
-						switch (definition->definition_location) {
-							case LambdaDefinitionLocation::return_parameter:
-								return DefinitionOrigin::return_parameter;
-
-							case LambdaDefinitionLocation::parameter:
-								return DefinitionOrigin::parameter;
-
-							case LambdaDefinitionLocation::body:
-								return DefinitionOrigin::local;
-							default: invalid_code_path();
-						}
-						break;
-					}
-					default: invalid_code_path();
-				}
-			}
-			default: invalid_code_path();
-		}
-	} else {
-		if (definition->is_constant) {
-			return DefinitionOrigin::constants;
-		} else {
-			if (definition->expression) {
-				return DefinitionOrigin::rwdata;
-			} else {
-				return DefinitionOrigin::zeros;
-			}
-		}
-	}
-}
-
 Address get_known_address_of(AstDefinition *definition) {
 	if (definition->offset == -1) {
 		immediate_error(definition->location, "INTERNAL ERROR: definition->offset is -1 in get_known_address_of");
 		exit(-1);
 	}
 
-	if (definition->container_node && !definition->is_constant) {
-		switch (definition->container_node->kind) {
-			case Ast_Lambda: {
-				auto parent_lambda = (AstLambda *)definition->container_node;
-				assert(parent_lambda->kind == Ast_Lambda);
-				assert(parent_lambda->parameters_size != -1);
+	auto offset = definition->offset;
 
-				switch (definition->definition_location) {
-					case LambdaDefinitionLocation::return_parameter:
-						return Address(Register::return_parameters);
-
-					case LambdaDefinitionLocation::parameter:
-						return Register::parameters + definition->offset;
-
-					case LambdaDefinitionLocation::body: {
-						return Register::locals + definition->offset;
-					}
-					default: invalid_code_path();
-				}
-				break;
-			}
-			default: invalid_code_path();
-		}
-	} else {
-		// Global
-		auto offset = definition->offset;
-
-		if (definition->expression && is_lambda(definition->expression))
-			return Register::instructions + offset;
-
-		if (definition->is_constant)
+	switch (get_definition_origin(definition))
+	{
+		case DefinitionOrigin::constants:
+			if (definition->expression && is_lambda(definition->expression))
+				return Register::instructions + offset;
 			return Register::constants + offset;
 
-		if (definition->expression) {
-			return Register::rwdata + offset;
-		} else {
-			return Register::zeros + offset;
-		}
+		case DefinitionOrigin::rwdata:           return Register::rwdata + offset;
+		case DefinitionOrigin::zeros:            return Register::zeros + offset;
+		case DefinitionOrigin::return_parameter: return Address(Register::return_parameters);
+		case DefinitionOrigin::parameter:        return Register::parameters + offset;
+		case DefinitionOrigin::local:            return Register::locals + offset;
+		default: invalid_code_path();
 	}
 }
 
 void FrameBuilder::load_address_of(AstDefinition *definition, RegisterOrAddress destination) {
-	push_comment(format("load address of {} (definition_location={})"str, definition->name, definition->definition_location));
+	push_comment(format("load address of {} (definition_origin={})"str, definition->name, get_definition_origin(definition)));
 
 	assert(definition->offset != -1);
 
-	if (definition->container_node && !definition->is_constant) {
-		switch (definition->container_node->kind) {
-			case Ast_Lambda: {
-				switch (definition->definition_location) {
-					case LambdaDefinitionLocation::body: {
-						auto addr = get_known_address_of(definition);
-						if (destination.is_in_register) {
-							I(lea, destination.reg, addr);
-						} else {
-							tmpreg(tmp);
-							I(lea, tmp, addr);
-							mov_mr(destination.address, tmp, compiler->stack_word_size);
-						}
-						break;
-					}
-					case LambdaDefinitionLocation::return_parameter:
-					case LambdaDefinitionLocation::parameter: {
-						auto addr = get_known_address_of(definition);
-						if (get_size(definition->type) <= compiler->stack_word_size) {
-							if (destination.is_in_register) {
-								I(lea, destination.reg, addr);
-							} else {
-								tmpreg(tmp);
-								I(lea, tmp, addr);
-								mov_mr(destination.address, tmp, compiler->stack_word_size);
-							}
-						} else {
-							if (destination.is_in_register) {
-								I(lea, destination.reg, addr);
-								I(mov8_rm, destination.reg, Address(destination.reg));
-							} else {
-								tmpreg(tmp);
-								I(mov8_rm, tmp, addr);
-								mov_mr(destination.address, tmp, compiler->stack_word_size);
-							}
-						}
-						break;
-					}
-					default: invalid_code_path();
+	auto addr = get_known_address_of(definition);
+
+	switch (get_definition_origin(definition)) {
+		case DefinitionOrigin::parameter:
+		case DefinitionOrigin::return_parameter: {
+			if (get_size(definition->type) > compiler->stack_word_size) {
+				// One layer of indirection
+				if (destination.is_in_register) {
+					I(lea, destination.reg, addr);
+					I(mov8_rm, destination.reg, Address(destination.reg));
+				} else {
+					tmpreg(tmp);
+					I(mov8_rm, tmp, addr);
+					mov_mr(destination.address, tmp, compiler->stack_word_size);
 				}
-				break;
+				return;
 			}
-			default: invalid_code_path();
+			break;
 		}
+	}
+
+	// Simple load
+	if (destination.is_in_register) {
+		I(lea, destination.reg, addr);
 	} else {
-		auto addr = get_known_address_of(definition);
-		if (destination.is_in_register) {
-			I(lea, destination.reg, addr);
-		} else {
-			tmpreg(tmp);
-			I(lea, tmp, addr);
-			mov_mr(destination.address, tmp, compiler->stack_word_size);
-		}
+		tmpreg(tmp);
+		I(lea, tmp, addr);
+		mov_mr(destination.address, tmp, compiler->stack_word_size);
 	}
 }
 void FrameBuilder::load_address_of(AstExpression *expression, RegisterOrAddress destination) {
@@ -1524,54 +1414,35 @@ void FrameBuilder::load_address_of(AstExpression *expression, RegisterOrAddress 
 }
 
 DefinitionAddress FrameBuilder::get_address_of(AstDefinition *definition) {
-	push_comment(format("load address of {} (definition_location={})"str, definition->name, definition->definition_location));
 
-	if (definition->container_node && !definition->is_constant) {
-		switch (definition->container_node->kind) {
-			case Ast_Lambda: {
-				switch (definition->definition_location) {
-					case LambdaDefinitionLocation::body: {
-						return {
-							.is_known = true,
-							.known_address = get_known_address_of(definition),
-						};
-					}
-					case LambdaDefinitionLocation::return_parameter:
-					case LambdaDefinitionLocation::parameter: {
-						auto addr = get_known_address_of(definition);
-						if (get_size(definition->type) <= compiler->stack_word_size) {
-							return {
-								.is_known = true,
-								.known_address = addr,
-							};
-						} else {
-							auto destination = allocate_register_or_temporary(compiler->stack_word_size);
-							if (destination.is_in_register) {
-								I(lea, destination.reg, addr);
-								mov_rm(destination.reg, Address(destination.reg), compiler->stack_word_size);
-							} else {
-								tmpreg(tmp);
-								mov_rm(tmp, addr, compiler->stack_word_size);
-								mov_mr(destination.address, tmp, compiler->stack_word_size);
-							}
-							return {
-								.is_known = false,
-								.computed_address = destination,
-							};
-						}
-					}
-					default: invalid_code_path();
+	auto addr = get_known_address_of(definition);
+
+	switch (get_definition_origin(definition)) {
+		case DefinitionOrigin::parameter:
+		case DefinitionOrigin::return_parameter: {
+			if (get_size(definition->type) > compiler->stack_word_size) {
+				auto destination = allocate_register_or_temporary(compiler->stack_word_size);
+				if (destination.is_in_register) {
+					I(lea, destination.reg, addr);
+					mov_rm(destination.reg, Address(destination.reg), compiler->stack_word_size);
+				} else {
+					tmpreg(tmp);
+					mov_rm(tmp, addr, compiler->stack_word_size);
+					mov_mr(destination.address, tmp, compiler->stack_word_size);
 				}
-				break;
+				return {
+					.is_known = false,
+					.computed_address = destination,
+				};
 			}
-			default: invalid_code_path();
+			break;
 		}
-	} else {
-		return {
-			.is_known = true,
-			.known_address = get_known_address_of(definition),
-		};
 	}
+
+	return {
+		.is_known = true,
+		.known_address = addr,
+	};
 }
 
 void FrameBuilder::append_memory_set(Address d, s64 s, s64 size) {
@@ -1736,144 +1607,25 @@ void FrameBuilder::append(AstStatement *statement) {
 void FrameBuilder::append(AstDefinition *definition) {
 	assert(definition->type);
 
-	if (definition->container_node && !definition->is_constant) {
-		switch (definition->container_node->kind) {
-			case Ast_Lambda: {
-				switch (definition->definition_location) {
-					case LambdaDefinitionLocation::body: {
-						assert(definition->offset != -1);
-						assert((definition->offset & 0xf) == 0);
-						// push_comment(format("(__int64*)(rbp+{}),{}"str, definition->offset, ceil(get_size(definition->type),16ll)/16ll));
+	switch (get_definition_origin(definition)) {
+		case DefinitionOrigin::local: {
+			assert(definition->offset != -1);
+			assert((definition->offset & 0xf) == 0);
 
-						auto addr = Register::locals + definition->offset;
+			auto addr = Register::locals + definition->offset;
 
-						if (definition->expression) {
-							append(definition->expression, addr);
-						} else {
-							if (auto Struct = direct_as<AstStruct>(definition->type); Struct && Struct->default_value) {
-								copy(addr, Register::constants + Struct->default_value_offset, get_size(definition->type), false);
-							} else {
-								append_memory_set(addr, 0, get_size(definition->type));
-							}
-						}
-						break;
-					}
-					default: invalid_code_path();
+			if (definition->expression) {
+				append(definition->expression, addr);
+			} else {
+				if (auto Struct = direct_as<AstStruct>(definition->type); Struct && Struct->default_value) {
+					copy(addr, Register::constants + Struct->default_value_offset, get_size(definition->type), false);
+				} else {
+					append_memory_set(addr, 0, get_size(definition->type));
 				}
-				break;
 			}
-		}
-	} else {
-		// Global
-
-		// definition->expression was evaluated at typecheck time an is already in the appropriate section,
-		// nothing to do here.
-	}
-#if 0
-	//if (definition->_uid == 99)
-	//	debug_break();
-
-
-	// TODO: how can this happen
-	if (definition->built_in) {
-		invalid_code_path();
-		return;
-	}
-
-
-	auto definition_size = get_size(definition->type);
-	assert(definition_size != -1);
-
-	// Don't do anything for constant definitions in lambdas
-	if (definition->container_node && definition->container_node->kind != Ast_Struct && definition->is_constant) {
-		return;
-	}
-
-	if (definition->expression && definition->expression->kind == Ast_Lambda) {
-		// NOTE: no need to append lambdas here anymore. they are appended in build_bytecode
-		// assert_always(append((AstLambda *)definition->expression, false).count == 0);
-		return;
-	}
-
-	if (definition->expression) {
-		if (definition->expression->kind == Ast_Struct) {
-			auto Struct = (AstStruct *)definition->expression;
-			for_each (Struct->scope->definitions, [&](auto, auto members) {
-				for (auto member : members) {
-					if (member->is_constant && member->expression && member->expression->kind == Ast_Lambda) {
-						append(member);
-					}
-				}
-			});
+			break;
 		}
 	}
-
-	if (definition->expression && is_type(definition->expression))
-		return;
-
-	if (definition->container_node) {
-		if (definition->container_node->kind == Ast_Lambda) {
-			auto parent_lambda = (AstLambda *)definition->container_node;
-			push_comment(format(u8"definition {}", definition->name));
-			assert(!definition->is_parameter);
-
-			auto size = ceil(definition_size, compiler->stack_word_size);
-
-			// definition->bytecode_offset = parent_lambda->offset_accumulator;
-			// parent_lambda->offset_accumulator += size;
-
-			if (definition->expression) {
-				append(definition->expression, rb - definition->offset);
-
-
-				//if (types_match(definition->expression->type, compiler->builtin_noinit.Struct)) {
-				//	I(sub_rc, rs, size);
-				//} else {
-				//	dont_care_about_definition_spacing = true;
-				//	defer { dont_care_about_definition_spacing = false; };
-				//
-				//	auto cursor_before = ls->stack_state.cursor;
-				//	append_to_stack(definition->expression);
-				//	auto cursor_after = ls->stack_state.cursor;
-				//
-				//	auto size_with_spacing = (cursor_after - cursor_before) * compiler->stack_word_size;
-				//	auto size_diff = size_with_spacing - ceil(size, compiler->stack_word_size);
-				//
-				//	// account for spacing
-				//	assert(size_diff == 0 || size_diff == 8);
-				//	definition->bytecode_offset += size_diff;
-				//	parent_lambda->offset_accumulator += size_diff;
-				//}
-			} else {
-				push_zeros(size);
-			}
-		} else {
-			invalid_code_path();
-		}
-	} else {
-#if 0
-		if (definition->is_constant) {
-			if (definition->expression) {
-				auto literal = (AstLiteral *)get_literal(definition->expression);
-				if (!literal)
-					literal = definition->evaluated;
-				assert(literal);
-				definition->bytecode_offset = append_constant_data(literal);
-
-
-			} else {
-				definition->bytecode_offset = constant_data_builder.allocate(get_size(definition->type));
-			}
-		} else {
-			if (definition->expression) {
-				definition->bytecode_offset = data_builder.append(value_as_bytes((s64)get_constant_integer(definition->expression).value()));
-			} else {
-				definition->bytecode_offset = allocate_zero_data(definition_size);
-			}
-		}
-#endif
-	}
-#endif
 }
 void FrameBuilder::append(AstReturn *ret) {
 	push_comment(u8"return"s);
@@ -4769,7 +4521,7 @@ void BytecodeBuilder::append(AstLambda *lambda) {
 	lambda->return_parameter->offset = 0;
 	assert(lambda->return_parameter->container_node);
 	assert(lambda->return_parameter->container_node->kind == Ast_Lambda);
-	assert(lambda->return_parameter->definition_location == LambdaDefinitionLocation::return_parameter);
+	assert(get_definition_origin(lambda->return_parameter) == DefinitionOrigin::return_parameter);
 
 	// scoped_replace(current_frame, &frame);
 

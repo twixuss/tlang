@@ -1025,11 +1025,10 @@ AstDefinition *make_retparam(AstExpression *type, AstLambda *parent) {
 	auto retparam = AstDefinition::create();
 
 	retparam->type = type;
-	retparam->definition_location = LambdaDefinitionLocation::return_parameter;
 	retparam->container_node = parent;
 	retparam->location = type->location;
 
-	// retparam->add_to_scope(parser->current_scope);
+	parent->parameter_scope->add(retparam);
 
 	return retparam;
 }
@@ -1097,11 +1096,7 @@ AstDefinition *create_definition_in_current_scope(Parser *parser, String name, A
 
 	auto definition = create_definition(parser, name, type);
 
-	if (name != "_"str) {
-		scoped_lock(parser->current_scope);
-
-		parser->current_scope->add(definition TL_LA);
-	}
+	parser->current_scope->add(definition TL_LA);
 
 	return definition;
 }
@@ -1207,8 +1202,6 @@ AstStruct *parse_struct(Parser *parser, String token) {
 					return 0;
 
 				definition->location = {name_location.begin(), definition->type->location.end()};
-
-				definition->definition_location = LambdaDefinitionLocation::parameter;
 
 				if (parser->token->kind == ')') {
 					break;
@@ -1323,7 +1316,6 @@ AstExpression *parse_lambda(Parser *parser) {
 			AstDefinition *parameter = create_definition_in_current_scope(parser, name, 0);
 
 			parameter->name = name;
-			parameter->definition_location = LambdaDefinitionLocation::parameter;
 			parameter->has_using = has_using;
 			parameter->location = name_location;
 
@@ -1448,7 +1440,6 @@ AstExpression *parse_lambda(Parser *parser) {
 				if (!lambda->return_parameter) {
 					return 0;
 				}
-				lambda->return_parameter->definition_location = LambdaDefinitionLocation::return_parameter;
 			} else {
 				parser->token = first_retparam_token;
 				goto parse_retparam_expression;
@@ -1462,7 +1453,6 @@ AstExpression *parse_lambda(Parser *parser) {
 				return 0;
 			}
 			lambda->return_parameter->has_using = true;
-			lambda->return_parameter->definition_location = LambdaDefinitionLocation::return_parameter;
 			break;
 		}
 		default: {
@@ -1636,6 +1626,9 @@ Then the body may follow:
 
 		lambda->return_parameter = make_retparam(compiler->builtin_void.ident, lambda);
 	}
+
+	if (lambda->return_parameter)
+		assert(lambda->return_parameter->parent_scope, lambda->return_parameter->location, "INTERNAL ERROR: definition's scope is null");
 
 	// NOTE: return parameter may be null. It will be inferred from the body after typechecking.
 	return lambda;
@@ -3048,10 +3041,6 @@ AstDefinition *parse_definition(String name, String location, Parser *parser) {
 
 			parser->next();
 		}
-	}
-
-	if (parser->container_node && parser->container_node->kind == Ast_Lambda) {
-		definition->definition_location = LambdaDefinitionLocation::body;
 	}
 
 	return definition;
@@ -5652,7 +5641,7 @@ bool ensure_assignable(Reporter *reporter, AstExpression *expression) {
 				reporter->error(identifier->location, "Can't assign to '{}' because it is constant.", identifier->location);
 				return false;
 			}
-			if (definition->definition_location == LambdaDefinitionLocation::parameter) {
+			if (get_definition_origin(definition) == DefinitionOrigin::parameter) {
 				reporter->error(identifier->location, "Right now assigning to function parameters is not allowed.");
 				return false;
 			}
@@ -5910,7 +5899,6 @@ AstDefinition *deep_copy(AstDefinition *s) {
 	d->expression = deep_copy(s->expression);
 	d->typechecked = s->typechecked;
 	d->evaluated = deep_copy(raw(s->evaluated));
-	d->definition_location = s->definition_location;
 	d->offset = s->offset;
 	d->has_using = s->has_using;
 
@@ -6248,7 +6236,9 @@ AstStatement *typecheck(TypecheckState *state, AstDefinition *definition) {
 
 	scoped_replace(state->currently_typechecking_definition, definition);
 
-	bool is_parameter = definition->definition_location == LambdaDefinitionLocation::parameter;
+	auto definition_origin = get_definition_origin(definition);
+
+	bool is_parameter = definition_origin == DefinitionOrigin::parameter;
 	enum {
 		Global,
 		Lambda,
@@ -6344,7 +6334,7 @@ AstStatement *typecheck(TypecheckState *state, AstDefinition *definition) {
 				// definition->type = type_unknown;
 				yield(TypecheckResult::fail);
 			}
-			if (definition->definition_location != LambdaDefinitionLocation::return_parameter && (!definition->expression || !is_type(definition->expression)) && get_size(definition->type) == 0) {
+			if (definition_origin != DefinitionOrigin::return_parameter && (!definition->expression || !is_type(definition->expression)) && get_size(definition->type) == 0) {
 				if (!types_match(definition->type, compiler->builtin_unsized_integer) && !types_match(definition->type, compiler->builtin_unsized_float)) {
 					state->reporter.error(definition->location.data ? definition->location : definition->type->location, "Defining a variable with 0 size is not allowed. The type is {}.", type_to_string(definition->type));
 					yield(TypecheckResult::fail);
@@ -6386,7 +6376,7 @@ AstStatement *typecheck(TypecheckState *state, AstDefinition *definition) {
 				break;
 			}
 			case Lambda: {
-				if (definition->definition_location == LambdaDefinitionLocation::body) {
+				if (definition_origin == DefinitionOrigin::local) {
 					assert(state->current_lambda_or_struct_or_enum->kind == Ast_Lambda);
 					set_local_offset(state, definition, (AstLambda *)state->current_lambda_or_struct_or_enum);
 				}
@@ -6462,7 +6452,6 @@ AstStatement *typecheck(TypecheckState *state, AstFor *For) {
 			auto range_definition = AstDefinition::create();
 			range_definition->name = "\\range"str;
 			range_definition->container_node = state->current_lambda_or_struct_or_enum;
-			range_definition->definition_location = LambdaDefinitionLocation::body;
 			range_definition->expression = For->range;
 			range_definition->type = range_definition->expression->type;
 			range_definition->typechecked = true;
@@ -6472,7 +6461,6 @@ AstStatement *typecheck(TypecheckState *state, AstFor *For) {
 			auto it1 = AstDefinition::create();
 			it1->name = "\\it"str;
 			it1->container_node = state->current_lambda_or_struct_or_enum;
-			it1->definition_location = LambdaDefinitionLocation::body;
 			it1->expression = make_binop(BinaryOperation::dot, make_identifier(range_definition->name), make_identifier("min"str));
 			replacement_block->scope->add(raw(it1));
 
@@ -6484,7 +6472,6 @@ AstStatement *typecheck(TypecheckState *state, AstFor *For) {
 			auto it2 = AstDefinition::create();
 			it2->name = For->iterator_name;
 			it2->container_node = state->current_lambda_or_struct_or_enum;
-			it2->definition_location = LambdaDefinitionLocation::body;
 			it2->expression = make_identifier(it1->name);
 			While->scope->add(raw(it2));
 
@@ -6505,7 +6492,6 @@ AstStatement *typecheck(TypecheckState *state, AstFor *For) {
 			auto range_definition = AstDefinition::create();
 			range_definition->name = "\\span"str;
 			range_definition->container_node = state->current_lambda_or_struct_or_enum;
-			range_definition->definition_location = LambdaDefinitionLocation::body;
 			range_definition->expression = For->range;
 			range_definition->type = range_definition->expression->type;
 			range_definition->typechecked = true;
@@ -6515,14 +6501,12 @@ AstStatement *typecheck(TypecheckState *state, AstFor *For) {
 			auto it1 = AstDefinition::create();
 			it1->name = "\\it"str;
 			it1->container_node = state->current_lambda_or_struct_or_enum;
-			it1->definition_location = LambdaDefinitionLocation::body;
 			it1->expression = make_binop(BinaryOperation::dot, make_identifier(range_definition->name), make_identifier("data"str));
 			replacement_block->scope->add(raw(it1));
 
 			auto end = AstDefinition::create();
 			end->name = "\\end"str;
 			end->container_node = state->current_lambda_or_struct_or_enum;
-			end->definition_location = LambdaDefinitionLocation::body;
 			end->expression = make_binop(BinaryOperation::add,
 				make_binop(BinaryOperation::dot, make_identifier(range_definition->name), make_identifier("data"str)),
 				make_binop(BinaryOperation::dot, make_identifier(range_definition->name), make_identifier("count"str))
@@ -6537,7 +6521,6 @@ AstStatement *typecheck(TypecheckState *state, AstFor *For) {
 			auto it2 = AstDefinition::create();
 			it2->name = For->iterator_name;
 			it2->container_node = state->current_lambda_or_struct_or_enum;
-			it2->definition_location = LambdaDefinitionLocation::body;
 			it2->expression = make_identifier(it1->name);
 			While->scope->add(raw(it2));
 
@@ -6558,7 +6541,6 @@ AstStatement *typecheck(TypecheckState *state, AstFor *For) {
 			auto range_definition = AstDefinition::create();
 			range_definition->name = "\\arr"str;
 			range_definition->container_node = state->current_lambda_or_struct_or_enum;
-			range_definition->definition_location = LambdaDefinitionLocation::body;
 			if (is_addressable(For->range)) {
 				range_definition->expression = make_address_of(&reporter, For->range);
 			} else {
@@ -6572,14 +6554,12 @@ AstStatement *typecheck(TypecheckState *state, AstFor *For) {
 			auto it1 = AstDefinition::create();
 			it1->name = "\\it"str;
 			it1->container_node = state->current_lambda_or_struct_or_enum;
-			it1->definition_location = LambdaDefinitionLocation::body;
 			it1->expression = make_unary(UnaryOperation::address_of, make_subscript(make_unary(UnaryOperation::pointer_or_dereference_or_unwrap, make_identifier(range_definition->name)), make_integer(0ll)));
 			replacement_block->scope->add(raw(it1));
 
 			auto end = AstDefinition::create();
 			end->name = "\\end"str;
 			end->container_node = state->current_lambda_or_struct_or_enum;
-			end->definition_location = LambdaDefinitionLocation::body;
 			end->expression = make_binop(BinaryOperation::add,
 				make_identifier(it1->name),
 				make_binop(BinaryOperation::dot, make_unary(UnaryOperation::pointer_or_dereference_or_unwrap, make_identifier(range_definition->name)), make_identifier("count"str))
@@ -6594,7 +6574,6 @@ AstStatement *typecheck(TypecheckState *state, AstFor *For) {
 			auto it2 = AstDefinition::create();
 			it2->name = For->iterator_name;
 			it2->container_node = state->current_lambda_or_struct_or_enum;
-			it2->definition_location = LambdaDefinitionLocation::body;
 			it2->expression = make_identifier(it1->name);
 			While->scope->add(raw(it2));
 
@@ -6620,7 +6599,6 @@ AstStatement *typecheck(TypecheckState *state, AstFor *For) {
 			auto range_definition = AstDefinition::create();
 			range_definition->name = "\\range"str;
 			range_definition->container_node = state->current_lambda_or_struct_or_enum;
-			range_definition->definition_location = LambdaDefinitionLocation::body;
 			range_definition->expression = For->range;
 			range_definition->type = range_definition->expression->type;
 			range_definition->typechecked = true;
@@ -6630,7 +6608,6 @@ AstStatement *typecheck(TypecheckState *state, AstFor *For) {
 			auto it1 = AstDefinition::create();
 			it1->name = "\\it"str;
 			it1->container_node = state->current_lambda_or_struct_or_enum;
-			it1->definition_location = LambdaDefinitionLocation::body;
 			it1->expression = make_binop(BinaryOperation::dot, make_identifier(range_definition->name), make_identifier("min"str));
 			replacement_block->scope->add(raw(it1));
 
@@ -6642,7 +6619,6 @@ AstStatement *typecheck(TypecheckState *state, AstFor *For) {
 			auto it2 = AstDefinition::create();
 			it2->name = For->iterator_name;
 			it2->container_node = state->current_lambda_or_struct_or_enum;
-			it2->definition_location = LambdaDefinitionLocation::body;
 			it2->expression = make_identifier(it1->name);
 			While->scope->add(raw(it2));
 
@@ -6663,7 +6639,6 @@ AstStatement *typecheck(TypecheckState *state, AstFor *For) {
 			auto range_definition = AstDefinition::create();
 			range_definition->name = "\\span"str;
 			range_definition->container_node = state->current_lambda_or_struct_or_enum;
-			range_definition->definition_location = LambdaDefinitionLocation::body;
 			range_definition->expression = For->range;
 			range_definition->type = range_definition->expression->type;
 			range_definition->typechecked = true;
@@ -6673,14 +6648,12 @@ AstStatement *typecheck(TypecheckState *state, AstFor *For) {
 			auto it1 = AstDefinition::create();
 			it1->name = "\\it"str;
 			it1->container_node = state->current_lambda_or_struct_or_enum;
-			it1->definition_location = LambdaDefinitionLocation::body;
 			it1->expression = make_binop(BinaryOperation::dot, make_identifier(range_definition->name), make_identifier("data"str));
 			replacement_block->scope->add(raw(it1));
 
 			auto end = AstDefinition::create();
 			end->name = "\\end"str;
 			end->container_node = state->current_lambda_or_struct_or_enum;
-			end->definition_location = LambdaDefinitionLocation::body;
 			end->expression = make_binop(BinaryOperation::add,
 				make_binop(BinaryOperation::dot, make_identifier(range_definition->name), make_identifier("data"str)),
 				make_binop(BinaryOperation::dot, make_identifier(range_definition->name), make_identifier("count"str))
@@ -6695,7 +6668,6 @@ AstStatement *typecheck(TypecheckState *state, AstFor *For) {
 			auto it2 = AstDefinition::create();
 			it2->name = For->iterator_name;
 			it2->container_node = state->current_lambda_or_struct_or_enum;
-			it2->definition_location = LambdaDefinitionLocation::body;
 			it2->expression = make_unary(UnaryOperation::pointer_or_dereference_or_unwrap, make_identifier(it1->name));
 			While->scope->add(raw(it2));
 
@@ -6716,7 +6688,6 @@ AstStatement *typecheck(TypecheckState *state, AstFor *For) {
 			auto range_definition = AstDefinition::create();
 			range_definition->name = "\\arr"str;
 			range_definition->container_node = state->current_lambda_or_struct_or_enum;
-			range_definition->definition_location = LambdaDefinitionLocation::body;
 			if (is_addressable(For->range)) {
 				range_definition->expression = make_address_of(&reporter, For->range);
 			} else {
@@ -6730,14 +6701,12 @@ AstStatement *typecheck(TypecheckState *state, AstFor *For) {
 			auto it1 = AstDefinition::create();
 			it1->name = "\\it"str;
 			it1->container_node = state->current_lambda_or_struct_or_enum;
-			it1->definition_location = LambdaDefinitionLocation::body;
 			it1->expression = make_unary(UnaryOperation::address_of, make_subscript(make_unary(UnaryOperation::pointer_or_dereference_or_unwrap, make_identifier(range_definition->name)), make_integer(0ll)));
 			replacement_block->scope->add(raw(it1));
 
 			auto end = AstDefinition::create();
 			end->name = "\\end"str;
 			end->container_node = state->current_lambda_or_struct_or_enum;
-			end->definition_location = LambdaDefinitionLocation::body;
 			end->expression = make_binop(BinaryOperation::add,
 				make_identifier(it1->name),
 				make_binop(BinaryOperation::dot, make_unary(UnaryOperation::pointer_or_dereference_or_unwrap, make_identifier(range_definition->name)), make_identifier("count"str))
@@ -6752,7 +6721,6 @@ AstStatement *typecheck(TypecheckState *state, AstFor *For) {
 			auto it2 = AstDefinition::create();
 			it2->name = For->iterator_name;
 			it2->container_node = state->current_lambda_or_struct_or_enum;
-			it2->definition_location = LambdaDefinitionLocation::body;
 			it2->expression = make_unary(UnaryOperation::pointer_or_dereference_or_unwrap, make_identifier(it1->name));
 			While->scope->add(raw(it2));
 
@@ -7239,13 +7207,14 @@ AstLambda *instantiate_head(TypecheckState *state, Reporter *reporter, Resolutio
 			add_expression_to_constant_scope(ident->location, ident->name, matched);
 
 			parameter->is_poly = false;
-			if (parameter->is_constant) {
-				parameter->expression = argument.expression;
-				hardened_lambda->constant_scope->add(parameter);
-			} else {
-				hardened_lambda->parameters.add(parameter);
-				hardened_lambda->parameter_scope->add(parameter);
-			}
+		}
+
+		if (parameter->is_constant) {
+			parameter->expression = argument.expression;
+			hardened_lambda->constant_scope->add(parameter);
+		} else {
+			hardened_lambda->parameters.add(parameter);
+			hardened_lambda->parameter_scope->add(parameter);
 		}
 	}
 
@@ -7290,6 +7259,14 @@ AstLambda *instantiate_head(TypecheckState *state, Reporter *reporter, Resolutio
 			auto parameter = parameters[parameter_index];
 
 			int distance = 0;
+
+			if (parameter->is_constant) {
+				parameter->expression = argument;
+				hardened_lambda->constant_scope->add(parameter);
+			} else {
+				hardened_lambda->parameters.add(parameter);
+				hardened_lambda->parameter_scope->add(parameter);
+			}
 
 			if (parameter->is_poly) {
 				if (parameter->is_pack) invalid_code_path("Not implemented");
@@ -7348,14 +7325,6 @@ AstLambda *instantiate_head(TypecheckState *state, Reporter *reporter, Resolutio
 				}
 			}
 
-			if (parameter->is_constant) {
-				parameter->expression = argument;
-				hardened_lambda->constant_scope->add(parameter);
-			} else {
-				hardened_lambda->parameters.add(parameter);
-				hardened_lambda->parameter_scope->add(parameter);
-			}
-
 			total_distance += distance;
 
 			next_unassigned_parameter();
@@ -7375,6 +7344,10 @@ AstLambda *instantiate_head(TypecheckState *state, Reporter *reporter, Resolutio
 		}
 	}
 
+
+	for (auto &parameter : parameters) {
+		assert(parameter->parent_scope);
+	}
 
 	scoped_replace(state->current_lambda_or_struct_or_enum, hardened_lambda);
 	scoped_replace(state->current_scope, hardened_lambda->parameter_scope);
@@ -7859,6 +7832,15 @@ void instantiate_body(TypecheckState *state, AstLambda *hardened_lambda) {
 		for_each_top_scope(hardened_lambda->body, [&] (Scope *scope) {
 			scope->parent = hardened_lambda->parameter_scope;
 		});
+
+		visit(hardened_lambda->body, Combine {
+			[&](AstNode *){},
+			[&](AstDefinition *definition){
+				if (!definition->container_node)
+					definition->container_node = get_container_node(definition);
+			},
+		});
+
 		typecheck_body(state, hardened_lambda);
 
 		calculate_parameters_size(hardened_lambda);
@@ -9101,7 +9083,6 @@ AstExpression *typecheck(TypecheckState *state, AstCall *call) {
 				auto def = AstDefinition::create();
 				def->container_node = state->current_lambda_or_struct_or_enum;
 				def->name = param->name;
-				def->definition_location = LambdaDefinitionLocation::body;
 				def->expression = arg;
 				def->location = arg->location;
 				def->parent_scope = inserted_block->scope;
@@ -10121,7 +10102,6 @@ AstExpression *typecheck(TypecheckState *state, AstBinaryOperator *bin) {
 							auto add_param = [&] (KeyString name) {
 								auto param = AstDefinition::create();
 								param->name = name;
-								param->definition_location = LambdaDefinitionLocation::parameter;
 								param->container_node = lambda;
 
 								// TODO: all structs, named and unnamed should have a definition.

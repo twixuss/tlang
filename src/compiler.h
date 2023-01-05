@@ -318,13 +318,6 @@ inline static constexpr auto sizeof_AstLiteral = sizeof AstLiteral;
 #define INVALID_MEMBER_OFFSET (-1)
 #define INVALID_DATA_OFFSET (-1)
 
-// TODO: this is dumb
-enum class LambdaDefinitionLocation : u8 {
-	body,
-	parameter,
-	return_parameter,
-};
-
 struct AstDefinition : AstStatement, StatementPool<AstDefinition> {
 	AstDefinition() { kind = Ast_Definition; }
 
@@ -339,7 +332,6 @@ struct AstDefinition : AstStatement, StatementPool<AstDefinition> {
 
 	KeyString name = {};
 
-	LambdaDefinitionLocation definition_location = {};
 	s32 offset = -1;
 
 	bool is_constant     : 1 = false;
@@ -1728,8 +1720,7 @@ inline AstUnaryOperator *make_pointer_type(AstExpression *type) {
 
 inline AstNode::AstNode() {
 	uid = atomic_increment(&compiler->ast_node_uid_counter);
-	//if (uid == 0)
-	//	debug_break();
+	int x = 5;
 }
 
 inline bool struct_is_built_in(AstStruct *type) {
@@ -1992,3 +1983,79 @@ inline s64 get_align(AstExpression *type, bool check_struct) {
 		}
 	}
 }
+
+#define ENUMERATE_DEFINITION_ORIGIN \
+x(unknown) \
+x(constants) \
+x(rwdata) \
+x(zeros) \
+x(return_parameter) \
+x(parameter) \
+x(local) \
+
+enum class DefinitionOrigin {
+#define x(name) name,
+	ENUMERATE_DEFINITION_ORIGIN
+#undef x
+};
+
+inline DefinitionOrigin get_definition_origin(AstDefinition *definition) {
+	if (definition->is_constant) {
+		return DefinitionOrigin::constants;
+	}
+
+	if (!definition->container_node) {
+		// Global
+		if (definition->expression) {
+			return DefinitionOrigin::rwdata;
+		} else {
+			return DefinitionOrigin::zeros;
+		}
+	}
+
+	assert(definition->parent_scope, definition->location, "definition->container_node is not null, so should be definition->parent_scope");
+
+
+	if (auto Lambda = as<AstLambda>(definition->container_node)) {
+		if (definition->parent_scope == Lambda->constant_scope) {
+			return DefinitionOrigin::constants;
+		}
+
+		if (definition->parent_scope == Lambda->parameter_scope) {
+			if (definition == Lambda->return_parameter)
+				return DefinitionOrigin::return_parameter;
+			else
+				return DefinitionOrigin::parameter;
+		}
+
+		return DefinitionOrigin::local;
+	}
+
+	return DefinitionOrigin::unknown;
+}
+
+inline umm append(StringBuilder &b, DefinitionOrigin d) {
+	switch (d) {
+		using enum DefinitionOrigin;
+#define x(name) case name: return append(b, #name);
+	ENUMERATE_DEFINITION_ORIGIN
+#undef x
+	}
+	return 0;
+}
+
+inline AstExpression *get_container_node(Scope *scope) {
+	if (!scope->node)
+		return 0;
+
+	switch (scope->node->kind) {
+		case Ast_Lambda:
+		case Ast_Struct:
+		case Ast_Enum:
+			return (AstExpression *)scope->node;
+	}
+
+	return get_container_node(scope->parent);
+}
+
+inline AstExpression *get_container_node(AstStatement *statement) { return get_container_node(statement->parent_scope); }
