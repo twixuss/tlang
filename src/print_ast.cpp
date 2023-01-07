@@ -311,8 +311,7 @@ void print_lowered(AstExpression *expression) {
 	void print_lowered(AstBlock *node);
 	void print_lowered(AstMatch *node);
 
-	if (expression->is_parenthesized)
-		print("(");
+	print("(");
 	switch (expression->kind) {
 		case Ast_Lambda:           print_lowered((AstLambda           *)expression); break;
 		case Ast_LambdaType:       print_lowered((AstLambdaType       *)expression); break;
@@ -333,8 +332,7 @@ void print_lowered(AstExpression *expression) {
 			print("!unknown expression!");
 			break;
 	}
-	if (expression->is_parenthesized)
-		print(")");
+	print(")");
 }
 
 void print_lowered(AstStatement *node) {

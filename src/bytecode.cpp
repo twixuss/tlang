@@ -143,8 +143,7 @@ struct FrameBuilder {
 
 	Register allocate_temporary_register(std::source_location location = std::source_location::current()) {
 		auto result = temporary_register_set.pop().value_or([this] {
-			compiler->immediate_error(current_node->location, "INTERNAL ERROR: attempt to use too many temporary registers.");
-			exit(1);
+			invalid_code_path(current_node->location, "INTERNAL ERROR: attempt to use too many temporary registers.");
 			return 0;
 		});
 #if DEBUG_TEMPORARY_REGISTER_ALLOCATION
@@ -1131,8 +1130,7 @@ Instruction *FrameBuilder::add_instruction(Instruction next) {
 
 Address get_known_address_of(AstDefinition *definition) {
 	if (definition->offset == -1) {
-		immediate_error(definition->location, "INTERNAL ERROR: definition->offset is -1 in get_known_address_of");
-		exit(-1);
+		invalid_code_path(definition->location, "INTERNAL ERROR: definition->offset is -1 in get_known_address_of");
 	}
 
 	auto offset = definition->offset;
@@ -2833,8 +2831,7 @@ void FrameBuilder::append(AstCall *call, RegisterOrAddress destination) {
 			//	I(mov8_rm, r0, rs + 8);
 			//	I(round8_f, r0, (RoundingMode)get_constant_integer(call->sorted_arguments[1]).value());
 			} else {
-				compiler->immediate_error(call->location, "Unknown intrinsic");
-				exit(1);
+				invalid_code_path(call->location, "Unknown intrinsic");
 			}
 			return;
 		}
@@ -3363,8 +3360,7 @@ void FrameBuilder::append(AstArrayInitializer *ArrayInitializer, RegisterOrAddre
 		} else if (ArrayInitializer->elements.count == 1) {
 			append(ArrayInitializer->elements[0], destination);
 		} else {
-			immediate_error(ArrayInitializer->location, "FIXME: Bytecode generation for such small arrays is not implemented.");
-			exit(-1);
+			invalid_code_path(ArrayInitializer->location, "FIXME: Bytecode generation for such small arrays is not implemented.");
 			auto tmp = allocate_temporary_space(elem_size);
 			for (umm i = 0; i < ArrayInitializer->elements.count; ++i) {
 				auto element = ArrayInitializer->elements[i];

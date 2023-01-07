@@ -408,10 +408,10 @@ void immediate_error(String location, Char const *format_string, Args const &...
 
 template <class ...Args, class Char>
 inline void tlang_assertion_failed(char const *cause, char const *file, int line, char const *expression, char const *function, String location, Char const *format_string, Args ...args) {
-	immediate_error(location, format_string, args...);
-
 	with(ConsoleColor::red, ::tl::print("Assertion failed: "));
 	::tl::print("{}\n{}:{}: {} at {}\n", expression, file, line, cause, function);
+
+	immediate_error(location, format_string, args...);
 
 	if (debugger_attached())
 		debug_break();

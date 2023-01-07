@@ -720,6 +720,11 @@ operator - :: (a: $T, b: Vector2(T)) => Vector2(T)(a - b.x, a - b.y)
 operator * :: (a: $T, b: Vector2(T)) => Vector2(T)(a * b.x, a * b.y)
 operator / :: (a: $T, b: Vector2(T)) => Vector2(T)(a / b.x, a / b.y)
 
+// I found an interesting thing:
+// If you have an arbitrary quad (not necessarily flat),
+// and connect midpoints of it's edges,
+// you get another quad, that always lies flat on some plane.
+
 Vector3 :: struct(T: Type) {
     x, y, z: T
     r, g, b: T #at x
@@ -732,6 +737,8 @@ operator + :: (a: Vector3($T), b: Vector3(T)) => Vector3(T)(a.x + b.x, a.y + b.y
 operator - :: (a: Vector3($T), b: Vector3(T)) => Vector3(T)(a.x - b.x, a.y - b.y, a.z - b.z)
 operator * :: (a: Vector3($T), b: Vector3(T)) => Vector3(T)(a.x * b.x, a.y * b.y, a.z * b.z)
 operator / :: (a: Vector3($T), b: Vector3(T)) => Vector3(T)(a.x / b.x, a.y / b.y, a.z / b.z)
+
+
 
 RGB_U8 :: Vector3(U8)
 

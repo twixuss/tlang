@@ -201,9 +201,6 @@ struct AstExpressionStatement : AstStatement, StatementPool<AstExpressionStateme
 struct AstExpression : AstNode {
 	Expression<> type = {};
 	Expression<> directed = {};
-	// Expression<AstLiteral> evaluated = {};
-	bool is_parenthesized : 1 = false;
-	bool typechecked : 1 = false;
 };
 
 struct AstBlock : AstExpression, ExpressionPool<AstBlock> {
@@ -323,6 +320,7 @@ struct AstDefinition : AstStatement, StatementPool<AstDefinition> {
 
 	Expression<> expression = {};
 	Expression<> type = {};
+	Expression<> parsed_type = {};
 	Expression<> container_node = {};
 	Expression<AstIdentifier> poly_ident = {};
 
@@ -335,7 +333,6 @@ struct AstDefinition : AstStatement, StatementPool<AstDefinition> {
 	s32 offset = -1;
 
 	bool is_constant     : 1 = false;
-	bool typechecked     : 1 = false;
 	bool is_poly         : 1 = false;
 	bool depends_on_poly : 1 = false;
 	bool is_pack         : 1 = false;
