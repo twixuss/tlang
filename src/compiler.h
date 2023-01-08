@@ -505,6 +505,8 @@ struct AstCall : AstExpression, ExpressionPool<AstCall> {
 	SmallList<AstExpression *> sorted_arguments = {};
 
 	Expression<AstLambdaType> lambda_type = {};
+
+	bool debug_overload : 1 = false;
 };
 
 enum class StructLayout {

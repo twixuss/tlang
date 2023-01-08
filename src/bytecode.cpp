@@ -1581,10 +1581,6 @@ void FrameBuilder::append(AstStatement *statement) {
 		case Ast_ExpressionStatement: return append((AstExpressionStatement *)statement);
 		case Ast_While:               return append((AstWhile               *)statement);
 		case Ast_LoopControl:         return append((AstLoopControl         *)statement);
-		case Ast_OperatorDefinition:
-			not_implemented();
-			//append(((AstOperatorDefinition*)statement)->lambda, false, r0);
-			return;
 		case Ast_Defer: {
 			// defer is appended later, after appending a block.
 			auto Defer = (AstDefer *)statement;
@@ -1598,6 +1594,7 @@ void FrameBuilder::append(AstStatement *statement) {
 		case Ast_Parse:
 		case Ast_Test:
 		case Ast_Using:
+		case Ast_OperatorDefinition:
 			return;
 		default: invalid_code_path();
 	}

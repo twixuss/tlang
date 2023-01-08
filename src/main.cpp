@@ -2267,6 +2267,15 @@ void parse_expression_0(Parser *parser, AstExpression *&result) {
 
 					result = lambda;
 					return;
+				} else if (parser->token->string == "#debug_overload") {
+					parser->next_solid();
+					result = parse_expression_1(parser);
+					if (result) {
+						if (auto call = as<AstCall>(result)) {
+							call->debug_overload = true;
+						}
+					}
+					return;
 				} else {
 					parser->reporter->error(parser->token->string, "Unexpected directive (expression).");
 					return;
@@ -4979,7 +4988,7 @@ void wait_for(TypecheckState *state, String location, auto message, auto &&predi
 			break;
 		}
 
-		if (state->no_progress_counter == NO_PROGRESS_THRESHOLD) {
+		if (state->no_progress_counter >= NO_PROGRESS_THRESHOLD) {
 			error_callback();
 			yield(TypecheckResult::fail);
 		}
@@ -5126,7 +5135,7 @@ AstUnaryOperator *get_typeinfo(TypecheckState *state, AstExpression *type, Strin
 	// NOTE: Copypasted from typecheck(AstIdentifier)
 	while (!type->type) {
 		++state->no_progress_counter;
-		if (state->no_progress_counter == NO_PROGRESS_THRESHOLD) {
+		if (state->no_progress_counter >= NO_PROGRESS_THRESHOLD) {
 			state->reporter.error(type->location, "Failed to resolve type.");
 			yield(TypecheckResult::fail);
 		}
@@ -5287,13 +5296,29 @@ AstUnaryOperator *get_typeinfo(TypecheckState *state, AstExpression *type, Strin
 	return address;
 }
 
+enum class TypeDistance {
+	exact,
+	Template,
+	basic,
+	any_or_custom,
+};
+
+struct ArgumentDistance {
+	TypeDistance type_distance;
+	u8 const_distance; // 1 if passing const value to non-const parameter, otherwise 0
+};
+
+int argument_distance(ArgumentDistance distance) {
+	return (int)distance.type_distance * 2 + distance.const_distance;
+}
+
 // TODO: FIXME: this is a mess. need to clean up.
-bool implicitly_cast(TypecheckState *state, Reporter *reporter, CExpression auto *_expression, AstExpression *type, int *conversion_distance = 0, bool apply = true) {
+bool implicitly_cast(TypecheckState *state, Reporter *reporter, CExpression auto *_expression, AstExpression *type, TypeDistance *conversion_distance = 0, bool apply = true) {
 	auto expression = *_expression;
 	defer { *_expression = expression; };
 
 	if (conversion_distance)
-		*conversion_distance = 0;
+		*conversion_distance = TypeDistance::exact;
 
 	if (expression->type->kind == Ast_LambdaType) {
 		auto lambda_type = (AstLambdaType *)expression->type;
@@ -5313,7 +5338,7 @@ bool implicitly_cast(TypecheckState *state, Reporter *reporter, CExpression auto
 	}
 
 	if (conversion_distance)
-		*conversion_distance = 1;
+		*conversion_distance = TypeDistance::basic;
 
 	auto earray = as_array(expression->type);
 
@@ -5354,7 +5379,7 @@ bool implicitly_cast(TypecheckState *state, Reporter *reporter, CExpression auto
 
 	if (types_match(type, compiler->builtin_any)) {
 		if (conversion_distance)
-			*conversion_distance = 3;
+			*conversion_distance = TypeDistance::any_or_custom;
 
 		if (apply) {
 			harden_type(state, expression);
@@ -5476,7 +5501,7 @@ bool implicitly_cast(TypecheckState *state, Reporter *reporter, CExpression auto
 				}
 				++state->no_progress_counter;
 				yield(TypecheckResult::wait);
-			} while (state->no_progress_counter != NO_PROGRESS_THRESHOLD);
+			} while (state->no_progress_counter < NO_PROGRESS_THRESHOLD);
 
 			if (reporter) {
 				reporter->error(expression->location, "Expression of type {} is not convertible to {}.", type_to_string(expression->type), type_to_string(type));
@@ -5672,6 +5697,9 @@ bool implicitly_cast(TypecheckState *state, Reporter *reporter, CExpression auto
 		}
 	}
 
+	if (conversion_distance)
+		*conversion_distance = TypeDistance::any_or_custom;
+
 	do {
 		for (auto lambda : implicit_casts) {
 			if (types_match(lambda->return_parameter->type, type) && types_match(lambda->parameters[0]->type, expression->type)) {
@@ -5699,7 +5727,7 @@ bool implicitly_cast(TypecheckState *state, Reporter *reporter, CExpression auto
 		}
 		++state->no_progress_counter;
 		yield(TypecheckResult::wait);
-	} while (state->no_progress_counter != NO_PROGRESS_THRESHOLD);
+	} while (state->no_progress_counter < NO_PROGRESS_THRESHOLD);
 
 	if (reporter) {
 		reporter->error(expression->location, "Expression of type {} is not implicitly convertible to {}.", type_to_string(expression->type), type_to_string(type));
@@ -7337,7 +7365,6 @@ AstLambda *instantiate_head(TypecheckState *state, Reporter *reporter, Overload 
 
 
 	// Now that named arguments are assigned, assign unnamed arguments
-	int total_distance = lambda->has_pack;
 	{
 		umm parameter_index = 0;
 
@@ -7375,9 +7402,11 @@ AstLambda *instantiate_head(TypecheckState *state, Reporter *reporter, Overload 
 
 			auto parameter = parameters[parameter_index];
 
-			int distance = 0;
-
 			if (parameter->is_constant) {
+				if (!is_constant(argument)) {
+					reporter->error(argument->location, "Argument is not constant");
+					return 0;
+				}
 				parameter->expression = argument;
 				hardened_lambda->constant_scope->add(parameter);
 			} else {
@@ -7409,6 +7438,7 @@ AstLambda *instantiate_head(TypecheckState *state, Reporter *reporter, Overload 
 				}
 
 				parameter->is_poly = false;
+				overload.distance += argument_distance({.type_distance = TypeDistance::Template, .const_distance = is_constant(argument) && !parameter->is_constant});
 			} else {
 				if (!parameter->type) {
 					scoped_replace(state->current_lambda_or_struct_or_enum, hardened_lambda);
@@ -7422,15 +7452,15 @@ AstLambda *instantiate_head(TypecheckState *state, Reporter *reporter, Overload 
 					auto subtype = get_span_subtype(parameter->type);
 					assert(subtype);
 
-					if (implicitly_cast(state, reporter, &argument, subtype, &distance, false)) {
+					if (implicitly_cast(state, reporter, &argument, subtype, 0, false)) {
 						sorted_arguments[parameter_index].add(argument);
-						total_distance += distance;
 						continue;
 					} else {
 						next_unassigned_parameter();
 						goto retry_argument;
 					}
 				} else {
+					auto distance = TypeDistance::exact;
 					if (!implicitly_cast(state, reporter, &argument, parameter->type, &distance, false)) {
 						*success = false;
 						return 0;
@@ -7438,11 +7468,9 @@ AstLambda *instantiate_head(TypecheckState *state, Reporter *reporter, Overload 
 
 					assert(sorted_arguments[parameter_index].count == 0);
 					sorted_arguments[parameter_index].set(argument);
-
+					overload.distance += argument_distance({.type_distance = distance, .const_distance = is_constant(argument) && !parameter->is_constant});
 				}
 			}
-
-			total_distance += distance;
 
 			next_unassigned_parameter();
 		}
@@ -8357,7 +8385,7 @@ void get_overloads(TypecheckState *state, AstCall *call, List<Overload> &overloa
 	}
 }
 
-bool try_match_overload(TypecheckState *state, Reporter &reporter, AstCall *call, AstExpression *overload_type, Overload &overload, int &total_distance) {
+bool try_match_overload(TypecheckState *state, Reporter &reporter, AstCall *call, AstExpression *overload_type, Overload &overload) {
 	if (overload_type->kind == Ast_LambdaType) {
 		auto lambda_type = (AstLambdaType *)overload_type;
 		auto lambda = lambda_type->lambda;
@@ -8373,9 +8401,9 @@ bool try_match_overload(TypecheckState *state, Reporter &reporter, AstCall *call
 		auto &sorted_arguments = overload.sorted_arguments_lambda;
 		sorted_arguments.resize(lambda->parameters.count);
 
-		if (lambda->is_poly) {
-			total_distance = 2;
+		overload.distance += lambda->has_pack; // If we have 2 matches, one with a pack and other without, select the one without.
 
+		if (lambda->is_poly) {
 			bool success;
 			{
 				state->template_call_stack.add({.call = call, .template_lambda = lambda});
@@ -8398,9 +8426,6 @@ bool try_match_overload(TypecheckState *state, Reporter &reporter, AstCall *call
 					state->reporter.info(call->location, "Waited here:");
 				}
 			);
-
-
-
 
 			// Assign named arguments to corresponding parameters
 
@@ -8435,7 +8460,6 @@ bool try_match_overload(TypecheckState *state, Reporter &reporter, AstCall *call
 
 
 			// Now that named arguments are assigned, assign unnamed arguments
-			total_distance = lambda->has_pack;
 			{
 				umm parameter_index = 0;
 
@@ -8457,8 +8481,10 @@ bool try_match_overload(TypecheckState *state, Reporter &reporter, AstCall *call
 				};
 
 				for (auto &argument : remaining_arguments) {
-					int distance = 0;
-					defer { total_distance += distance; };
+					auto distance = TypeDistance::exact;
+					defer {
+						overload.distance += argument_distance({.type_distance = distance, .const_distance = false});
+					};
 
 				retry_argument:
 					if (parameter_index >= sorted_arguments.count) {
@@ -8474,6 +8500,7 @@ bool try_match_overload(TypecheckState *state, Reporter &reporter, AstCall *call
 
 						if (auto arg_subtype = get_span_subtype(argument->type)) {
 							if (types_match(arg_subtype, param_subtype)) {
+								// Pass the span to the pack
 								sorted_arguments[parameter_index].add(argument);
 								next_unassigned_parameter();
 								continue;
@@ -8805,7 +8832,7 @@ AstExpression *typecheck(TypecheckState *state, AstIdentifier *identifier) {
 			assert(identifier->name == definition->name);
 
 		auto wait_iteration = [&] {
-			if (state->no_progress_counter == NO_PROGRESS_THRESHOLD) { /* TODO: This might not be the best solution */
+			if (state->no_progress_counter >= NO_PROGRESS_THRESHOLD) { /* TODO: This might not be the best solution */
 				if (state->currently_typechecking_definition && state->currently_typechecking_definition->name == identifier->name) {
 					state->reporter.error(identifier->location, "Can't use object while defining it.");
 					state->reporter.info(state->currently_typechecking_definition->location, "Declared here:");
@@ -8872,7 +8899,7 @@ AstExpression *typecheck(TypecheckState *state, AstIdentifier *identifier) {
 #else
 		while (!definition->type->type) {
 			++state->no_progress_counter;
-			if (state->no_progress_counter == NO_PROGRESS_THRESHOLD) {
+			if (state->no_progress_counter >= NO_PROGRESS_THRESHOLD) {
 				state->reporter.error(definition->type->location, "Failed to resolve this type.");
 				state->reporter.info(identifier->location, "While typechecking this identifier.");
 				yield(TypecheckResult::fail);
@@ -8912,21 +8939,26 @@ AstExpression *typecheck(TypecheckState *state, AstCall *call) {
 	List<Overload *> matches;
 	matches.allocator = temporary_allocator;
 
+	if (call->debug_overload) {
+		immediate_info(call->location, "DEBUG: Overload resolution");
+	}
+
 	for (umm overload_index = 0; overload_index != overloads.count; ++overload_index) {
 		auto &overload = overloads[overload_index];
 		auto &reporter = overload.reporter;
 
 		auto overload_type = direct(overload.type);
 
-		int total_distance = 0;
-
 		assert(overload.callable);
 
-		if (try_match_overload(state, reporter, call, overload_type, overload, total_distance)) {
+		if (try_match_overload(state, reporter, call, overload_type, overload)) {
 			overload.success = true;
-			overload.distance = total_distance;
 			matches.add(&overload);
-			min_distance = min(min_distance, total_distance);
+			min_distance = min(min_distance, overload.distance);
+
+			if (call->debug_overload) {
+				immediate_info(overload.definition->location, "DEBUG: Distance: {}", overload.distance);
+			}
 		}
 	}
 	Overload *match = 0;
@@ -8991,11 +9023,15 @@ AstExpression *typecheck(TypecheckState *state, AstCall *call) {
 			match = best_matches[0];
 		} else {
 			state->reporter.error(call->location, "Ambiguous matches were found");
-			for (auto overload : matches) {
+			for (auto overload : best_matches) {
 				state->reporter.info(overload->definition->location, "Here");
 			}
 			yield(TypecheckResult::fail);
 		}
+	}
+
+	if (call->debug_overload) {
+		immediate_info(match->definition->location, "DEBUG: Selected");
 	}
 
 	call->callable = match->callable;
@@ -9022,6 +9058,7 @@ AstExpression *typecheck(TypecheckState *state, AstCall *call) {
 	if (match->lambda) {
 		if (match->lambda->is_poly) {
 			{
+				assert(match->instantiated_lambda);
 				state->template_call_stack.add({.call = call, .template_lambda = match->lambda, .hardened_lambda = match->instantiated_lambda});
 				defer { state->template_call_stack.pop(); };
 				instantiate_body(state, match->instantiated_lambda);
@@ -9684,7 +9721,9 @@ AstExpression *typecheck(TypecheckState *state, AstBinaryOperator *bin) {
 				}
 
 				if (implicitly_cast(state, 0, &cast->left, cast->right)) {
-					// implicitly_cast makes the cast itself.
+					// implicitly_cast replaced cast->left with 'as binop' or with call.
+
+					cast->left->location = cast->location;
 					return cast->left;
 				}
 
@@ -9788,7 +9827,7 @@ AstExpression *typecheck(TypecheckState *state, AstBinaryOperator *bin) {
 					}
 					++state->no_progress_counter;
 					yield(TypecheckResult::wait);
-				} while (state->no_progress_counter != NO_PROGRESS_THRESHOLD);
+				} while (state->no_progress_counter < NO_PROGRESS_THRESHOLD);
 
 				state->reporter.error(
 					cast->location,
@@ -10424,7 +10463,7 @@ AstExpression *typecheck(TypecheckState *state, AstBinaryOperator *bin) {
 			};
 			List<Candidate> candidates;
 
-			while (state->no_progress_counter != NO_PROGRESS_THRESHOLD) {
+			while (state->no_progress_counter < NO_PROGRESS_THRESHOLD) {
 				auto found = binary_operators.find(bin->operation);
 				if (found) {
 					state->no_progress_counter = 0;
@@ -10473,7 +10512,7 @@ AstExpression *typecheck(TypecheckState *state, AstBinaryOperator *bin) {
 							default: return count;
 						}}();
 						state->no_progress_counter = 0;
-						while (state->no_progress_counter != NO_PROGRESS_THRESHOLD) {
+						while (state->no_progress_counter < NO_PROGRESS_THRESHOLD) {
 							auto found = binary_operators.find(operation);
 							if (found) {
 								state->no_progress_counter = 0;
@@ -11446,7 +11485,7 @@ void typecheck(TypecheckState *state, CExpression auto &expression) {
 			// NOTE: Copypasted from typecheck(AstIdentifier)
 			while (!new_expression->type->type) {
 				++state->no_progress_counter;
-				if (state->no_progress_counter == NO_PROGRESS_THRESHOLD) {
+				if (state->no_progress_counter >= NO_PROGRESS_THRESHOLD) {
 					state->reporter.error(new_expression->location, "Failed to resolve type of type of this expression.");
 					yield(TypecheckResult::fail);
 				}
@@ -13134,16 +13173,17 @@ restart_main:
 							if (result == TypecheckResult::fail) {
 								fail = true;
 								for (auto entry : reverse_iterate(state.template_call_stack)) {
-									StringBuilder builder;
-									builder.allocator = temporary_allocator;
-
-									for (auto definition : entry.hardened_lambda->constant_scope->definition_list) {
-										append_format(builder, "{} = ", definition->name);
-										append_type(builder, definition->expression, true);
-										append(builder, ", ");
+									if (entry.hardened_lambda) {
+										StringBuilder builder;
+										builder.allocator = temporary_allocator;
+										for (auto definition : entry.hardened_lambda->constant_scope->definition_list) {
+											append_format(builder, "{} = ", definition->name);
+											append_type(builder, definition->expression, true);
+											append(builder, ", ");
+										}
+										state.reporter.info(entry.call->location, "While resolving {}", entry.call->callable->location);
+										state.reporter.info(entry.template_lambda->location, "With {}", to_string(builder));
 									}
-									state.reporter.info(entry.call->location, "While resolving {}", entry.call->callable->location);
-									state.reporter.info(entry.template_lambda->location, "With {}", to_string(builder));
 								}
 							}
 							state.reporter.print_all();

@@ -327,7 +327,7 @@ bool is_constant(AstExpression *expression) {
 			return true;
 		case Ast_BinaryOperator: {
 			auto binop = (AstBinaryOperator *)expression;
-			return is_constant(binop->right);
+			return is_constant(binop->left);
 		}
 		case Ast_UnaryOperator: {
 			auto unop = (AstUnaryOperator *)expression;

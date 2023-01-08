@@ -1,3 +1,11 @@
+
+// Overload rules:
+// Greater is picked
+// 1. Concrete type > Template type
+// 2. Template type > Any
+// 3. Constant > Non constant
+// 4. Custom implicit operator == Any
+
 main :: () {
 	{
 		foo :: (a: String) => 0
@@ -216,5 +224,48 @@ main :: () {
 		assert foo() == 69
 		assert foo(1) == 70
 		assert foo(y=2) == 71
+	}
+
+
+
+
+
+
+
+
+
+
+
+
+	{
+		foo :: (a: Int) => 1
+		foo :: (a: %Int) => 2
+		x: Int
+		assert foo(x) == 1
+		assert foo(0) == 2
+	}
+
+	{
+		foo :: (a: Int, b: %Int) => 1
+		foo :: (a: %Int, b: Int) => 2
+		x: Int
+		assert !#compiles { foo(0,0) } // ambiguous
+		assert !#compiles { foo(x,x) } // can't pass var to const
+		assert foo(x,0) == 1
+		assert foo(0,x) == 2
+	}
+
+
+	{
+		Foo :: struct {}
+
+		operator as implicit :: (x: Int) => Foo()
+
+		foo :: (y: Int) => 1
+		foo :: (y: $T) => 2
+		foo :: (y: Foo) => 3
+		foo :: (y: Any) => 4
+
+		#debug_overload foo(1)
 	}
 }
