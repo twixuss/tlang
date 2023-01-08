@@ -6,7 +6,7 @@
     <Type Name="AstNode" Inheritable="false">
         <Expand>
             <Item Name="[value]" Condition="kind==Ast_Definition         " Optional="true">*(AstDefinition         *)this</Item>
-            <Item Name="[value]" Condition="kind==Ast_Return             " Optional="true">*(AsReturn              *)this</Item>
+            <Item Name="[value]" Condition="kind==Ast_Return             " Optional="true">*(AstReturn              *)this</Item>
             <Item Name="[value]" Condition="kind==Ast_Lambda             " Optional="true">*(AstLambda             *)this</Item>
             <Item Name="[value]" Condition="kind==Ast_LambdaType         " Optional="true">*(AstLambdaType         *)this</Item>
             <Item Name="[value]" Condition="kind==Ast_Identifier         " Optional="true">*(AstIdentifier         *)this</Item>

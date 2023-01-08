@@ -40,12 +40,8 @@ void append_name(StringBuilder &builder, String name) {
 }
 
 void append_name(StringBuilder &builder, AstStruct *Struct) {
-	if (Struct->definition) {
-		append_name(builder, Struct->definition->name);
-	} else {
-		append(builder, "_");
-		append(builder, Struct->uid);
-	}
+	assert(Struct->definition);
+	append_name(builder, Struct->definition->name);
 }
 
 void append_name(StringBuilder &builder, AstLambda *Lambda) {

@@ -48,8 +48,11 @@ void tlang_assertion_failed(char const *cause, char const *file, int line, char 
 template <class ...Args, class Char>
 void tlang_assertion_failed(char const *cause, char const *file, int line, char const *expression, char const *function, Char const *format_string, Args ...args);
 
+// used in ASSERTION_FAILURE so debugger points to the right place
+inline void dummy() {}
+
 #pragma warning(push, 0)
-#define ASSERTION_FAILURE(cause_string, expression, ...) tlang_assertion_failed(cause_string, __FILE__, __LINE__, expression, __FUNCSIG__, __VA_ARGS__)
+#define ASSERTION_FAILURE(cause_string, expression, ...) (tlang_assertion_failed(cause_string, __FILE__, __LINE__, expression, __FUNCSIG__, __VA_ARGS__), dummy())
 #include <tl/console.h>
 #include <tl/common.h>
 #include <tl/file.h>

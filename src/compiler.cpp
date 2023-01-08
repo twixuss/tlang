@@ -49,10 +49,8 @@ void append_type(StringBuilder &builder, AstExpression *type, bool silent_error)
 	switch (type->kind) {
 		case Ast_Struct: {
 			auto Struct = (AstStruct *)type;
-			if (Struct->definition)
-				append(builder, Struct->definition->name);
-			else
-				append(builder, "<unnamed>");
+			assert(Struct->definition);
+			append(builder, Struct->definition->name);
 			break;
 		}
 		case Ast_LambdaType: {

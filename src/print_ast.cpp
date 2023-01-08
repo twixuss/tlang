@@ -175,10 +175,8 @@ void print_ast(AstReturn *node) {
 	}
 }
 void print_ast(AstStruct *node) {
-	if (node->definition)
-		print_tabbed("struct - name: {}, uid: {}\n", node->definition->name, node->uid);
-	else
-		print_tabbed("struct - unnamed, uid: {}\n", node->uid);
+	assert(node->definition);
+	print_tabbed("struct - name: {}, uid: {}\n", node->definition->name, node->uid);
 	tab_count += 1;
 	for (auto &member : node->member_scope->statement_list) {
 		print_ast(member);
@@ -295,23 +293,36 @@ void print_ast() {
 
 
 void print_lowered(AstExpression *expression) {
-	void print_lowered(AstBinaryOperator *node);
-	void print_lowered(AstLambda *node);
-	void print_lowered(AstLambdaType *node);
-	void print_lowered(AstIdentifier *node);
-	void print_lowered(AstLiteral *node);
-	void print_lowered(AstCall *node);
-	void print_lowered(AstStruct *node);
-	void print_lowered(AstIf *node);
-	void print_lowered(AstUnaryOperator *node);
-	void print_lowered(AstSubscript *node);
-	void print_lowered(AstTuple *node);
-	void print_lowered(AstArrayInitializer *node);
-	void print_lowered(AstSpan *node);
-	void print_lowered(AstBlock *node);
-	void print_lowered(AstMatch *node);
+	void print_lowered(AstBinaryOperator *);
+	void print_lowered(AstLambda *);
+	void print_lowered(AstLambdaType *);
+	void print_lowered(AstIdentifier *);
+	void print_lowered(AstLiteral *);
+	void print_lowered(AstCall *);
+	void print_lowered(AstStruct *);
+	void print_lowered(AstEnum *);
+	void print_lowered(AstIf *);
+	void print_lowered(AstUnaryOperator *);
+	void print_lowered(AstSubscript *);
+	void print_lowered(AstTuple *);
+	void print_lowered(AstArrayInitializer *);
+	void print_lowered(AstSpan *);
+	void print_lowered(AstBlock *);
+	void print_lowered(AstMatch *);
 
-	print("(");
+	auto print_if_needed = [&] (char c) {
+		switch (expression->kind) {
+			case Ast_Identifier:
+			case Ast_Literal:
+			case Ast_Block:
+				break;
+			default:
+				print(c);
+				break;
+		}
+	};
+
+	print_if_needed('(');
 	switch (expression->kind) {
 		case Ast_Lambda:           print_lowered((AstLambda           *)expression); break;
 		case Ast_LambdaType:       print_lowered((AstLambdaType       *)expression); break;
@@ -321,6 +332,7 @@ void print_lowered(AstExpression *expression) {
 		case Ast_If:               print_lowered((AstIf               *)expression); break;
 		case Ast_BinaryOperator:   print_lowered((AstBinaryOperator   *)expression); break;
 		case Ast_Struct:           print_lowered((AstStruct           *)expression); break;
+		case Ast_Enum:             print_lowered((AstEnum             *)expression); break;
 		case Ast_UnaryOperator:    print_lowered((AstUnaryOperator    *)expression); break;
 		case Ast_Subscript:        print_lowered((AstSubscript        *)expression); break;
 		case Ast_Tuple:            print_lowered((AstTuple            *)expression); break;
@@ -332,7 +344,7 @@ void print_lowered(AstExpression *expression) {
 			print("!unknown expression!");
 			break;
 	}
-	print(")");
+	print_if_needed(')');
 }
 
 void print_lowered(AstStatement *node) {
@@ -636,6 +648,19 @@ void print_lowered(AstStruct *node) {
 		print_tabbed("}");
 	} else {
 		print("struct {}");
+	}
+}
+void print_lowered(AstEnum *Enum) {
+	if (Enum->scope->statement_list.count) {
+		print("enum {\n");
+		++tab_count;
+		for (auto statement : Enum->scope->statement_list) {
+			print_lowered(statement);
+		}
+		--tab_count;
+		print_tabbed("}");
+	} else {
+		print("enum {}");
 	}
 }
 void print_lowered(AstIf *If) {

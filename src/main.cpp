@@ -4978,7 +4978,14 @@ AstLiteral *find_enum_value(TypecheckState *state, AstEnum *Enum, KeyString name
 
 	auto member = found_member->value.data[0];
 
-	return state->make_integer(copy(get_constant_integer(member->expression).value()), Enum, location);
+
+	auto ident = AstIdentifier::create();
+	ident->location = Enum->location;
+	ident->type = Enum->definition->type;
+	ident->name = Enum->definition->name;
+	ident->possible_definitions.set(Enum->definition);
+
+	return state->make_integer(copy(get_constant_integer(member->expression).value()), ident, location);
 }
 
 void wait_for(TypecheckState *state, String location, auto message, auto &&predicate, auto &&error_callback) {
@@ -7050,6 +7057,112 @@ void typecheck(TypecheckState *state, AstStatement *&statement) {
 	}
 }
 
+bool is_concrete_type(AstExpression *type) {
+	if (types_match(type, compiler->builtin_unsized_integer) ||
+		types_match(type, compiler->builtin_unsized_float) ||
+		types_match(type, compiler->builtin_overload_set) ||
+		types_match(type, compiler->builtin_unknown_enum) ||
+		types_match(type, compiler->builtin_unreachable) ||
+		types_match(type, compiler->builtin_deferred_if))
+	{
+		return false;
+	}
+	return true;
+}
+
+bool is_hardenable(AstExpression *type) {
+	if (types_match(type, compiler->builtin_unsized_integer) ||
+		types_match(type, compiler->builtin_unsized_float) ||
+		types_match(type, compiler->builtin_unknown_enum) ||
+		types_match(type, compiler->builtin_deferred_if))
+	{
+		return true;
+	}
+	return false;
+}
+
+
+// FIXME:
+// Right now concrete expression types must match exactly, meaning that some obvious valid conversions
+// will be reported as errors. For example:
+/*
+Foo :: struct { value: Int }
+
+operator as implicit :: (f: Foo) Int => f.value
+
+bar :: () {
+	if some_condition {
+		return Foo()
+	} else {
+		X := 42
+		return X
+	}
+}
+*/
+// Here bar's return type should be Int, but current implementation will show an error that types don't match
+AstExpression *set_common_return_type(TypecheckState *state, Span<AstExpression **> expressions) {
+	if (expressions.count == 0)
+		return compiler->builtin_void.ident;
+
+	auto void_if_unreachable = [&](AstExpression *type) -> AstExpression * {
+		if (types_match(type, compiler->builtin_unreachable))
+			return compiler->builtin_void.ident;
+		return type;
+	};
+
+	if (expressions.count == 1) {
+		harden_type(state, *expressions.data[0]);
+		return void_if_unreachable((*expressions.data[0])->type);
+	}
+
+	AstExpression *first_concrete = 0;
+
+	List<AstExpression **> inconcretes;
+	inconcretes.allocator = temporary_allocator;
+
+	for (auto _expression : expressions) {
+		auto &expression = *_expression;
+		if (is_concrete_type(expression->type)) {
+			if (first_concrete) {
+				if (!types_match(expression->type, first_concrete->type)) {
+					state->reporter.error(expression->location, "Type doesn't match previously used one");
+					state->reporter.info(first_concrete->location, "This one");
+					yield(TypecheckResult::fail);
+				}
+			} else {
+				first_concrete = expression;
+			}
+		} else {
+			inconcretes.add(_expression);
+		}
+	}
+
+	if (!first_concrete) {
+		for (umm i = 0; i < inconcretes.count; ++i) {
+			if (is_hardenable((*inconcretes[i])->type)) {
+				first_concrete = *inconcretes[i];
+				harden_type(state, first_concrete);
+				inconcretes.erase_at(i);
+				break;
+			}
+		}
+	}
+
+	assert(first_concrete);
+
+	for (auto &_inconcrete : inconcretes) {
+		auto &inconcrete = *_inconcrete;
+
+		if (types_match(inconcrete->type, compiler->builtin_unreachable))
+			continue;
+
+		if (!implicitly_cast(state, &state->reporter, &inconcrete, first_concrete->type)) {
+			yield(TypecheckResult::fail);
+		}
+	}
+
+	return first_concrete->type;
+}
 
 void typecheck_body(TypecheckState *state, AstLambda *lambda) {
 	bool deferred_function_name = true;
@@ -7064,6 +7177,48 @@ void typecheck_body(TypecheckState *state, AstLambda *lambda) {
 		typecheck(state, lambda->body);
 		harden_type(state, lambda->body);
 	}
+
+	if (!lambda->return_parameter) {
+		List<AstExpression **> return_expressions;
+		return_expressions.allocator = temporary_allocator;
+
+		return_expressions.reserve(lambda->return_statements.count + 1);
+
+		if (lambda->body)
+			return_expressions.add(&lambda->body);
+
+		for (auto ret : lambda->return_statements) {
+			if (ret->expression) {
+				return_expressions.add(&ret->expression);
+			}
+		}
+
+		if (return_expressions.count == 0) {
+			lambda->return_parameter = state->make_retparam(compiler->builtin_void.ident, lambda);
+		} else {
+			auto return_type = set_common_return_type(state, return_expressions);
+			lambda->return_parameter = state->make_retparam(return_type, lambda);
+		}
+	}
+
+	if (lambda->body) {
+		compiler->lambdas_with_body.add(lambda);
+	} else {
+		compiler->lambdas_without_body.add(lambda);
+	}
+
+	// NOTE: if this string is used in compile time expressions before lambda's type is determined,
+	// it will evaluate to a default string, which may be unexpected.
+	if (deferred_function_name) {
+		auto type_name = type_to_string(lambda->type);
+		for (auto fd : lambda->function_directives) {
+			fd->string.set(type_name);
+		}
+	}
+
+	return;
+
+
 
 
 	if (!lambda->return_parameter) {
@@ -8166,6 +8321,8 @@ void get_overloads(TypecheckState *state, AstCall *call, List<Overload> &overloa
 			typecheck(state, call->callable);
 
 		identifier_case:
+
+			assert(call->callable->kind = Ast_Identifier);
 			auto ident = (AstIdentifier *)call->callable;
 
 			for (auto definition : ident->possible_definitions) {
@@ -8207,12 +8364,12 @@ void get_overloads(TypecheckState *state, AstCall *call, List<Overload> &overloa
 
 			if (should_typecheck_binop) {
 				typecheck(state, call->callable);
+
 				assert(call->callable->kind == Ast_BinaryOperator);
 				binop = (AstBinaryOperator *)call->callable;
-				if (binop->operation == BinaryOperation::dot) {
-					if (binop->right->kind == Ast_Identifier) {
-						auto ident = (AstIdentifier *)binop->right;
 
+				if (binop->operation == BinaryOperation::dot) {
+					if (auto ident = as<AstIdentifier>(binop->right)) {
 						for (auto definition : ident->possible_definitions) {
 							overloads.add({
 								.type = definition->type,
@@ -8345,7 +8502,14 @@ void get_overloads(TypecheckState *state, AstCall *call, List<Overload> &overloa
 		}
 		case Ast_Struct: {
 			typecheck(state, call->callable);
+
+			// NOTE: anonymous structs are replaced with identifiers to anonymous definitions.
+			if (call->callable->kind == Ast_Identifier)
+				goto identifier_case;
+
+			assert(call->callable->kind = Ast_Struct);
 			auto Struct = (AstStruct *)call->callable;
+
 			overloads.add({
 				.type = Struct,
 				.definition = Struct->definition,
@@ -9363,12 +9527,8 @@ AstExpression *typecheck(TypecheckState *state, AstCall *call) {
 			auto instantiated_struct_definition = AstDefinition::create();
 			instantiated_struct_definition->name = type_to_string(call);
 
-			if (match->Struct->definition) {
-				instantiated_struct_definition->container_node = match->Struct->definition->container_node;
-			} else {
-				instantiated_struct_definition->container_node = state->current_lambda_or_struct_or_enum;
-			}
-
+			assert(match->Struct->definition);
+			instantiated_struct_definition->container_node = match->Struct->definition->container_node;
 			instantiated_struct_definition->expression = instantiated_struct;
 			instantiated_struct_definition->is_constant = true;
 			instantiated_struct_definition->parent_scope = match->Struct->definition->parent_scope;
@@ -10766,20 +10926,24 @@ AstExpression *typecheck(TypecheckState *state, AstUnaryOperator *unop) {
 	return unop;
 }
 AstExpression *typecheck(TypecheckState *state, AstStruct *Struct) {
-	auto definition = Struct->definition;
+	bool anonymous = false;
+
+	if (!Struct->definition) {
+		Struct->definition = AstDefinition::create();
+		Struct->definition->location = Struct->location;
+		Struct->definition->name = format("_{}"str, Struct->uid);
+		Struct->definition->type = compiler->builtin_type.ident;
+		Struct->definition->expression = Struct;
+		Struct->definition->is_constant = true;
+		state->current_scope->add(Struct->definition);
+		anonymous = true;
+	}
+
+	Struct->definition->type = Struct->type = compiler->builtin_type.ident;
 
 	scoped_replace(state->current_lambda_or_struct_or_enum, Struct);
 	scoped_replace(state->current_loop, 0);
-
 	push_scope(Struct->parameter_scope);
-
-	Struct->type = compiler->builtin_type.ident;
-	if (Struct->definition) {
-		Struct->definition->type = Struct->type;
-	}
-
-//	if (Struct->definition && Struct->definition->name == "Vector2")
-//		debug_break();
 
 	if (Struct->is_template) {
 		for (auto &parameter : Struct->parameter_scope->definition_list) {
@@ -10799,32 +10963,17 @@ AstExpression *typecheck(TypecheckState *state, AstStruct *Struct) {
 		}
 
 
-		//std::stable_sort(members.begin(), members.end(), [](AstDefinition *a, AstDefinition *b) {
-		//	auto get_order = [](AstDefinition *a) -> umm {
-		//		if (a->is_constant) {
-		//			// FIXME: this will not work for aliases
-		//			if (a->expression) {
-		//				switch (a->expression->kind) {
-		//					case Ast_Lambda: return -1; // last
-		//					case Ast_Struct: return  0; // first
-		//				}
-		//			} else {
-		//			}
-		//		} else {
-		//			return (umm)a->location.data;
-		//		}
-		//		return 1;
-		//	};
-		//	return get_order(a) < get_order(b);
-		//});
+		// NOTE: Struct->member_scope may change in following loops, because
+		//       unnamed structs inside them may insert their definitions into this scope.
 
+		auto member_statements = copy(Struct->member_scope->statement_list);
 
 		List<TypecheckState> new_states;
 		new_states.resize(Struct->member_scope->statement_list.count);
 
-		for (umm i = 0; i < Struct->member_scope->statement_list.count; ++i) {
+		for (umm i = 0; i < member_statements.count; ++i) {
 			auto &new_state = new_states[i];
-			auto &statement = Struct->member_scope->statement_list[i];
+			auto &statement = member_statements[i];
 
 			new_state.statement = statement;
 			new_state.parent_fiber = state->fiber;
@@ -10847,7 +10996,7 @@ AstExpression *typecheck(TypecheckState *state, AstStruct *Struct) {
 
 		while (1) {
 			bool all_finished = true;
-			for (umm i = 0; i < Struct->member_scope->statement_list.count; ++i) {
+			for (umm i = 0; i < member_statements.count; ++i) {
 				auto &new_state = new_states[i];
 				if (new_state.result != TypecheckResult::wait)
 					continue;
@@ -10979,7 +11128,16 @@ AstExpression *typecheck(TypecheckState *state, AstStruct *Struct) {
 		}
 	}
 
-	return Struct;
+	if (anonymous) {
+		auto ident = AstIdentifier::create();
+		ident->location = Struct->location;
+		ident->type = Struct->definition->type;
+		ident->name = Struct->definition->name;
+		ident->possible_definitions.set(Struct->definition);
+		return ident;
+	} else {
+		return Struct;
+	}
 }
 AstExpression *typecheck(TypecheckState *state, AstSubscript *subscript) {
 	if (subscript->index_expression) {
@@ -11113,7 +11271,7 @@ AstExpression *typecheck(TypecheckState *state, AstIf *If) {
 		if (types_match(If->true_block->type, If->false_block->type)) {
 			If->type = If->true_block->type;
 		} else {
-			If->type = compiler->builtin_void.ident;
+			If->type = compiler->builtin_deferred_if.ident;
 		}
 	}
 	return If;
@@ -11239,12 +11397,25 @@ _break:
 	return result;
 }
 AstExpression *typecheck(TypecheckState *state, AstEnum *Enum) {
-	scoped_replace(state->current_lambda_or_struct_or_enum, Enum);
-	scoped_replace(state->current_loop, 0);
-	Enum->type = compiler->builtin_type.ident;
+	bool anonymous = false;
+
+	if (!Enum->definition) {
+		Enum->definition = AstDefinition::create();
+		Enum->definition->location = Enum->location;
+		Enum->definition->name = format("_{}"str, Enum->uid);
+		Enum->definition->type = compiler->builtin_type.ident;
+		Enum->definition->expression = Enum;
+		Enum->definition->is_constant = true;
+		state->current_scope->add(Enum->definition);
+		anonymous = true;
+	}
+
+	Enum->definition->type = Enum->type = compiler->builtin_type.ident;
 
 	BigInteger counter;
 
+	scoped_replace(state->current_lambda_or_struct_or_enum, Enum);
+	scoped_replace(state->current_loop, 0);
 	for (auto definition : Enum->scope->definition_list) {
 		if (definition->expression) {
 
@@ -11262,14 +11433,24 @@ AstExpression *typecheck(TypecheckState *state, AstEnum *Enum) {
 
 			counter = copy(get_constant_integer(definition->expression).value());
 		} else {
-			definition->expression = make_integer(copy(counter), definition->location);
+			definition->expression = state->make_integer(copy(counter), definition->location);
 		}
 
 		definition->type = Enum;
 
 		counter += 1ull;
 	}
-	return Enum;
+
+	if (anonymous) {
+		auto ident = AstIdentifier::create();
+		ident->location = Enum->location;
+		ident->type = Enum->definition->type;
+		ident->name = Enum->definition->name;
+		ident->possible_definitions.set(Enum->definition);
+		return ident;
+	} else {
+		return Enum;
+	}
 }
 AstExpression *typecheck(TypecheckState *state, AstArrayInitializer *ArrayInitializer) {
 	if (ArrayInitializer->elements.count == 0) {
@@ -12173,6 +12354,7 @@ void init_compiler_builtin_types() {
 	create_struct(compiler->builtin_poly);
 	create_struct(compiler->builtin_overload_set);
 	create_struct(compiler->builtin_unreachable);
+	create_struct(compiler->builtin_deferred_if);
 
 	auto create_global_alias = [&](String name) {
 		auto defn = AstDefinition::create();
@@ -12288,6 +12470,7 @@ void init_compiler_builtin_types() {
 	init_struct(compiler->builtin_poly,            "<poly>"str, 0, 0);
 	init_struct(compiler->builtin_overload_set,    "<overload set>"str, 0, 0);
 	init_struct(compiler->builtin_unreachable,     "<unreachable>"str, 0, 0);
+	init_struct(compiler->builtin_deferred_if,     "<deferred if>"str, 0, 0);
 
 	// ====================
 	// Step 3: Init aliases

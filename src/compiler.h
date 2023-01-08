@@ -1296,6 +1296,7 @@ struct Compiler {
 	BuiltinStruct builtin_poly;
 	BuiltinStruct builtin_overload_set;
 	BuiltinStruct builtin_unreachable; // NOTE: this type is assigned to a block that always returns
+	BuiltinStruct builtin_deferred_if; // NOTE: this type is assigned to an if expression whose type should be determined later
 
 	HashMap<AstExpression *, AstStruct *> span_instantiations;
 
