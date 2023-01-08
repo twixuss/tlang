@@ -7141,7 +7141,13 @@ AstExpression *set_common_return_type(TypecheckState *state, Span<AstExpression 
 		for (umm i = 0; i < inconcretes.count; ++i) {
 			if (is_hardenable((*inconcretes[i])->type)) {
 				first_concrete = *inconcretes[i];
+
 				harden_type(state, first_concrete);
+				if (!is_concrete_type(first_concrete->type)) {
+					state->reporter.error(first_concrete->location, "Could not make concrete type for this expression.");
+					yield(TypecheckResult::fail);
+				}
+
 				inconcretes.erase_at(i);
 				break;
 			}
@@ -7193,12 +7199,8 @@ void typecheck_body(TypecheckState *state, AstLambda *lambda) {
 			}
 		}
 
-		if (return_expressions.count == 0) {
-			lambda->return_parameter = state->make_retparam(compiler->builtin_void.ident, lambda);
-		} else {
-			auto return_type = set_common_return_type(state, return_expressions);
-			lambda->return_parameter = state->make_retparam(return_type, lambda);
-		}
+		auto return_type = set_common_return_type(state, return_expressions);
+		lambda->return_parameter = state->make_retparam(return_type, lambda);
 	}
 
 	if (lambda->body) {
