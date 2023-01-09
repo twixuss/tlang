@@ -518,6 +518,17 @@ void print_lowered(AstIdentifier *node) {
 	//print("{}{}", node->name, FormatInt{.value=node->definition()?node->definition()->uid:-1, .radix=62});
 }
 void print_lowered(AstCall *node) {
+	if (auto ident = as<AstIdentifier>(node->callable)) {
+		if (ident->name == "as") {
+			if (node->sorted_arguments.count == 1) {
+				print_lowered(node->sorted_arguments[0]);
+				print(" as ");
+				print_lowered(node->type);
+				return;
+			}
+		}
+	}
+
 	print_lowered(node->callable);
 	print("(");
 #if 0
@@ -549,23 +560,18 @@ void print_lowered(AstCall *node) {
 void print_lowered(AstBinaryOperator *node) {
 	bool has_spaces = node->operation != BinaryOperation::dot;
 
-	print("(");
 	print_lowered(node->left);
 	if (has_spaces) print(" ");
 	print(node->operation);
 	if (has_spaces) print(" ");
 	print_lowered(node->right);
-	print(")");
 }
 void print_lowered(AstUnaryOperator *node) {
-	print('(');
 	switch (node->operation) {
 		case UnaryOperation::autocast: {
-			print('(');
 			print_lowered(node->expression);
-			print(") as (");
+			print(" as ");
 			print_lowered(node->type);
-			print(')');
 			break;
 		}
 		default: {
@@ -574,7 +580,6 @@ void print_lowered(AstUnaryOperator *node) {
 			break;
 		}
 	}
-	print(')');
 }
 void print_lowered(AstLiteral *literal) {
 	switch (literal->literal_kind) {
@@ -698,6 +703,13 @@ void print_lowered(AstArrayInitializer *pack) {
 	print("]");
 }
 void print_lowered(AstBlock *Block) {
+	if (Block->scope->statement_list.count == 1) {
+		if (auto est = as<AstExpressionStatement>(Block->scope->statement_list[0])) {
+			print_lowered(est->expression);
+			return;
+		}
+	}
+
 	print_lowered(Block->scope);
 }
 void print_lowered(AstMatch * match) {

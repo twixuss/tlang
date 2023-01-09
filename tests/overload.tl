@@ -4,7 +4,6 @@
 // 1. Concrete type > Template type
 // 2. Template type > Any
 // 3. Constant > Non constant
-// 4. Custom implicit operator == Any
 
 main :: () {
 	{

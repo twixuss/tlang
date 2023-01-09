@@ -4673,6 +4673,17 @@ void evaluate(TypecheckState *state, AstExpression *expression, AstLiteral *&res
 						case LiteralKind::type:      result = make_bool(types_match(l->type_value, r->type_value)); return;
 					}
 				}
+				case ne: {
+					assert(l->literal_kind == r->literal_kind);
+					switch (l->literal_kind) {
+						case LiteralKind::integer:   result = make_bool(l->integer != r->integer); return;
+						case LiteralKind::Float:     result = make_bool(l->Float != r->Float); return;
+						case LiteralKind::boolean:   result = make_bool(l->Bool != r->Bool); return;
+						case LiteralKind::string:    result = make_bool(l->string.get() != r->string.get()); return;
+						case LiteralKind::character: result = make_bool(l->character != r->character); return;
+						case LiteralKind::type:      result = make_bool(!types_match(l->type_value, r->type_value)); return;
+					}
+				}
 				// TODO: FIXME: should evaluation of right expression be done after we check left value?
 				case lor: {
 					assert(l->literal_kind == r->literal_kind);
@@ -5713,7 +5724,8 @@ bool implicitly_cast(TypecheckState *state, Reporter *reporter, CExpression auto
 				if (apply) {
 					auto call = AstCall::create();
 					call->location = expression->location;
-					call->callable = lambda;
+					assert(lambda->definition);
+					call->callable = make_identifier(lambda->definition, expression->location);
 					call->unsorted_arguments.set({{}, expression});
 					call->sorted_arguments.set(expression);
 					call->type = type;
@@ -7081,25 +7093,6 @@ bool is_hardenable(AstExpression *type) {
 	return false;
 }
 
-
-// FIXME:
-// Right now concrete expression types must match exactly, meaning that some obvious valid conversions
-// will be reported as errors. For example:
-/*
-Foo :: struct { value: Int }
-
-operator as implicit :: (f: Foo) Int => f.value
-
-bar :: () {
-	if some_condition {
-		return Foo()
-	} else {
-		X := 42
-		return X
-	}
-}
-*/
-// Here bar's return type should be Int, but current implementation will show an error that types don't match
 AstExpression *set_common_return_type(TypecheckState *state, Span<AstExpression **> expressions) {
 	if (expressions.count == 0)
 		return compiler->builtin_void.ident;
@@ -7115,7 +7108,13 @@ AstExpression *set_common_return_type(TypecheckState *state, Span<AstExpression 
 		return void_if_unreachable((*expressions.data[0])->type);
 	}
 
-	AstExpression *first_concrete = 0;
+	struct Concrete {
+		AstExpression **expression = 0;
+		int count_of_expressions_castable_to_this = 0;
+	};
+
+	List<Concrete> concretes;
+	concretes.allocator = temporary_allocator;
 
 	List<AstExpression **> inconcretes;
 	inconcretes.allocator = temporary_allocator;
@@ -7123,38 +7122,78 @@ AstExpression *set_common_return_type(TypecheckState *state, Span<AstExpression 
 	for (auto _expression : expressions) {
 		auto &expression = *_expression;
 		if (is_concrete_type(expression->type)) {
-			if (first_concrete) {
-				if (!types_match(expression->type, first_concrete->type)) {
-					state->reporter.error(expression->location, "Type doesn't match previously used one");
-					state->reporter.info(first_concrete->location, "This one");
-					yield(TypecheckResult::fail);
-				}
-			} else {
-				first_concrete = expression;
-			}
+			concretes.add({_expression});
 		} else {
 			inconcretes.add(_expression);
 		}
 	}
 
-	if (!first_concrete) {
+	if (concretes.count == 0) {
 		for (umm i = 0; i < inconcretes.count; ++i) {
 			if (is_hardenable((*inconcretes[i])->type)) {
-				first_concrete = *inconcretes[i];
+				auto &expression = *inconcretes[i];
 
-				harden_type(state, first_concrete);
-				if (!is_concrete_type(first_concrete->type)) {
-					state->reporter.error(first_concrete->location, "Could not make concrete type for this expression.");
+				harden_type(state, expression);
+				if (!is_concrete_type(expression->type)) {
+					state->reporter.error(expression->location, "Could not make concrete type for this expression.");
 					yield(TypecheckResult::fail);
 				}
 
 				inconcretes.erase_at(i);
+				concretes.add({&expression});
 				break;
 			}
 		}
 	}
 
-	assert(first_concrete);
+	assert(concretes.count);
+
+	for (auto &target : concretes) {
+		for (auto &other : concretes) {
+			if (&target == &other)
+				continue;
+
+			if (implicitly_cast(state, 0, other.expression, (*target.expression)->type, 0, false)) {
+				target.count_of_expressions_castable_to_this += 1;
+			}
+		}
+	}
+
+	List<AstExpression **> matches;
+	matches.allocator = temporary_allocator;
+
+	for (auto &concrete : concretes) {
+		if (concrete.count_of_expressions_castable_to_this == concretes.count - 1) {
+			matches.add(concrete.expression);
+		}
+	}
+
+	if (matches.count == 0) {
+
+		// FIXME: location isn't great
+		state->reporter.error((*expressions[0])->location, "Could not deduce common return type.");
+
+		yield(TypecheckResult::fail);
+	}
+
+	auto match = matches[0];
+	for (auto other : matches.skip(1)) {
+		if (!types_match((*match)->type, (*other)->type)) {
+			state->reporter.error((*other)->location, "Ambiguous common return type. {} deduced here:", type_to_string((*other)->type));
+			state->reporter.info((*match)->location, "And {} deduced here:", type_to_string((*match)->type));
+			yield(TypecheckResult::fail);
+		}
+	}
+
+	for (auto &other : concretes) {
+		if (other.expression == match)
+			continue;
+
+		if (!implicitly_cast(state, &state->reporter, other.expression, (*match)->type)) {
+			state->reporter.error((*other.expression)->location, "INTERNAL ERROR: implicit cast of this expression to {} should have succeeded", type_to_string((*match)->type));
+			yield(TypecheckResult::fail);
+		}
+	}
 
 	for (auto &_inconcrete : inconcretes) {
 		auto &inconcrete = *_inconcrete;
@@ -7162,12 +7201,12 @@ AstExpression *set_common_return_type(TypecheckState *state, Span<AstExpression 
 		if (types_match(inconcrete->type, compiler->builtin_unreachable))
 			continue;
 
-		if (!implicitly_cast(state, &state->reporter, &inconcrete, first_concrete->type)) {
+		if (!implicitly_cast(state, &state->reporter, &inconcrete, (*match)->type)) {
 			yield(TypecheckResult::fail);
 		}
 	}
 
-	return first_concrete->type;
+	return (*match)->type;
 }
 
 void typecheck_body(TypecheckState *state, AstLambda *lambda) {
