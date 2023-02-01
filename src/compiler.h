@@ -322,7 +322,6 @@ struct AstDefinition : AstStatement, StatementPool<AstDefinition> {
 	Expression<> type = {};
 	Expression<> parsed_type = {};
 	Expression<> container_node = {};
-	Expression<AstIdentifier> poly_ident = {};
 
 	Expression<AstLiteral> evaluated = {};
 
@@ -334,10 +333,10 @@ struct AstDefinition : AstStatement, StatementPool<AstDefinition> {
 
 	bool is_constant     : 1 = false;
 	bool is_poly         : 1 = false;
-	bool depends_on_poly : 1 = false;
 	bool is_pack         : 1 = false;
 	bool has_using       : 1 = false;
-	bool is_referenced   : 1 = false;
+	bool is_referenced   : 1 = false; // If true, this will not be eliminated due to DCE.
+	bool is_hidden       : 1 = false; // If true, identifiers will never resolve to this when typechecking. Only compiler can reference this.
 };
 
 // Started with 176
@@ -744,6 +743,7 @@ e(poly,        $)         /*   $           */\
 e(typeinfo,    #typeinfo) /*   #typeinfo   */\
 e(dot,         .)         /*   .           */\
 e(pack,        ..)        /*   ..          */\
+e(insert,      #insert)   /*   #insert     */\
 e(pointer_or_dereference_or_unwrap, *) \
 e(internal_move_to_temporary, XXX) // move the value into temporary space, result is a pointer to that space.
 
@@ -774,6 +774,7 @@ inline String as_string(UnaryOperation unop) {
 		case typeinfo:    return "#typeinfo"str;
 		case dot:         return "."str;
 		case pack:        return ".."str;
+		case insert:      return "#insert"str;
 		case pointer_or_dereference_or_unwrap: return "<*>"str;
 		case internal_move_to_temporary: return "<tmp>"str;
 	}
@@ -801,6 +802,7 @@ inline Optional<UnaryOperation> as_unary_operation(Token token) {
 			if (token.string == "#sizeof")   return Sizeof;
 			if (token.string == "#typeof")   return typeof;
 			if (token.string == "#typeinfo") return typeinfo;
+			if (token.string == "#insert") return insert;
 			break;
 	}
 	return {};
@@ -1044,8 +1046,7 @@ inline Optional<BigInteger> get_constant_integer(AstExpression *expression) {
 				case bsr: return get_constant_integer(binop->left) >> get_constant_integer(binop->right);
 				case eq: // return get_constant_integer(binop->left) == get_constant_integer(binop->right);
 				case ne: // return get_constant_integer(binop->left) != get_constant_integer(binop->right);
-				case dot:
-					return {};
+				case dot: return get_constant_integer(binop->right);
 				default: invalid_code_path();
 			}
 			break;
@@ -1088,6 +1089,7 @@ myint2 :: myint;
 direct(identifier myint2) returns struct s64
 */
 inline AstExpression *direct(AstExpression *type) {
+	assert(type);
 	while (1) {
 		switch (type->kind) {
 			case Ast_Identifier: {
@@ -1291,12 +1293,13 @@ struct Compiler {
 	BuiltinStruct builtin_unsized_integer;
 	BuiltinStruct builtin_unsized_float;
 	BuiltinStruct builtin_noinit;
-	BuiltinStruct builtin_unknown;
 	BuiltinStruct builtin_unknown_enum;
 	BuiltinStruct builtin_poly;
 	BuiltinStruct builtin_overload_set;
-	BuiltinStruct builtin_unreachable; // NOTE: this type is assigned to a block that always returns
-	BuiltinStruct builtin_deferred_if; // NOTE: this type is assigned to an if expression whose type should be determined later
+	BuiltinStruct builtin_unreachable; // assigned to a block that never reaches it's end (e.g. has return/break/.. statement)
+	BuiltinStruct builtin_deferred_if; // assigned to an if expression whose type should be determined later
+	BuiltinStruct builtin_ast;         // assigned to #ast directive
+	BuiltinStruct builtin_template;    // assigned to $T
 
 	HashMap<AstExpression *, AstStruct *> span_instantiations;
 
@@ -1909,6 +1912,7 @@ inline s64 get_size(AstExpression *_type, bool check_struct) {
 				case typeof:   return get_size(unop->expression->type);
 				case option:   return get_size(unop->expression) + get_align(unop->expression);
 				case pack:     return compiler->stack_word_size*2; // pointer+count;
+				case poly:     invalid_code_path(unop->location, "INTERNAL ERROR: Attempt to get size of a template");
 				default: invalid_code_path();
 			}
 		}

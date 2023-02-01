@@ -116,7 +116,11 @@ void append_type(StringBuilder &builder, AstExpression *type, bool silent_error)
 			for (auto &argument : call->unsorted_arguments) {
 				if (&argument != call->unsorted_arguments.data)
 					append(builder, ", ");
-				append_type(builder, argument.expression, silent_error);
+				if (argument.expression->type && is_type(argument.expression)) {
+					append_type(builder, argument.expression, silent_error);
+				} else {
+					append(builder, argument.expression->location);
+				}
 			}
 			append(builder, ')');
 			break;

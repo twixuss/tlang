@@ -42,11 +42,24 @@ inline bool operator==(std::source_location a, std::source_location b) {
 	return a.column() == b.column() && a.line() == b.line() && strcmp(a.file_name(), b.file_name()) == 0;
 }
 
+#include <tl/forward.h>
+using namespace tl;
+using String = Span<utf8, u32>;
+
 template <class ...Args>
 void tlang_assertion_failed(char const *cause, char const *file, int line, char const *expression, char const *function, Args ...args);
 
+template <>
+inline void tlang_assertion_failed(char const *cause, char const *file, int line, char const *expression, char const *function);
+
 template <class ...Args, class Char>
-void tlang_assertion_failed(char const *cause, char const *file, int line, char const *expression, char const *function, Char const *format_string, Args ...args);
+inline void tlang_assertion_failed(char const *cause, char const *file, int line, char const *expression, char const *function, Char const *format_string, Args ...args);
+
+template <>
+inline void tlang_assertion_failed(char const *cause, char const *file, int line, char const *expression, char const *function, String location);
+
+template <class ...Args, class Char>
+inline void tlang_assertion_failed(char const *cause, char const *file, int line, char const *expression, char const *function, String location, Char const *format_string, Args ...args);
 
 // used in ASSERTION_FAILURE so debugger points to the right place
 inline void dummy() {}
@@ -68,7 +81,6 @@ inline void dummy() {}
 #include <tl/debug.h>
 #include <tl/fly_string.h>
 #pragma warning(pop)
-using namespace tl;
 
 struct MyAllocator : AllocatorBase<MyAllocator> {
 	inline static MyAllocator current() { return {}; }
@@ -88,7 +100,6 @@ using Ptr32 = typename Pool32<T>::template Ptr<T>;
 template <class T>
 using SmallList = List<T, Allocator, u32>;
 
-using String = Span<utf8, u32>;
 using HeapString = SmallList<utf8>;
 
 // this string is used as key into hashmap
@@ -409,6 +420,21 @@ inline Optional<HeapString> unescape_string(String string) {
 template <class ...Args, class Char>
 void immediate_error(String location, Char const *format_string, Args const &...args);
 
+template <>
+inline void tlang_assertion_failed(char const *cause, char const *file, int line, char const *expression, char const *function) {
+	tlang_assertion_failed(cause, file, line, expression, function, String{}, "");
+}
+template <class ...Args, class Char>
+inline void tlang_assertion_failed(char const *cause, char const *file, int line, char const *expression, char const *function, Char const *format_string, Args ...args) {
+	tlang_assertion_failed(cause, file, line, expression, function, String{}, format_string, args...);
+}
+
+template <>
+inline void tlang_assertion_failed(char const *cause, char const *file, int line, char const *expression, char const *function, String location) {
+	tlang_assertion_failed(cause, file, line, expression, function, location, "");
+}
+
+
 template <class ...Args, class Char>
 inline void tlang_assertion_failed(char const *cause, char const *file, int line, char const *expression, char const *function, String location, Char const *format_string, Args ...args) {
 	with(ConsoleColor::red, ::tl::print("Assertion failed: "));
@@ -420,14 +446,4 @@ inline void tlang_assertion_failed(char const *cause, char const *file, int line
 		debug_break();
 	else
 		exit(-1);
-}
-
-template <class ...Args, class Char>
-inline void tlang_assertion_failed(char const *cause, char const *file, int line, char const *expression, char const *function, Char const *format_string, Args ...args) {
-	tlang_assertion_failed(cause, file, line, expression, function, String{}, format_string, args...);
-}
-
-template <class ...Args>
-inline void tlang_assertion_failed(char const *cause, char const *file, int line, char const *expression, char const *function, Args ...args) {
-	tlang_assertion_failed(cause, file, line, expression, function, String{}, "", args...);
 }

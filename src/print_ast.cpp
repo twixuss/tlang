@@ -360,6 +360,7 @@ void print_lowered(AstStatement *node) {
 	void print_lowered(AstMatch *);
 	void print_lowered(AstOperatorDefinition *);
 	void print_lowered(AstLoopControl *);
+	void print_lowered(AstPrint *);
 
 	print_tabbed("");
 	switch (node->kind) {
@@ -372,6 +373,7 @@ void print_lowered(AstStatement *node) {
 		case Ast_Defer:               return print_lowered((AstDefer               *)node);
 		case Ast_OperatorDefinition:  return print_lowered((AstOperatorDefinition  *)node);
 		case Ast_LoopControl:         return print_lowered((AstLoopControl         *)node);
+		case Ast_Print:               return print_lowered((AstPrint               *)node);
 			break;
 		default:
 			print("!unknown statement {}!", node->uid);
@@ -461,6 +463,11 @@ void print_lowered(AstLoopControl *LoopControl) {
 		case LoopControl::Continue: println("continue;"); break;
 		default: invalid_code_path();
 	}
+}
+void print_lowered(AstPrint *Print) {
+	print("#print ");
+	print_lowered(Print->expression);
+	print(";\n");
 }
 void print_lowered(AstLambda *node) {
 	if (node->is_poly) {
