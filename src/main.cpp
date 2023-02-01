@@ -2834,9 +2834,8 @@ bool simplify(Reporter *reporter, CExpression auto *_expression) {
 				if (definition) {
 					if (definition->is_constant) {
 						if (definition->expression) {
-							if (definition->expression->kind != Ast_Lambda) {
-								expression = definition->expression;
-								// assert(expression->kind == Ast_Literal);
+							if (definition->expression->kind == Ast_Literal) {
+								expression = deep_copy(definition->expression);
 							}
 						}
 					}
@@ -4195,8 +4194,6 @@ struct IntegerInfo {
 
 IntegerInfo integer_infos[8];
 
-void ensure_if_has_type(TypecheckState *state, AstIf *If);
-
 bool ensure_fits(Reporter *reporter, AstExpression *expression, BigInteger integer, IntegerInfo info) {
 	auto top_bits = integer >> info.bits;
 	defer { free(top_bits); };
@@ -4207,168 +4204,6 @@ bool ensure_fits(Reporter *reporter, AstExpression *expression, BigInteger integ
 		reporter->error(expression->location, "{} is not implicitly convertible to {} because some bits would be lost. You can explicitly write `({}) as {}` or `@({})` to perform lossy conversion.", integer, name, expression->location, name, expression->location);
 	}
 	return false;
-}
-
-void harden_type(TypecheckState *state, AstExpression *expression) {
-	switch (expression->kind) {
-		case Ast_Literal: {
-			auto literal = (AstLiteral *)expression;
-			 // Literals may already have their type set by, for example, cast expressions
-			if (types_match(literal->type, compiler->builtin_unsized_integer)) {
-				literal->type = compiler->type_int;
-
-				auto info = find_if(integer_infos, [&](auto &a) { return types_match(a.type, compiler->type_int); });
-				assert(info);
-
-				if (!ensure_fits(&state->reporter, expression, literal->integer, *info)) {
-					yield(TypecheckResult::fail);
-				}
-
-			} else if (types_match(literal->type, compiler->builtin_unsized_float)) {
-				literal->type = compiler->type_float;
-			}
-			break;
-		}
-		case Ast_Identifier: {
-			auto identifier = (AstIdentifier *)expression;
-			 // Literals may already have their type set by, for example, cast expressions
-			if (types_match(identifier->type, compiler->builtin_unsized_integer)) {
-				identifier->type = compiler->type_int;
-
-				auto info = find_if(integer_infos, [&](auto &a) { return types_match(a.type, compiler->type_int); });
-				assert(info);
-
-				if (!ensure_fits(&state->reporter, expression, get_literal(identifier)->integer, *info)) {
-					yield(TypecheckResult::fail);
-				}
-			} else if (types_match(identifier->type, compiler->builtin_unsized_float)) {
-				identifier->type = compiler->type_float;
-			}
-			break;
-		}
-		case Ast_If: {
-			auto If = (AstIf *)expression;
-			harden_type(state, If->true_block);
-			harden_type(state, If->false_block);
-
-			ensure_if_has_type(state, If);
-
-			break;
-		}
-		case Ast_Block: {
-			auto Block = (AstBlock *)expression;
-			if (Block->scope->statement_list.count) {
-				if (auto est = as<AstExpressionStatement>(Block->scope->statement_list.back())) {
-					harden_type(state, est->expression);
-					Block->type = est->expression->type;
-				}
-			}
-			break;
-		}
-		case Ast_Match: {
-			auto Match = (AstMatch *)expression;
-			List<MatchCase *> reachable_cases;
-			for (auto &Case : Match->cases) {
-				harden_type(state, Case.block);
-				if (!types_match(Case.block->type, compiler->builtin_unreachable)) {
-					reachable_cases.add(&Case);
-				}
-			}
-
-			if (reachable_cases.count == 0) {
-				state->reporter.error(Match->location, "No reachable cases. Can't deduce the type.");
-				yield(TypecheckResult::fail);
-			}
-
-			auto result_type = reachable_cases[0]->block->type;
-			for (auto &Case : reachable_cases.skip(1)) {
-				if (!types_match(Case->block->type, result_type)) {
-					state->reporter.error(Match->location, "This case returns {}, which is incompatible with {} returned in first case.", type_to_string(Case->block->type), type_to_string(result_type));
-					yield(TypecheckResult::fail);
-				}
-			}
-
-			Match->type = result_type;
-
-			break;
-		}
-		case Ast_BinaryOperator:
-		case Ast_Call:
-		case Ast_Subscript:
-		case Ast_UnaryOperator:
-		case Ast_Struct:
-		case Ast_Lambda:
-		case Ast_ArrayInitializer:
-			break;
-		default:
-			invalid_code_path();
-	}
-}
-void soften_type(AstExpression *expression) {
-	switch (expression->kind) {
-		case Ast_Literal: {
-			 // FIXME: Literals may already have their type set by, for example, cast expressions
-			auto literal = (AstLiteral *)expression;
-			switch (literal->literal_kind) {
-				using enum LiteralKind;
-				case integer: { literal->type = compiler->builtin_unsized_integer.ident; break; }
-				case Float:   { literal->type = compiler->builtin_unsized_float  .ident; break; }
-				default:
-					break;
-			}
-			break;
-		}
-		case Ast_Identifier: {
-			auto identifier = (AstIdentifier *)expression;
-
-			if (identifier->definition())
-				identifier->type = identifier->definition()->type;
-
-			break;
-		}
-		case Ast_If: {
-			auto If = (AstIf *)expression;
-			soften_type(If->true_block);
-			soften_type(If->false_block);
-
-			// FIXME: i don't know what to do here
-			If->type = compiler->builtin_void.ident;
-
-			break;
-		}
-		case Ast_Block: {
-			auto Block = (AstBlock *)expression;
-			if (Block->scope->statement_list.count) {
-				if (auto est = as<AstExpressionStatement>(Block->scope->statement_list.back())) {
-					soften_type(est->expression);
-					Block->type = est->expression->type;
-				}
-			}
-			break;
-		}
-		case Ast_Match: {
-			auto Match = (AstMatch *)expression;
-
-			for (auto &Case : Match->cases) {
-				soften_type(Case.block);
-			}
-
-			// FIXME: i don't know what to do here
-			Match->type = compiler->builtin_void.ident;
-
-			break;
-		}
-		case Ast_BinaryOperator:
-		case Ast_Call:
-		case Ast_Subscript:
-		case Ast_UnaryOperator:
-		case Ast_Struct:
-		case Ast_Lambda:
-		case Ast_ArrayInitializer:
-			break;
-		default:
-			invalid_code_path();
-	}
 }
 
 void for_each_top_scope(AstExpression *expression, auto &&fn) {
@@ -4779,8 +4614,8 @@ void evaluate(TypecheckState *state, AstExpression *expression, AstLiteral *&res
 					l->literal_kind = LiteralKind::pointer;
 					l->pointer.section = SectionKind::constant;
 
-					assert(unop->expression->kind == Ast_Identifier);
-					auto identifier = (AstIdentifier *)unop->expression;
+					auto identifier = as<AstIdentifier>(unop->expression);
+					assert(identifier);
 
 					auto definition = identifier->definition();
 					assert(definition);
@@ -5468,7 +5303,7 @@ bool implicitly_cast(TypecheckState *state, Reporter *reporter, CExpression auto
 			*conversion_distance = TypeDistance::any_or_custom;
 
 		if (apply) {
-			harden_type(state, expression);
+			make_concrete(state, &expression);
 
 			auto initializer = AstCall::create();
 			initializer->callable = compiler->builtin_any.ident;
@@ -5823,6 +5658,138 @@ bool implicitly_cast(TypecheckState *state, Reporter *reporter, CExpression auto
 	}
 	return false;
 }
+
+bool is_concrete_type(AstExpression *type) {
+	assert(is_type(type), "is_concrete_type accepts a type, but got an expression");
+	if (types_match(type, compiler->builtin_unsized_integer) ||
+		types_match(type, compiler->builtin_unsized_float) ||
+		types_match(type, compiler->builtin_overload_set) ||
+		types_match(type, compiler->builtin_unknown_enum) ||
+		types_match(type, compiler->builtin_unreachable) ||
+		types_match(type, compiler->builtin_deferred_if))
+	{
+		return false;
+	}
+	return true;
+}
+
+AstExpression *get_concrete_type(AstExpression *type) {
+	if (types_match(type, compiler->builtin_unsized_integer))
+		return compiler->type_int;
+
+	if (types_match(type, compiler->builtin_unsized_float))
+		return compiler->type_float;
+
+	return type;
+}
+
+void make_concrete(TypecheckState *state, AstExpression **_expression);
+
+void make_concrete(TypecheckState *state, AstBlock *block) {
+	if (block->scope->statement_list.count == 0)
+		return;
+
+	auto es = as<AstExpressionStatement>(block->scope->statement_list.back());
+	if (!es)
+		return;
+
+	make_concrete(state, &es->expression);
+	block->type = es->expression->type;
+}
+void make_concrete(TypecheckState *state, AstExpression **_expression) {
+	auto &expression = *_expression;
+
+	if (is_concrete_type(expression->type))
+		return;
+
+	switch (expression->kind) {
+		case Ast_Literal: {
+			auto Literal = (AstLiteral *)expression;
+			switch (Literal->literal_kind) {
+				case LiteralKind::integer: {
+					Literal->type = compiler->type_int;
+					break;
+				}
+				case LiteralKind::Float: {
+					Literal->type = compiler->type_float;
+					break;
+				}
+				default:
+					break;
+			}
+			break;
+		}
+		case Ast_If: {
+			auto If = (AstIf *)expression;
+
+			auto tc = is_concrete_type(If->true_block->type);
+			auto fc = is_concrete_type(If->false_block->type);
+
+			if (!tc && !fc) {
+				make_concrete(state, If->true_block);
+				make_concrete(state, If->false_block);
+			}
+
+			if (types_match(If->true_block->type, If->false_block->type)) {
+				If->type = If->true_block->type;
+				return;
+			}
+
+			if (types_match(If->true_block->type, compiler->builtin_unreachable)) {
+				If->type = If->false_block->type;
+				return;
+			}
+
+			if (types_match(If->false_block->type, compiler->builtin_unreachable)) {
+				If->type = If->true_block->type;
+				return;
+			}
+
+			AstExpression* true_block = If->true_block;
+			AstExpression* false_block = If->false_block;
+			defer {
+				assert(true_block == If->true_block && false_block == If->false_block, "implicitly_cast messed up block(s) in if expression (typecheck)");
+			};
+
+			bool true_is_castable_to_false = implicitly_cast(state, 0, &true_block, If->false_block->type, 0, false);
+			bool false_is_castable_to_true = implicitly_cast(state, 0, &false_block, If->true_block->type, 0, false);
+
+			if (true_is_castable_to_false && false_is_castable_to_true) {
+				state->reporter.error(If->location, "Branches of this if expression have different types, and both are implicitly castable to each other, which makes it ambiguous. The types are {} and {}", type_to_string(If->true_block->type), type_to_string(If->false_block->type));
+				yield(TypecheckResult::fail);
+			}
+
+			if (!true_is_castable_to_false && !false_is_castable_to_true) {
+				state->reporter.error(If->location, "Branches of this if expression have different types, and there is no conversion from one to another. The types are {} and {}", type_to_string(If->true_block->type), type_to_string(If->false_block->type));
+				yield(TypecheckResult::fail);
+			}
+
+			if (true_is_castable_to_false) {
+				if (!implicitly_cast(state, 0, &true_block, If->false_block->type)) {
+					state->reporter.error(If->location, "INTERNAL ERROR: implicit cast failed after success.");
+					yield(TypecheckResult::fail);
+				}
+			}
+			if (false_is_castable_to_true) {
+				if (!implicitly_cast(state, 0, &false_block, If->true_block->type)) {
+					state->reporter.error(If->location, "INTERNAL ERROR: implicit cast failed after success.");
+					yield(TypecheckResult::fail);
+				}
+			}
+
+			If->type = If->true_block->type;
+			break;
+		}
+		case Ast_Block: {
+			auto Block = (AstBlock *)expression;
+			make_concrete(state, Block);
+			break;
+		}
+		default:
+			break;
+	}
+}
+
 
 bool ensure_assignable(Reporter *reporter, AstExpression *expression) {
 	timed_function(compiler->profiler);
@@ -6557,7 +6524,7 @@ void typecheck_definition(TypecheckState *state, AstDefinition *definition, Type
 			}
 
 			if (!definition->is_constant) {
-				harden_type(state, definition->expression);
+				make_concrete(state, &definition->expression);
 			}
 			definition->type = definition->expression->type;
 		}
@@ -7195,19 +7162,6 @@ void typecheck(TypecheckState *state, AstStatement *&statement) {
 	}
 }
 
-bool is_concrete_type(AstExpression *type) {
-	if (types_match(type, compiler->builtin_unsized_integer) ||
-		types_match(type, compiler->builtin_unsized_float) ||
-		types_match(type, compiler->builtin_overload_set) ||
-		types_match(type, compiler->builtin_unknown_enum) ||
-		types_match(type, compiler->builtin_unreachable) ||
-		types_match(type, compiler->builtin_deferred_if))
-	{
-		return false;
-	}
-	return true;
-}
-
 bool is_hardenable(AstExpression *type) {
 	if (types_match(type, compiler->builtin_unsized_integer) ||
 		types_match(type, compiler->builtin_unsized_float) ||
@@ -7230,7 +7184,7 @@ AstExpression *set_common_return_type(TypecheckState *state, Span<AstExpression 
 	};
 
 	if (expressions.count == 1) {
-		harden_type(state, *expressions.data[0]);
+		make_concrete(state, expressions.data[0]);
 		return void_if_unreachable((*expressions.data[0])->type);
 	}
 
@@ -7259,11 +7213,11 @@ AstExpression *set_common_return_type(TypecheckState *state, Span<AstExpression 
 			if (is_hardenable((*inconcretes[i])->type)) {
 				auto &expression = *inconcretes[i];
 
-				harden_type(state, expression);
-				if (!is_concrete_type(expression->type)) {
-					state->reporter.error(expression->location, "Could not make concrete type for this expression.");
-					yield(TypecheckResult::fail);
-				}
+				make_concrete(state, &expression);
+				//if (!is_concrete_type(expression->type)) {
+				//	state->reporter.error(expression->location, "Could not make concrete type for this expression.");
+				//	yield(TypecheckResult::fail);
+				//}
 
 				inconcretes.erase_at(i);
 				concretes.add({&expression});
@@ -7348,7 +7302,7 @@ void typecheck_body(TypecheckState *state, AstLambda *lambda) {
 			lambda->type_name = "undefined"str;
 		}
 		typecheck(state, lambda->body);
-		harden_type(state, lambda->body);
+		make_concrete(state, &lambda->body);
 	}
 
 	if (!lambda->return_parameter) {
@@ -7393,7 +7347,7 @@ void typecheck_body(TypecheckState *state, AstLambda *lambda) {
 	if (!lambda->return_parameter) {
 		for (auto ret : lambda->return_statements) {
 			if (ret->expression) {
-				harden_type(state, ret->expression);
+				make_concrete(state, &ret->expression);
 				lambda->return_parameter = state->make_retparam(ret->expression->type, lambda);
 				lambda->return_statement_type_deduced_from = ret->expression;
 				break;
@@ -7402,7 +7356,7 @@ void typecheck_body(TypecheckState *state, AstLambda *lambda) {
 
 		if (!lambda->return_parameter) {
 			if (lambda->body && !types_match(lambda->body->type, compiler->builtin_unreachable) && !types_match(lambda->body->type, compiler->builtin_void)) {
-				harden_type(state, lambda->body);
+				make_concrete(state, &lambda->body);
 				lambda->return_parameter = state->make_retparam(lambda->body->type, lambda);
 				lambda->return_statement_type_deduced_from = lambda->body;
 			}
@@ -7472,8 +7426,8 @@ bool match_templates(TypecheckState *state, Reporter *reporter, AstLambda *harde
 						break;
 					}
 				} else {
-					definiton->expression = matching_expression;
-					definiton->type = matching_expression->type;
+					definiton->expression = get_concrete_type(matching_expression);
+					definiton->type = definiton->expression->type;
 					return true;
 				}
 			} else {
@@ -7585,23 +7539,6 @@ AstLambda *instantiate_head(TypecheckState *state, Reporter *reporter, Overload 
 
 	*success = false;
 
-	//
-	// Prepare unsorted arguments
-	//
-
-	for (u32 i = 0; i < unsorted_arguments.count; ++i) {
-		harden_type(state, unsorted_arguments[i].expression);
-	}
-	defer {
-		if (!*success) {
-			for (u32 i = 0; i < unsorted_arguments.count; ++i) {
-				soften_type(unsorted_arguments[i].expression);
-			}
-		}
-	};
-
-
-
 	// NOTE: We have to create a context for parameter typechecking, no way to get rid of that.
 	auto hardened_lambda = AstLambda::create();
 	auto hardened_lambda_definition = AstDefinition::create();
@@ -7647,26 +7584,6 @@ AstLambda *instantiate_head(TypecheckState *state, Reporter *reporter, Overload 
 		hardened_lambda->constant_scope->add(copied);
 	}
 
-
-
-	auto add_expression_to_constant_scope = [&] (String location, KeyString name, AstExpression *expression) {
-		auto type_def = AstDefinition::create();
-		type_def->location = location;
-		type_def->name = name;
-		type_def->expression = expression;
-		type_def->type = compiler->builtin_type.ident;
-		type_def->is_constant = true;
-		type_def->container_node = hardened_lambda;
-		hardened_lambda->constant_scope->add(raw(type_def));
-		// TODO: do at parse time
-		if (hardened_lambda->constant_scope->definition_map.get_or_insert(type_def->name).count != 1) {
-			state->reporter.error(type_def->location, "Redefinition of polymorpic argument");
-			yield(TypecheckResult::fail);
-		}
-	};
-
-
-
 	auto &sorted_arguments = overload.sorted_arguments_lambda;
 
 	auto match_poly_param = [&](AstDefinition *parameter, AstExpression *argument) {
@@ -7677,7 +7594,7 @@ AstLambda *instantiate_head(TypecheckState *state, Reporter *reporter, Overload 
 			return false;
 		}
 
-		parameter->type = argument->type;
+		parameter->type = get_concrete_type(argument->type);
 
 		parameter->is_poly = false;
 
@@ -7775,11 +7692,16 @@ AstLambda *instantiate_head(TypecheckState *state, Reporter *reporter, Overload 
 					reporter->error(argument->location, "Argument is not constant");
 					return 0;
 				}
-				parameter->expression = argument;
 				hardened_lambda->constant_scope->add(parameter);
 			} else {
 				hardened_lambda->parameters.add(parameter);
 				hardened_lambda->parameter_scope->add(parameter);
+			}
+
+			if (!parameter->is_poly && !parameter->type) {
+				scoped_replace(state->current_lambda_or_struct_or_enum, hardened_lambda);
+				scoped_replace(state->current_scope, hardened_lambda->parameter_scope);
+				typecheck(state, parameter);
 			}
 
 			if (parameter->is_poly) {
@@ -7797,12 +7719,6 @@ AstLambda *instantiate_head(TypecheckState *state, Reporter *reporter, Overload 
 
 				overload.distance += argument_distance({.type_distance = TypeDistance::Template, .const_distance = is_constant(argument) && !parameter->is_constant});
 			} else {
-				if (!parameter->type) {
-					scoped_replace(state->current_lambda_or_struct_or_enum, hardened_lambda);
-					scoped_replace(state->current_scope, hardened_lambda->parameter_scope);
-					typecheck(state, parameter);
-				}
-
 				if (parameter->is_pack) {
 					assert(!parameter->is_constant, "Not implemented");
 
@@ -7827,6 +7743,10 @@ AstLambda *instantiate_head(TypecheckState *state, Reporter *reporter, Overload 
 					sorted_arguments[parameter_index].set(argument);
 					overload.distance += argument_distance({.type_distance = distance, .const_distance = is_constant(argument) && !parameter->is_constant});
 				}
+			}
+
+			if (parameter->is_constant) {
+				parameter->expression = argument;
 			}
 
 			next_unassigned_parameter();
@@ -8474,57 +8394,6 @@ AstIdentifier *instantiate_span(AstExpression *subtype, String location) {
 	return ident;
 }
 
-void ensure_if_has_type(TypecheckState *state, AstIf *If) {
-	if (types_match(If->true_block->type, If->false_block->type)) {
-		If->type = If->true_block->type;
-		return;
-	}
-
-	if (types_match(If->true_block->type, compiler->builtin_unreachable)) {
-		If->type = If->false_block->type;
-		return;
-	}
-
-	if (types_match(If->false_block->type, compiler->builtin_unreachable)) {
-		If->type = If->true_block->type;
-		return;
-	}
-
-	AstExpression* true_block = If->true_block;
-	AstExpression* false_block = If->false_block;
-	defer {
-		assert(true_block == If->true_block && false_block == If->false_block, "implicitly_cast messed up block(s) in if expression (typecheck)");
-	};
-
-	bool true_is_castable_to_false = implicitly_cast(state, 0, &true_block, If->false_block->type, 0, false);
-	bool false_is_castable_to_true = implicitly_cast(state, 0, &false_block, If->true_block->type, 0, false);
-
-	if (true_is_castable_to_false && false_is_castable_to_true) {
-		state->reporter.error(If->location, "Branches of this if expression have different types, and both are implicitly castable to each other, which makes it ambiguous. The types are {} and {}", type_to_string(If->true_block->type), type_to_string(If->false_block->type));
-		yield(TypecheckResult::fail);
-	}
-
-	if (!true_is_castable_to_false && !false_is_castable_to_true) {
-		state->reporter.error(If->location, "Branches of this if expression have different types, and there is no conversion from one to another. The types are {} and {}", type_to_string(If->true_block->type), type_to_string(If->false_block->type));
-		yield(TypecheckResult::fail);
-	}
-
-	if (true_is_castable_to_false) {
-		if (!implicitly_cast(state, 0, &true_block, If->false_block->type)) {
-			state->reporter.error(If->location, "INTERNAL ERROR: implicit cast failed after success.");
-			yield(TypecheckResult::fail);
-		}
-	}
-	if (false_is_castable_to_true) {
-		if (!implicitly_cast(state, 0, &false_block, If->true_block->type)) {
-			state->reporter.error(If->location, "INTERNAL ERROR: implicit cast failed after success.");
-			yield(TypecheckResult::fail);
-		}
-	}
-
-	If->type = If->true_block->type;
-}
-
 bool has_member(AstStruct *Struct, String name) {
 	return find_if(Struct->member_scope->definition_list, [&](AstDefinition *member) { return member->name == name; });
 }
@@ -8861,7 +8730,7 @@ bool try_match_overload(TypecheckState *state, Reporter &reporter, AstCall *call
 				for (auto &argument : remaining_arguments) {
 					auto distance = TypeDistance::exact;
 					defer {
-						overload.distance += argument_distance({.type_distance = distance, .const_distance = false});
+						overload.distance += argument_distance({.type_distance = distance, .const_distance = true});
 					};
 
 				retry_argument:
@@ -9448,15 +9317,33 @@ AstExpression *typecheck(TypecheckState *state, AstCall *call) {
 
 	if (match->lambda) {
 		if (match->lambda->is_poly) {
+			match->lambda = match->instantiated_lambda;
+			auto lambda = match->lambda;
 			{
 				assert(match->instantiated_lambda);
 				state->template_call_stack.add({.call = call, .template_lambda = match->lambda, .hardened_lambda = match->instantiated_lambda});
 				defer { state->template_call_stack.pop(); };
+
+				for (u32 i = 0; i < match->sorted_arguments_lambda.count; ++i) {
+					auto &argument = match->sorted_arguments_lambda[i];
+
+					// FIXME: looks shitty
+					if (auto found = lambda->constant_scope->definition_map.find(lambda->original_poly->parameters[i]->name)) {
+						auto &parameter = found->value[0];
+
+						if (parameter->is_constant) {
+							if (!implicitly_cast(state, &state->reporter, &parameter->expression, parameter->type)) {
+								state->reporter.error(parameter->location, "INTERNAL ERROR: implicit cast did not succeed the second time for constant parameter.");
+								state->reporter.info(argument[0]->location, "Argument is here:");
+								yield(TypecheckResult::fail);
+							}
+						}
+					}
+				}
+
 				instantiate_body(state, match->instantiated_lambda);
 			}
 			assert(match->instantiated_lambda->definition); // TODO: deal with unnamed poly lambdas
-
-			match->lambda = match->instantiated_lambda;
 
 			AstIdentifier *ident = 0;
 
@@ -9480,8 +9367,6 @@ AstExpression *typecheck(TypecheckState *state, AstCall *call) {
 			ident->type = match->instantiated_lambda->type;
 
 
-			auto lambda = match->lambda;
-
 			// ---- Remove arguments to constant parameters
 
 			decltype(match->sorted_arguments_lambda) new_sorted_arguments;
@@ -9490,10 +9375,7 @@ AstExpression *typecheck(TypecheckState *state, AstCall *call) {
 				auto &argument = match->sorted_arguments_lambda[i];
 				auto &parameter = lambda->original_poly->parameters[i];
 
-				if (parameter->is_constant) {
-					// Don't add it
-					int x = 5;
-				} else {
+				if (!parameter->is_constant) {
 					new_sorted_arguments.add(argument);
 				}
 			}
@@ -9526,6 +9408,7 @@ AstExpression *typecheck(TypecheckState *state, AstCall *call) {
 					}
 
 					for (auto &elem : pack) {
+						make_concrete(state, &elem);
 						if (!implicitly_cast(state, &state->reporter, &elem, elem_type, 0)) {
 							state->reporter.error(elem->location, "INTERNAL ERROR: implicit cast did not succeed the second time for pack.");
 							yield(TypecheckResult::fail);
@@ -9559,6 +9442,7 @@ AstExpression *typecheck(TypecheckState *state, AstCall *call) {
 				auto &args = match->sorted_arguments_lambda[i];
 
 				assert(args.count == 1);
+				make_concrete(state, &args.data[0]);
 				call->sorted_arguments.add(args.data[0]);
 			}
 		}
@@ -9948,8 +9832,6 @@ AstExpression *typecheck(TypecheckState *state, AstBinaryOperator *bin) {
 
 					//if (bin->location == "List.Node")
 					//	debug_break();
-
-					//harden_type(state, &bin->left->type);
 
 					bool left_is_type = is_type(bin->left);
 					AstStruct *Struct = 0;
@@ -10543,10 +10425,10 @@ AstExpression *typecheck(TypecheckState *state, AstBinaryOperator *bin) {
 				// One is pointer and other is integer
 				if (lp) {
 					bin->type = bin->left->type;
-					harden_type(state, bin->right);
+					make_concrete(state, &bin->right);
 				} else {
 					bin->type = bin->right->type;
-					harden_type(state, bin->left);
+					make_concrete(state, &bin->left);
 				}
 				return bin;
 			} else if ((is_lambda_type(l) && is_null_literal(bin->right)) || (is_lambda_type(r) && is_null_literal(bin->left))) {
@@ -10988,7 +10870,7 @@ AstExpression *typecheck(TypecheckState *state, AstUnaryOperator *unop) {
 			if (!ensure_addressable(&state->reporter, unop->expression)) {
 				yield(TypecheckResult::fail);
 			}
-			harden_type(state, unop->expression);
+			make_concrete(state, &unop->expression);
 			unop->type = make_pointer_type(unop->expression->type);
 			break;
 		}
@@ -11088,7 +10970,7 @@ AstExpression *typecheck(TypecheckState *state, AstUnaryOperator *unop) {
 		case typeof: {
 			auto typeof = unop;
 			typecheck(state, typeof->expression);
-			harden_type(state, typeof->expression);
+			make_concrete(state, &typeof->expression);
 			typeof->type = compiler->builtin_type.ident;
 			//  print("typeof {} is {}\n", typeof->expression->location, type_to_string(typeof->expression->type));
 			break;
@@ -11384,7 +11266,7 @@ AstExpression *typecheck(TypecheckState *state, AstStruct *Struct) {
 AstExpression *typecheck(TypecheckState *state, AstSubscript *subscript) {
 	if (subscript->index_expression) {
 		typecheck(state, subscript->index_expression);
-		harden_type(state, subscript->index_expression);
+		make_concrete(state, &subscript->index_expression);
 
 		if (!::is_integer(subscript->index_expression->type)) {
 			state->reporter.error(subscript->index_expression->location, "Expression must be of type integer but is {}", type_to_string(subscript->index_expression->type));
@@ -11716,7 +11598,7 @@ AstExpression *typecheck(TypecheckState *state, AstArrayInitializer *ArrayInitia
 	}
 
 	// TODO: maybe delay hardening until array is used somewhere.
-	harden_type(state, ArrayInitializer->elements[0]);
+	make_concrete(state, &ArrayInitializer->elements[0]);
 	for (auto &element : ArrayInitializer->elements.skip(1)) {
 		if (!implicitly_cast(state, &state->reporter, &element, ArrayInitializer->elements[0]->type)) {
 			state->reporter.info(ArrayInitializer->elements[0]->location, "Every element of array literal must be implicitly convertible to type of first element");
@@ -11858,11 +11740,9 @@ void typecheck(TypecheckState *state, CExpression auto &expression) {
 	if (expression->type) {
 		return;
 	}
-
-	// if (expression->type) {
-	// 	immediate_info(expression->location, "Redundant typecheck");
-	// 	return;
-	// }
+	defer { if (!throwing) {
+		assert(expression->type);
+	}};
 
 	auto new_expression = expression;
 
@@ -11925,7 +11805,7 @@ void typecheck(TypecheckState *state, CExpression auto &expression) {
 		}
 	}
 	if (!throwing) {
-		if (new_expression->kind == Ast_Identifier && ((AstIdentifier *)new_expression)->possible_definitions.count) {
+		if (new_expression->kind == Ast_Identifier && ((AstIdentifier *)new_expression)->possible_definitions.count > 1) {
 		} else {
 			assert(new_expression->type);
 			if (!simplify(&state->reporter, &new_expression))

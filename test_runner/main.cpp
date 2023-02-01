@@ -30,6 +30,7 @@ List<utf8> normalize_path(String path) {
 struct RanProcess {
 	u32 exit_code = {};
 	String output = {};
+	bool timed_out = {};
 };
 
 Mutex stdout_mutex;
@@ -48,11 +49,12 @@ RanProcess run_process(String command) {
 		append(output_builder, Span((utf8 *)buf, bytes_read));
 	}
 
-	wait(process);
+	bool timed_out = !wait(process, 5000);
 
 	RanProcess result {
 		.exit_code = get_exit_code(process),
 		.output = as_utf8(to_string(output_builder)),
+		.timed_out = timed_out,
 	};
 
 	return result;
@@ -129,6 +131,13 @@ s32 tl_main(Span<String> arguments) {
 
 			auto actual_compiler = run_process(format(u8"tlang.exe {}"s, test_filename));
 
+			if (actual_compiler.timed_out) {
+				do_fail([&] {
+					with(ConsoleColor::red, print("Compiler timed out\n"));
+				});
+				return;
+			}
+
 			if (expected_compiler_output.count && !find(actual_compiler.output, expected_compiler_output)) {
 				do_fail([&] {
 					with(ConsoleColor::red, print("Compiler output mismatch:\n"));
@@ -171,6 +180,12 @@ s32 tl_main(Span<String> arguments) {
 
 			auto actual_program = run_process(program_path);
 
+			if (actual_program.timed_out) {
+				do_fail([&] {
+					with(ConsoleColor::red, print("Program timed out\n"));
+				});
+				return;
+			}
 
 			if (expected_program_output.count && !find(actual_program.output, expected_program_output)) {
 				do_fail([&] {

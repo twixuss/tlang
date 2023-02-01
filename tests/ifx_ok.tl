@@ -1,5 +1,4 @@
-// PROGRAM CODE 2
 main :: () {
-	x := 2
-    return if false then 1 else x
+	#assert #typeof(if true then 1 else 1) == Int
+	#assert #typeof(if true then 1 as U8 else 1) == U8
 }

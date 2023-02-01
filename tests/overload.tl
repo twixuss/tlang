@@ -24,7 +24,7 @@ main :: () {
 		assert foo("z") == 0
 		assert foo() == 1
 		assert foo("x", "y") == 1
-		assert !#compiles { foo(1) }
+		#assert !#compiles { foo(1) }
 	}
 	{
 		foo :: (a: String) => 0
@@ -248,8 +248,8 @@ main :: () {
 		foo :: (a: Int, b: %Int) => 1
 		foo :: (a: %Int, b: Int) => 2
 		x: Int
-		assert !#compiles { foo(0,0) } // ambiguous
-		assert !#compiles { foo(x,x) } // can't pass var to const
+		#assert !#compiles { foo(0,0) } // ambiguous
+		#assert !#compiles { foo(x,x) } // can't pass var to const
 		assert foo(x,0) == 1
 		assert foo(0,x) == 2
 	}
