@@ -196,7 +196,7 @@ main :: () {
 	// ====================== Const
 	{
 		foo :: (a: %Int) {
-			arr: U8[a]
+			arr: [a]U8
 			return a
 		}
 

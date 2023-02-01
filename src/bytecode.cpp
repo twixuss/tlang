@@ -1331,7 +1331,7 @@ void FrameBuilder::load_address_of(AstExpression *expression, RegisterOrAddress 
 				else
 					mov_mr(destination.address, index, compiler->stack_word_size);
 			} else {
-				assert(direct_as<AstSubscript>(subscript->expression->type));
+				assert(direct_as<AstArray>(subscript->expression->type));
 				load_address_of(subscript->expression, destination);
 
 				APPEND_INTO_REGISTER(index, subscript->index_expression);
@@ -1718,10 +1718,10 @@ void FrameBuilder::append_cast(RegisterOrAddress src, AstExpression *src_type, R
 	AstExpression *to   = get_internal_representation(dst_type);
 
 	{
-		auto array = as_array(from);
+		auto array = as<AstArray>(from);
 		auto subtype = get_span_subtype(to);
 		if (array && subtype) {
-			if (get_literal(array->index_expression)->as<LiteralKind::integer>().value() == 0) {
+			if (array->count == 0) {
 				append_memory_set(dst.address, 0, compiler->stack_word_size*2);
 			} else {
 				if (src.is_in_register) {
@@ -1739,46 +1739,11 @@ void FrameBuilder::append_cast(RegisterOrAddress src, AstExpression *src_type, R
 
 				I(lea, tmp, src.address);
 
-				mov_mr(dst.address + 0,                         tmp,                                                        compiler->stack_word_size);
-				mov_mc(dst.address + compiler->stack_word_size, (s64)get_constant_integer(array->index_expression).value(), compiler->stack_word_size);
+				mov_mr(dst.address + 0,                         tmp,          compiler->stack_word_size);
+				mov_mc(dst.address + compiler->stack_word_size, array->count, compiler->stack_word_size);
 			}
 			return;
 		}
-	}
-
-
-	// TODO: FIXME: HACK:
-	// extremely dumb way to access data and count members of span
-	// EDIT: with span instantiations this is not relevant anymore. Check anyway
-	if (auto span = as_span(from)) {
-		// auto from_value = append(left);
-		//
-		// assert(!from_value.is_in_register, "not implemented");
-
-		if (::is_integer(dst_type)) {
-			invalid_code_path();
-			// auto count_addr = from_value.address + compiler->stack_word_size;
-			// if (dst.is_in_register) {
-			// 	I(mov8_rm, dst.reg, count_addr);
-			// } else {
-			// 	tmpreg(r0);
-			// 	I(mov8_rm, r0, count_addr);
-			// 	I(mov8_mr, dst.address, r0);
-			// }
-		} else if (::is_pointer(dst_type)) {
-			invalid_code_path();
-			// auto data_addr = from_value.address;
-			// if (dst.is_in_register) {
-			// 	I(mov8_rm, dst.reg, data_addr);
-			// } else {
-			// 	tmpreg(r0);
-			// 	I(mov8_rm, r0, data_addr);
-			// 	I(mov8_mr, dst.address, r0);
-			// }
-		} else {
-			invalid_code_path();
-		}
-		return;
 	}
 
 	// it's C++ lol, why not?
@@ -1983,23 +1948,22 @@ void FrameBuilder::append_cast(RegisterOrAddress src, AstExpression *src_type, R
 		return;
 	}
 
-	if (auto src_array = as_array(from)) {
-		if (auto dst_array = as_array(to)) {
+	if (auto src_array = as<AstArray>(from)) {
+		if (auto dst_array = as<AstArray>(to)) {
 
 			// [N]T to [N]U
 
 			assert(!src.is_in_register);
 			assert(!dst.is_in_register);
 
-			auto src_elem_size = get_size(src_array->expression);
-			auto dst_elem_size = get_size(dst_array->expression);
+			auto src_elem_size = get_size(src_array->element_type);
+			auto dst_elem_size = get_size(dst_array->element_type);
 
-			// FIXME: u64 and BigInt
-			for (u64 i = 0; i < (u64)get_literal(src_array->index_expression)->integer; ++i) {
+			for (u64 i = 0; i < src_array->count; ++i) {
 				auto src_elem_addr = src.address + i * src_elem_size;
 				auto dst_elem_addr = dst.address + i * src_elem_size;
 
-				append_cast(src_elem_addr, src_array->expression, dst_elem_addr, dst_array->expression);
+				append_cast(src_elem_addr, src_array->element_type, dst_elem_addr, dst_array->element_type);
 			}
 			return;
 		}
@@ -2130,7 +2094,9 @@ void FrameBuilder::append(AstMatch *Match, RegisterOrAddress destination) {
 			if (Case.expression) {
 				tmpreg(case_reg);
 				tmpreg(cmpresult_reg);
-				I(mov_rc, case_reg, (s64)get_constant_integer(Case.expression).value());
+
+				I(mov_rc, case_reg, (s64)Case.value);
+
 				switch (compiler->stack_word_size) {
 					case 4: I(cmpu4, cmpresult_reg, matchable_reg, case_reg, Comparison::e); break;
 					case 8: I(cmpu8, cmpresult_reg, matchable_reg, case_reg, Comparison::e); break;
@@ -2229,7 +2195,7 @@ void FrameBuilder::append(AstBinaryOperator *bin, RegisterOrAddress destination)
 							free_temporary_register(member_address);
 					} else {
 						not_implemented();
-						assert(is_sized_array(left->type));
+						//assert(is_sized_array(left->type));
 					}
 
 					break;
@@ -3212,7 +3178,7 @@ void FrameBuilder::append(AstUnaryOperator *unop, RegisterOrAddress destination)
 void FrameBuilder::append(AstSubscript *subscript, RegisterOrAddress destination) {
 	auto subscriptable_type = subscript->expression->type;
 
-	if (is_sized_array(subscriptable_type) ||
+	if (as<AstArray>(subscriptable_type) ||
 		get_span_subtype(subscriptable_type) ||
 		types_match(subscriptable_type, compiler->builtin_string) ||
 		is_pointer(subscriptable_type)
@@ -3240,15 +3206,12 @@ void FrameBuilder::append(AstSubscript *subscript, RegisterOrAddress destination
 			copy(destination, Address(idx), elem_size, false);
 		}
 	} else if (::is_integer(subscriptable_type)) {
-		APPEND_INTO_REGISTER(value, subscript->expression);
+		APPEND2(
+			value, append, subscript->expression,
+			bit_index, append, subscript->index_expression
+		);
 
-		auto big_index = get_constant_integer(subscript->index_expression);
-		assert(big_index.has_value(), "FIXME: implement getting bit of int using non constant index");
-
-		auto index = (s64)big_index.value();
-		assert(index < get_size(subscriptable_type) * 8, "Index out of bounds");
-
-		I(slr_rc, value, index);
+		I(slr_rr, value, bit_index);
 		I(and_rc, value, 1);
 
 		copy(destination, value, 1, false);
@@ -3348,8 +3311,9 @@ void FrameBuilder::append(AstLambda *lambda, RegisterOrAddress destination) {
 void FrameBuilder::append(AstArrayInitializer *ArrayInitializer, RegisterOrAddress destination) {
 	push_comment(format("ArrayInitializer {}"str, ArrayInitializer->location));
 
-	assert(ArrayInitializer->type->kind == Ast_Subscript);
-	auto elem_type = ((AstSubscript *)ArrayInitializer->type)->expression;
+	auto array_type = as<AstArray>(ArrayInitializer->type);
+	assert(array_type);
+	auto elem_type = array_type->element_type;
 
 	auto elem_size = get_size(elem_type);
 

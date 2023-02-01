@@ -872,6 +872,15 @@ AstSubscript *make_subscript(AstExpression *expression, AstExpression *index_exp
 	s->index_expression = index_expression;
 	return s;
 }
+AstArray *make_array(AstExpression *element_type, u64 count) {
+	auto s = AstArray::create();
+	s->element_type = element_type;
+	s->count = count;
+
+	// Is this necessary?
+	s->count_expression = make_integer(count);
+	return s;
+}
 
 bool signedness_matches(AstStruct *a, AstStruct *b) {
 	assert(::is_integer(a));
@@ -2124,11 +2133,11 @@ void parse_expression_0(Parser *parser, AstExpression *&result) {
 			location = {location.begin(), parser->token[-1].string.end()};
 
 			if (index_expression) {
-				auto subscript = AstSubscript::create();
-				subscript->location = location;
-				subscript->expression = expression;
-				subscript->index_expression = index_expression;
-				result = subscript;
+				auto array = AstArray::create();
+				array->location = location;
+				array->element_type = expression;
+				array->count_expression = index_expression;
+				result = array;
 				return;
 			} else {
 				auto span = AstSpan::create();
@@ -2443,7 +2452,6 @@ AstExpression *parse_expression_1(Parser *parser) {
 
 		while (parser->token->kind == '[') {
 			auto subscript = AstSubscript::create();
-			subscript->is_prefix = false;
 			subscript->expression = expression;
 
 			parser->next();
@@ -2852,6 +2860,7 @@ bool simplify(Reporter *reporter, CExpression auto *_expression) {
 			case Ast_LambdaType:
 			case Ast_Struct:
 			case Ast_Subscript:
+			case Ast_Array:
 			case Ast_Span:
 			case Ast_Test:
 			case Ast_Enum:
@@ -3290,19 +3299,6 @@ bool may_be_terminated_by_semicolon(AstStatement *statement) {
 
 void parse_statement(Parser *parser, AstStatement *&result) {
 	timed_function(compiler->profiler);
-
-	bool do_print_ast = false;
-	if (parser->token->kind == Token_directive) {
-		if (parser->token->string == "#print_ast_parse") {
-			do_print_ast = true;
-			parser->next();
-		}
-	}
-	defer {
-		if (do_print_ast) {
-			print_ast(result);
-		}
-	};
 
 	result = 0;
 	defer {
@@ -4573,7 +4569,7 @@ u32 put_in_section(AstLiteral *literal, Section &section, AstExpression *target_
 			return result;
 		}
 		case array: {
-			if (is_sized_array(target_type)) {
+			if (as<AstArray>(target_type)) {
 				// Array elements are already written, just return their offset.
 				return literal->array_offset;
 			} else {
@@ -4851,7 +4847,8 @@ void evaluate(TypecheckState *state, AstExpression *expression, AstLiteral *&res
 
 				scoped_replace(state->evaluation_parameters, evaluation_parameters);
 
-				result = evaluate(state, lambda->body); return;
+				result = evaluate(state, lambda->body);
+				return;
 				*/
 			}
 		}
@@ -4859,12 +4856,13 @@ void evaluate(TypecheckState *state, AstExpression *expression, AstLiteral *&res
 			auto lambda = (AstLambda *)expression;
 			assert(!lambda->body);
 			assert(lambda->is_type);
-			result = make_type_literal(lambda); return;
+			result = make_type_literal(lambda);
+			return;
 		}
-		case Ast_Subscript: {
-			auto subscript = (AstSubscript *)expression;
-			assert(is_type(subscript->expression));
-			result = make_type_literal(subscript); return;
+		case Ast_Array: {
+			auto array = (AstArray *)expression;
+			result = make_type_literal(array);
+			return;
 		}
 		case Ast_ArrayInitializer: {
 			auto array = (AstArrayInitializer *)expression;
@@ -4876,7 +4874,8 @@ void evaluate(TypecheckState *state, AstExpression *expression, AstLiteral *&res
 				literal->array_elements[i] = evaluate(state, array->elements[i]);
 			}
 			literal->type = array->type;
-			result = literal; return;
+			result = literal;
+			return;
 		}
 		default:
 			invalid_code_path();
@@ -4948,6 +4947,33 @@ bool do_all_paths_explicitly_return(AstLambda *lambda) {
 }
 
 void typecheck(TypecheckState *state, CExpression auto &expression);
+
+AstStatement           *deep_copy(AstStatement           *);
+AstDefinition          *deep_copy(AstDefinition          *);
+AstDefer               *deep_copy(AstDefer               *);
+AstAssert              *deep_copy(AstAssert              *);
+AstBlock               *deep_copy(AstBlock               *);
+AstExpressionStatement *deep_copy(AstExpressionStatement *);
+AstIf                  *deep_copy(AstIf                  *);
+AstOperatorDefinition  *deep_copy(AstOperatorDefinition  *);
+AstParse               *deep_copy(AstParse               *);
+AstPrint               *deep_copy(AstPrint               *);
+AstReturn              *deep_copy(AstReturn              *);
+AstWhile               *deep_copy(AstWhile               *);
+AstFor                 *deep_copy(AstFor                 *);
+AstUsing               *deep_copy(AstUsing               *);
+AstExpression     *deep_copy(AstExpression     *);
+AstIdentifier     *deep_copy(AstIdentifier     *);
+AstCall           *deep_copy(AstCall           *);
+AstLiteral        *deep_copy(AstLiteral        *);
+AstLambda         *deep_copy(AstLambda         *);
+AstBinaryOperator *deep_copy(AstBinaryOperator *);
+AstUnaryOperator  *deep_copy(AstUnaryOperator  *);
+AstStruct         *deep_copy(AstStruct         *);
+AstSubscript      *deep_copy(AstSubscript      *);
+AstArray          *deep_copy(AstArray          *);
+AstTest           *deep_copy(AstTest           *);
+AstSpan           *deep_copy(AstSpan           *);
 
 struct CastType {
 	AstStruct *from;
@@ -5030,14 +5056,17 @@ AstLiteral *find_enum_value(TypecheckState *state, AstEnum *Enum, KeyString name
 
 	auto member = found_member->value.data[0];
 
-
 	auto ident = AstIdentifier::create();
 	ident->location = Enum->location;
 	ident->type = Enum->definition->type;
 	ident->name = Enum->definition->name;
 	ident->possible_definitions.set(Enum->definition);
 
-	return state->make_integer(copy(get_constant_integer(member->expression).value()), ident, location);
+	auto result = deep_copy(evaluate(state, member->expression));
+	result->type = ident;
+	result->location = location;
+	return result;
+	//return state->make_integer(copy(get_constant_integer(member->expression).value()), ident, location);
 }
 
 void wait_for(TypecheckState *state, String location, auto message, auto &&predicate, auto &&error_callback) {
@@ -5155,7 +5184,7 @@ TypeKind get_type_kind(AstExpression *type) {
 		}
 	}
 	if (direct_as<AstSpan>(type)) return Span;
-	if (direct_as<AstSubscript>(type)) return Array;
+	if (direct_as<AstArray>(type)) return Array;
 	if (direct_as<AstLambdaType>(type)) return Pointer;
 
 	invalid_code_path();
@@ -5303,7 +5332,7 @@ AstUnaryOperator *get_typeinfo(TypecheckState *state, AstExpression *type, Strin
 
 				auto member_initializer = create_initializer(compiler->builtin_enum_member);
 				set_member(member_initializer, "name", make_string(s->name, location));
-				set_member(member_initializer, "value", make_integer(get_constant_integer(s->expression).value(), location));
+				set_member(member_initializer, "value", evaluate(state, s->expression));
 
 				d = member_initializer;
 			}
@@ -5312,11 +5341,9 @@ AstUnaryOperator *get_typeinfo(TypecheckState *state, AstExpression *type, Strin
 		set_member(typeinfo_initializer, "size", make_integer(get_size(type), location));
 		set_member(typeinfo_initializer, "align", make_integer(get_align(type), location));
 
-		if (auto subscript = (AstSubscript *)directed; directed->kind == Ast_Subscript) {
-			if (is_constant(subscript->index_expression)) {
-				set_member(typeinfo_initializer, "array_count", subscript->index_expression);
-			}
-			set_member(typeinfo_initializer, "pointee", get_typeinfo(state, subscript->expression, location));
+		if (auto array = as<AstArray>(directed)) {
+			set_member(typeinfo_initializer, "array_count", make_integer(array->count, location));
+			set_member(typeinfo_initializer, "pointee", get_typeinfo(state, array->element_type, location));
 		} else if (auto span = (AstSpan *)directed; directed->kind == Ast_Span) {
 			set_member(typeinfo_initializer, "pointee", get_typeinfo(state, span->expression, location));
 		} else if (auto elem_type = get_span_subtype(directed)) {
@@ -5399,11 +5426,11 @@ bool implicitly_cast(TypecheckState *state, Reporter *reporter, CExpression auto
 	if (conversion_distance)
 		*conversion_distance = TypeDistance::basic;
 
-	auto earray = as_array(expression->type);
+	auto earray = as<AstArray>(expression->type);
 
 	if (earray) {
 		if (auto subtype = get_span_subtype(type)) {
-			if (types_match(earray->expression, subtype)) {
+			if (types_match(earray->element_type, subtype)) {
 				if (apply)
 					expression = make_cast(expression, type);
 				return true;
@@ -5691,10 +5718,12 @@ bool implicitly_cast(TypecheckState *state, Reporter *reporter, CExpression auto
 		auto found_info = find_if(integer_infos, [&](auto &i) { return types_match(i.type, type); });
 		if (found_info) {
 			auto &info = *found_info;
-			auto integer = get_constant_integer(expression);
+			auto integer = evaluate(state, expression);
+			assert(integer);
+			assert(integer->literal_kind == LiteralKind::integer);
 
 			if (integer) {
-				if (!ensure_fits(reporter, expression, integer.value_unchecked(), info)) {
+				if (!ensure_fits(reporter, expression, integer->integer, info)) {
 					return false;
 				}
 			} else {
@@ -5874,32 +5903,6 @@ void calculate_parameters_size(AstLambda *lambda) {
 	lambda->parameters_size = parameter_size_accumulator;
 }
 
-AstStatement           *deep_copy(AstStatement           *);
-AstDefinition          *deep_copy(AstDefinition          *);
-AstDefer               *deep_copy(AstDefer               *);
-AstAssert              *deep_copy(AstAssert              *);
-AstBlock               *deep_copy(AstBlock               *);
-AstExpressionStatement *deep_copy(AstExpressionStatement *);
-AstIf                  *deep_copy(AstIf                  *);
-AstOperatorDefinition  *deep_copy(AstOperatorDefinition  *);
-AstParse               *deep_copy(AstParse               *);
-AstPrint               *deep_copy(AstPrint               *);
-AstReturn              *deep_copy(AstReturn              *);
-AstWhile               *deep_copy(AstWhile               *);
-AstFor                 *deep_copy(AstFor                 *);
-AstUsing               *deep_copy(AstUsing               *);
-AstExpression     *deep_copy(AstExpression     *);
-AstIdentifier     *deep_copy(AstIdentifier     *);
-AstCall           *deep_copy(AstCall           *);
-AstLiteral        *deep_copy(AstLiteral        *);
-AstLambda         *deep_copy(AstLambda         *);
-AstBinaryOperator *deep_copy(AstBinaryOperator *);
-AstUnaryOperator  *deep_copy(AstUnaryOperator  *);
-AstStruct         *deep_copy(AstStruct         *);
-AstSubscript      *deep_copy(AstSubscript      *);
-AstTest           *deep_copy(AstTest           *);
-AstSpan           *deep_copy(AstSpan           *);
-
 // FIXME: ensure 'directed' member on expressions is set properly after copying.
 
 template <class T>
@@ -6004,18 +6007,19 @@ AstExpression *deep_copy(AstExpression *expression) {
 	if (!expression)
 		return 0;
 	switch (expression->kind) {
-		case Ast_Identifier     : return deep_copy((AstIdentifier     *)expression);
-		case Ast_Call           : return deep_copy((AstCall           *)expression);
-		case Ast_Literal        : return deep_copy((AstLiteral        *)expression);
-		case Ast_Lambda         : return deep_copy((AstLambda         *)expression);
+		case Ast_Identifier    : return deep_copy((AstIdentifier     *)expression);
+		case Ast_Call          : return deep_copy((AstCall           *)expression);
+		case Ast_Literal       : return deep_copy((AstLiteral        *)expression);
+		case Ast_Lambda        : return deep_copy((AstLambda         *)expression);
 		case Ast_BinaryOperator: return deep_copy((AstBinaryOperator *)expression);
 		case Ast_UnaryOperator : return deep_copy((AstUnaryOperator  *)expression);
-		case Ast_Struct         : return deep_copy((AstStruct         *)expression);
-		case Ast_Subscript      : return deep_copy((AstSubscript      *)expression);
-		case Ast_If             : return deep_copy((AstIf             *)expression);
-		case Ast_Test           : return deep_copy((AstTest           *)expression);
-		case Ast_Span:           return deep_copy((AstSpan            *)expression);
-		case Ast_Block:          return deep_copy((AstBlock           *)expression);
+		case Ast_Struct        : return deep_copy((AstStruct         *)expression);
+		case Ast_Subscript     : return deep_copy((AstSubscript      *)expression);
+		case Ast_Array         : return deep_copy((AstArray          *)expression);
+		case Ast_If            : return deep_copy((AstIf             *)expression);
+		case Ast_Test          : return deep_copy((AstTest           *)expression);
+		case Ast_Span          : return deep_copy((AstSpan           *)expression);
+		case Ast_Block         : return deep_copy((AstBlock          *)expression);
 		default: invalid_code_path();
 	}
 }
@@ -6240,7 +6244,14 @@ AstSubscript *deep_copy(AstSubscript *s) {
 	auto d = copy_expression(s);
 	d->expression       = deep_copy(s->expression      );
 	d->index_expression = deep_copy(s->index_expression);
-	d->is_prefix = s->is_prefix;
+	return d;
+}
+AstArray *deep_copy(AstArray *s) {
+	if (!s) return 0;
+	auto d = copy_expression(s);
+	d->element_type     = deep_copy(s->element_type    );
+	d->count_expression = deep_copy(s->count_expression);
+	d->count = s->count;
 	return d;
 }
 AstTest *deep_copy(AstTest *s) {
@@ -6285,6 +6296,7 @@ void typecheck(TypecheckState *state, AstStatement *&Statement);
 [[nodiscard]] AstExpression *typecheck(TypecheckState *, AstUnaryOperator  *);
 [[nodiscard]] AstExpression *typecheck(TypecheckState *, AstStruct         *);
 [[nodiscard]] AstExpression *typecheck(TypecheckState *, AstSubscript      *);
+[[nodiscard]] AstExpression *typecheck(TypecheckState *, AstArray          *);
 [[nodiscard]] AstExpression *typecheck(TypecheckState *, AstSpan           *);
 [[nodiscard]] AstExpression *typecheck(TypecheckState *, AstIf             *);
 [[nodiscard]] AstExpression *typecheck(TypecheckState *, AstEnum           *);
@@ -6813,7 +6825,7 @@ AstStatement *typecheck(TypecheckState *state, AstFor *For) {
 
 			typecheck(state, replacement_block);
 			return make_statement(replacement_block);
-		} else if (auto arr = direct_as<AstSubscript>(For->range->type)) {
+		} else if (auto arr = direct_as<AstArray>(For->range->type)) {
 			auto replacement_block = AstBlock::create();
 			replacement_block->scope->parent = state->current_scope;
 
@@ -6838,6 +6850,8 @@ AstStatement *typecheck(TypecheckState *state, AstFor *For) {
 			auto end = AstDefinition::create();
 			end->name = "_end"str;
 			end->container_node = state->current_lambda_or_struct_or_enum;
+
+			// FIXME: we already know array count, no need for this
 			end->expression = make_binop(BinaryOperation::add,
 				make_identifier(it1->name),
 				make_binop(BinaryOperation::dot, make_unary(UnaryOperation::pointer_or_dereference_or_unwrap, make_identifier(range_definition->name)), make_identifier("count"str))
@@ -6957,7 +6971,7 @@ AstStatement *typecheck(TypecheckState *state, AstFor *For) {
 
 			typecheck(state, replacement_block);
 			return make_statement(replacement_block);
-		} else if (auto arr = direct_as<AstSubscript>(For->range->type)) {
+		} else if (auto arr = direct_as<AstArray>(For->range->type)) {
 			auto replacement_block = AstBlock::create();
 			replacement_block->scope->parent = state->current_scope;
 
@@ -6982,6 +6996,7 @@ AstStatement *typecheck(TypecheckState *state, AstFor *For) {
 			auto end = AstDefinition::create();
 			end->name = "_end"str;
 			end->container_node = state->current_lambda_or_struct_or_enum;
+			// FIXME: we already know array count, no need for this
 			end->expression = make_binop(BinaryOperation::add,
 				make_identifier(it1->name),
 				make_binop(BinaryOperation::dot, make_unary(UnaryOperation::pointer_or_dereference_or_unwrap, make_identifier(range_definition->name)), make_identifier("count"str))
@@ -9522,9 +9537,11 @@ AstExpression *typecheck(TypecheckState *state, AstCall *call) {
 					if (array->elements.count)
 						array->location = {array->elements.front()->location.begin(), array->elements.back()->location.end()};
 
-					auto type = AstSubscript::create();
-					type->expression = elem_type;
-					type->index_expression = make_integer((u64)array->elements.count);
+					auto type = AstArray::create();
+					type->element_type = elem_type;
+					type->count = (u64)array->elements.count;
+					// Cleanup: Is this needed?
+					type->count_expression = make_integer(type->count);
 					type->location = array->location;
 					type->type = compiler->builtin_type.ident;
 
@@ -10020,17 +10037,16 @@ AstExpression *typecheck(TypecheckState *state, AstBinaryOperator *bin) {
 								return result;
 							}
 						}
-					} else if (is_sized_array(bin->left->type)) {
+					} else if (auto array_type = ::as<AstArray>(bin->left->type)) {
 						if (bin->right->kind != Ast_Identifier) {
 							state->reporter.error(bin->left->location, "The only members of any array type are 'data' and 'count'");
 							yield(TypecheckResult::fail);
 						}
 
-						auto array_type = (AstSubscript *)bin->left->type;
 						auto identifier = (AstIdentifier *)bin->right;
 
 						if (identifier->name == "data"str) {
-							bin->type = make_pointer_type(array_type->expression);
+							bin->type = make_pointer_type(array_type->element_type);
 
 							auto array_address = is_addressable(bin->left) ?
 								make_address_of(&state->reporter, bin->left) :
@@ -10043,37 +10059,7 @@ AstExpression *typecheck(TypecheckState *state, AstBinaryOperator *bin) {
 
 							return make_cast(array_address, bin->type);
 						} else if (identifier->name == "count"str) {
-							auto size = evaluate(state, array_type->index_expression);
-							if (!size) {
-								state->reporter.error(array_type->index_expression->location, "INTERNAL ERROR: failed to evaluate index expression");
-								yield(TypecheckResult::fail);
-							}
-							if (size->literal_kind != LiteralKind::integer) {
-								state->reporter.error(array_type->index_expression->location, "INTERNAL ERROR: index expression is not an integer");
-								yield(TypecheckResult::fail);
-							}
-							return state->make_integer(size->integer, array_type->index_expression->location); // unsized
-						} else {
-							state->reporter.error(bin->left->location, "The only members of any array type are identifiers 'data' and 'count'. You asked for '{}', which does not exist", identifier->name);
-							yield(TypecheckResult::fail);
-						}
-					} else if (auto span = as_span(bin->left->type)) {
-						invalid_code_path("This code should have been replaced by span instantiations");
-						if (bin->right->kind != Ast_Identifier) {
-							state->reporter.error(bin->left->location, "The only members of any span type are 'data' and 'count'");
-							yield(TypecheckResult::fail);
-						}
-
-						auto identifier = (AstIdentifier *)bin->right;
-
-						// TODO: FIXME: HACK:
-						// extremely dumb way to access data and count members of span
-						if (identifier->name == "data"str) {
-							bin->type = make_pointer_type(span->expression);
-							return make_cast(bin->left, bin->type);
-						} else if (identifier->name == "count"str) {
-							bin->type = compiler->type_int;
-							return make_cast(bin->left, compiler->type_int);
+							return state->make_integer(array_type->count, array_type->count_expression->location); // unsized
 						} else {
 							state->reporter.error(bin->left->location, "The only members of any array type are identifiers 'data' and 'count'. You asked for '{}', which does not exist", identifier->name);
 							yield(TypecheckResult::fail);
@@ -10157,9 +10143,9 @@ AstExpression *typecheck(TypecheckState *state, AstBinaryOperator *bin) {
 						assert(built_in_cast);
 						break;
 					}
-				} else if (auto src_array = ::as_array(src_type)) {
-					if (auto dst_array = ::as_array(dst_type)) {
-						if (get_literal(src_array->index_expression)->integer != get_literal(dst_array->index_expression)->integer) {
+				} else if (auto src_array = ::as<AstArray>(src_type)) {
+					if (auto dst_array = ::as<AstArray>(dst_type)) {
+						if (src_array->count != dst_array->count) {
 							state->reporter.error(cast->location, "Can not convert from {} to {}. Count does not match.", type_to_string(src_type), type_to_string(dst_type));
 							yield(TypecheckResult::fail);
 						}
@@ -10174,7 +10160,7 @@ AstExpression *typecheck(TypecheckState *state, AstBinaryOperator *bin) {
 						hack_src->index_expression = make_integer(0ull, cast->location);
 						hack_src->location = cast->location;
 
-						auto hack_dst = dst_array->expression;
+						auto hack_dst = dst_array->element_type;
 
 						auto hack_cast = AstBinaryOperator::create();
 						hack_cast->operation = BinaryOperation::as;
@@ -11407,54 +11393,64 @@ AstExpression *typecheck(TypecheckState *state, AstSubscript *subscript) {
 	}
 
 	typecheck(state, subscript->expression);
-	if (is_type(subscript->expression)) {
-		subscript->type = compiler->builtin_type.ident;
-
-		// if (subscript->is_simd) {
-		//
-		//     if (!is_constant(subscript->index_expression)) {
-		//         state->reporter.error(subscript->index_expression->location, "simd array size must be a constant");
-		//         yield(TypecheckResult::fail);
-		//     }
-		//
-		//     auto size = get_constant_integer(subscript->index_expression);
-		//     if (!size) {
-		//         state->reporter.error(subscript->index_expression->location, "simd array size must be an integer");
-		//         yield(TypecheckResult::fail);
-		//     }
-		//     subscript->simd_size = (u64)size.value();
-		// }
-
+	auto type = subscript->expression->type;
+	if (auto array = as<AstArray>(type)) {
+		subscript->type = array->element_type;
+	} else if (auto subtype = get_span_subtype(type)) {
+		subscript->type = subtype;
+	} else if (auto pointer = as_pointer(type)) {
+		subscript->type = pointer->expression;
+	} else if (types_match(type, compiler->builtin_string)) {
+		subscript->type = compiler->builtin_u8.ident;
+	} else if (
+		types_match(type, compiler->builtin_u8) ||
+		types_match(type, compiler->builtin_u16) ||
+		types_match(type, compiler->builtin_u32) ||
+		types_match(type, compiler->builtin_u64) ||
+		types_match(type, compiler->builtin_s8) ||
+		types_match(type, compiler->builtin_s16) ||
+		types_match(type, compiler->builtin_s32) ||
+		types_match(type, compiler->builtin_s64)
+	) {
+		subscript->type = compiler->builtin_bool.ident;
 	} else {
-		auto type = subscript->expression->type;
-		if (type->kind == Ast_Subscript) {
-			subscript->type = ((AstSubscript *)type)->expression;
-		} else if (type->kind == Ast_Span) {
-			// NOTE: due to :span hack: this should not happen
-			subscript->type = ((AstSpan *)type)->expression;
-		} else if (auto subtype = get_span_subtype(type)) { // :span hack:
-			subscript->type = subtype;
-		} else if (is_pointer(type)) {
-			subscript->type = ((AstUnaryOperator *)type)->expression;
-		} else if (types_match(type, compiler->builtin_string)) {
-			subscript->type = compiler->builtin_u8.ident;
-		} else if (
-			types_match(type, compiler->builtin_u8) ||
-			types_match(type, compiler->builtin_u16) ||
-			types_match(type, compiler->builtin_u32) ||
-			types_match(type, compiler->builtin_u64) ||
-			types_match(type, compiler->builtin_s8) ||
-			types_match(type, compiler->builtin_s16) ||
-			types_match(type, compiler->builtin_s32) ||
-			types_match(type, compiler->builtin_s64)
-		) {
-			subscript->type = compiler->builtin_bool.ident;
-		} else {
-			state->reporter.error(subscript->location, "Expression is not subscriptable");
-			yield(TypecheckResult::fail);
-		}
+		state->reporter.error(subscript->location, "Expression is not subscriptable");
+		yield(TypecheckResult::fail);
 	}
 	return subscript;
+}
+AstExpression *typecheck(TypecheckState *state, AstArray *array) {
+	if (array->count_expression) {
+		typecheck(state, array->count_expression);
+
+		auto evaluated = evaluate(state, array->count_expression);
+
+		if (!evaluated) {
+			state->reporter.error(array->count_expression->location, "Could not evaluate expression.");
+			yield(TypecheckResult::fail);
+		}
+
+		if (evaluated->literal_kind != LiteralKind::integer) {
+			state->reporter.error(array->count_expression->location, "Expression must be of type integer but is {}", type_to_string(array->count_expression->type));
+			yield(TypecheckResult::fail);
+		}
+
+		if (evaluated->integer.msb) {
+			state->reporter.error(array->count_expression->location, "Array count must be positive");
+			yield(TypecheckResult::fail);
+		}
+
+		if (evaluated->integer.parts.count > 1) {
+			state->reporter.error(array->count_expression->location, "Array count is too big");
+			yield(TypecheckResult::fail);
+		}
+
+		array->count = (s64)evaluated->integer;
+	}
+
+	typecheck(state, array->element_type);
+	array->type = compiler->builtin_type.ident;
+	return array;
 }
 AstExpression *typecheck(TypecheckState *state, AstSpan *span) {
 	typecheck(state, span->expression);
@@ -11687,7 +11683,8 @@ AstExpression *typecheck(TypecheckState *state, AstEnum *Enum) {
 				yield(TypecheckResult::fail);
 			}
 
-			counter = copy(get_constant_integer(definition->expression).value());
+			not_implemented();
+			//counter = copy(get_constant_integer(definition->expression).value());
 		} else {
 			definition->expression = state->make_integer(copy(counter), definition->location);
 		}
@@ -11727,9 +11724,10 @@ AstExpression *typecheck(TypecheckState *state, AstArrayInitializer *ArrayInitia
 		}
 	}
 
-	auto type = AstSubscript::create();
-	type->expression = ArrayInitializer->elements[0]->type;
-	type->index_expression = make_integer((s64)ArrayInitializer->elements.count);
+	auto type = AstArray::create();
+	type->element_type = ArrayInitializer->elements[0]->type;
+	type->count = ArrayInitializer->elements.count;
+	type->count_expression = make_integer(type->count);
 	type->location = ArrayInitializer->location;
 	type->type = compiler->builtin_type.ident;
 
@@ -11773,6 +11771,18 @@ AstExpression *typecheck(TypecheckState *state, AstMatch *Match) {
 				// state->reporter.error(Case.expression->location, "Expression has type {}, which does not match the matchable type {}.", type_to_string(Case.expression->type), type_to_string(Match->expression->type));
 				yield(TypecheckResult::fail);
 			}
+
+			auto case_value = evaluate(state, Case.expression);
+			if (!case_value) {
+				state->reporter.error(Case.expression->location, "Could not evaluate this value.");
+				yield(TypecheckResult::fail);
+			}
+			if (case_value->literal_kind != LiteralKind::integer) {
+				state->reporter.error(Case.expression->location, "Currently only integers are supported in match cases.");
+				yield(TypecheckResult::fail);
+			}
+			Case.value = (u64)case_value->integer;
+
 			n_cases_handled += 1;
 		} else {
 			has_default_case = true;
@@ -11791,14 +11801,16 @@ AstExpression *typecheck(TypecheckState *state, AstMatch *Match) {
 
 
 					for (auto &Case : Match->cases) {
-						auto case_value = get_constant_integer(Case.expression);
-
 						auto found_enum_value_defn = find_if(Enum->scope->statement_list, [&](AstStatement *s) {
 							assert(s->kind == Ast_Definition);
 
-							auto enum_value = get_constant_integer(((AstDefinition *)s)->expression);
+							auto enum_value = evaluate(state, ((AstDefinition *)s)->expression);
+							if (enum_value->literal_kind != LiteralKind::integer) {
+								state->reporter.error(Case.expression->location, "INTERNAL ERROR: abracadabra");
+								yield(TypecheckResult::fail);
+							}
 
-							return case_value.has_value() && enum_value.has_value() && case_value.value() == enum_value.value();
+							return Case.value == enum_value->integer;
 						});
 
 						assert(found_enum_value_defn);
@@ -11864,6 +11876,7 @@ void typecheck(TypecheckState *state, CExpression auto &expression) {
 		case Ast_UnaryOperator:    new_expression = typecheck(state, (AstUnaryOperator    *)expression); break;
 		case Ast_Struct:           new_expression = typecheck(state, (AstStruct           *)expression); break;
 		case Ast_Subscript:        new_expression = typecheck(state, (AstSubscript        *)expression); break;
+		case Ast_Array:            new_expression = typecheck(state, (AstArray            *)expression); break;
 		case Ast_Span:             new_expression = typecheck(state, (AstSpan             *)expression); break;
 		case Ast_If:               new_expression = typecheck(state, (AstIf               *)expression); break;
 		case Ast_Test:             new_expression = typecheck(state, (AstTest             *)expression); break;
@@ -12301,6 +12314,10 @@ void mark_referenced_definitions(AstSubscript *Subscript) {
 	mark_referenced_definitions(Subscript->expression);
 	mark_referenced_definitions(Subscript->index_expression);
 }
+void mark_referenced_definitions(AstArray *Array) {
+	mark_referenced_definitions(Array->element_type);
+	mark_referenced_definitions(Array->count_expression);
+}
 void mark_referenced_definitions(AstAssert *Assert) {
 	if (!Assert->is_constant)
 		mark_referenced_definitions(Assert->condition);
@@ -12343,8 +12360,6 @@ struct ParsedArguments {
 
 	List<String> source_files;
 
-	bool print_ast_after_parse = false;
-	bool print_ast_after_typecheck = false;
 	bool no_typecheck = false;
 	bool debug_paths = false;
 	bool track_allocations = false;
@@ -12378,11 +12393,7 @@ ParsedArguments parse_arguments(Span<Span<utf8>> arguments) {
 				immediate_error("Expected an argument after --print-ast.\n");
 				return result;
 			}
-			if (arguments[i] == "parse") result.print_ast_after_parse = true;
-			else if (arguments[i] == "type") result.print_ast_after_typecheck = true;
 			else immediate_error("Unexpected argument after --print-ast.\n");
-		} else if (arguments[i] == "--print-ast-after-typecheck"str) {
-			result.print_ast_after_typecheck = true;
 		} else if (arguments[i] == "--no-type-check"str) {
 			result.no_typecheck = true;
 		} else if (arguments[i] == "--debug-paths"str) {
@@ -13464,12 +13475,6 @@ restart_main:
 	timed_end("setup"str);
 
 	{
-		defer {
-			if (args.print_ast_after_parse) {
-				print_ast();
-			}
-		};
-
 		scoped_phase("Parsing");
 
 		auto parsed = parse_file("tlang/preload.tl"str, {});
@@ -13507,9 +13512,6 @@ restart_main:
 
 	if (!args.no_typecheck) {
 		defer {
-			if (args.print_ast_after_typecheck) {
-				print_ast();
-			}
 			if (compiler->print_lowered) {
 				print_lowered();
 			}

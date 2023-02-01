@@ -42,6 +42,7 @@ e(Match) \
 e(Using) \
 e(ArrayInitializer) \
 e(Yield) \
+e(Array) \
 
 enum AstKind : u8 {
 	Ast_Unknown = 0,
@@ -826,8 +827,16 @@ struct AstSubscript : AstExpression, ExpressionPool<AstSubscript> {
 	}
 	Expression<> expression = {};
 	Expression<> index_expression = {};
+};
 
-	bool is_prefix : 1 = false;
+struct AstArray : AstExpression, ExpressionPool<AstArray> {
+	AstArray() {
+		kind = Ast_Array;
+		directed = this;
+	}
+	Expression<> element_type = {};
+	Expression<> count_expression = {};
+	u64 count = 0;
 };
 
 struct AstSpan : AstExpression, ExpressionPool<AstSpan> {
@@ -934,6 +943,7 @@ struct AstLoopControl : AstStatement, StatementPool<AstLoopControl> {
 
 struct MatchCase {
 	AstExpression *expression = 0; // will be null for default case
+	u64 value = 0;
 	Expression<AstBlock> block = AstBlock::create();
 };
 
@@ -994,66 +1004,6 @@ void unlock(Scope *scope);
 
 AstStruct &get_built_in_type_from_token(TokenKind t);
 AstStruct *find_built_in_type_from_token(TokenKind t);
-
-
-inline Optional<BigInteger> get_constant_integer(AstExpression *expression) {
-	switch (expression->kind) {
-		case Ast_Literal: {
-			auto literal = (AstLiteral *)expression;
-			if (literal->literal_kind == LiteralKind::integer) {
-				return literal->integer;
-			}
-			if (literal->literal_kind == LiteralKind::character) {
-				return make_big_int<BigInteger>((BigInteger::Part) literal->character);
-			}
-			break;
-		}
-		case Ast_Identifier: {
-			auto ident = (AstIdentifier *)expression;
-			if (ident->definition() && ident->definition()->is_constant) {
-				return get_constant_integer(ident->definition()->expression);
-			}
-			break;
-		}
-		case Ast_UnaryOperator: {
-			auto unop = (AstUnaryOperator *)expression;
-			auto got_value = get_constant_integer(unop->expression);
-			if (!got_value)
-				return got_value;
-
-			auto value = got_value.value_unchecked();
-
-			switch (unop->operation) {
-				using enum UnaryOperation;
-				case minus: return -value;
-				default: invalid_code_path();
-			}
-			break;
-		}
-		case Ast_BinaryOperator: {
-			auto binop = (AstBinaryOperator *)expression;
-			using enum BinaryOperation;
-			switch (binop->operation) {
-				case add: return get_constant_integer(binop->left) + get_constant_integer(binop->right);
-				case sub: return get_constant_integer(binop->left) - get_constant_integer(binop->right);
-				case mul: return get_constant_integer(binop->left) * get_constant_integer(binop->right);
-				case div: return get_constant_integer(binop->left) / get_constant_integer(binop->right);
-				case mod: return get_constant_integer(binop->left) % get_constant_integer(binop->right);
-				case bxor: return get_constant_integer(binop->left) ^ get_constant_integer(binop->right);
-				case band: return get_constant_integer(binop->left) & get_constant_integer(binop->right);
-				case bor: return get_constant_integer(binop->left) | get_constant_integer(binop->right);
-				case bsl: return get_constant_integer(binop->left) << get_constant_integer(binop->right);
-				case bsr: return get_constant_integer(binop->left) >> get_constant_integer(binop->right);
-				case eq: // return get_constant_integer(binop->left) == get_constant_integer(binop->right);
-				case ne: // return get_constant_integer(binop->left) != get_constant_integer(binop->right);
-				case dot: return get_constant_integer(binop->right);
-				default: invalid_code_path();
-			}
-			break;
-		}
-	}
-	return {};
-}
 
 void append_type(StringBuilder &builder, AstExpression *type, bool silent_error);
 
@@ -1184,7 +1134,6 @@ List<Expression<> *> get_arguments_addresses(AstCall *call);
 List<Expression<>> get_arguments(AstCall *call);
 */
 
-bool is_sized_array(AstExpression *type);
 bool same_argument_and_return_types(AstLambda *a, AstLambda *b);
 
 inline AstUnaryOperator *as_option(AstExpression *expression) {
@@ -1194,9 +1143,6 @@ inline AstUnaryOperator *as_option(AstExpression *expression) {
 	return 0;
 }
 AstLiteral *get_literal(AstExpression *expression);
-
-AstSubscript *as_array(AstExpression *type);
-AstSpan *as_span(AstExpression *type);
 
 bool is_addressable(AstExpression *expression);
 
@@ -1779,16 +1725,10 @@ inline bool types_match(AstExpression *a, AstExpression *b) {
 		}
 
 
-		case Ast_Subscript: {
-			auto eq = [](auto a, auto b) {
-				if (!a.has_value()) return false;
-				if (!b.has_value()) return false;
-				return a.value() == b.value();
-			};
-			auto as = (AstSubscript *)a;
-			auto bs = (AstSubscript *)b;
-			return types_match(as->expression, bs->expression) &&
-				eq(get_constant_integer(as->index_expression), get_constant_integer(bs->index_expression));
+		case Ast_Array: {
+			auto as = (AstArray *)a;
+			auto bs = (AstArray *)b;
+			return types_match(as->element_type, bs->element_type) && as->count == bs->count;
 		}
 		case Ast_Span: {
 			auto as = (AstSpan *)a;
@@ -1916,15 +1856,9 @@ inline s64 get_size(AstExpression *_type, bool check_struct) {
 				default: invalid_code_path();
 			}
 		}
-		case Ast_Subscript: {
-			auto subscript = (AstSubscript *)type;
-			auto count = get_constant_integer(subscript->index_expression);
-			if (!count.has_value()) {
-				immediate_error(subscript->index_expression->location, "Can't get the value of this expression. FIXME: This error is immediate, figure out a way to add it to report list.");
-				exit(-1);
-			}
-
-			return get_size(subscript->expression) * (s64)count.value();
+		case Ast_Array: {
+			auto array = (AstArray *)type;
+			return get_size(array->element_type) * (s64)array->count;
 		}
 		case Ast_Span: {
 			return compiler->stack_word_size*2; // pointer+count;
@@ -1967,9 +1901,9 @@ inline s64 get_align(AstExpression *type, bool check_struct) {
 				default: invalid_code_path();
 			}
 		}
-		case Ast_Subscript: {
-			auto subscript = (AstSubscript *)type;
-			return get_align(subscript->expression, check_struct);
+		case Ast_Array: {
+			auto array = (AstArray *)type;
+			return get_align(array->element_type, check_struct);
 		}
 		case Ast_LambdaType: {
 			return compiler->stack_word_size;

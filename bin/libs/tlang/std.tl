@@ -105,7 +105,7 @@ stringize :: (_val: Int, state: *Void, callback: StringizeCallback) {
     i := val
 
     CAPACITY :: 64
-    buffer: U8[CAPACITY]
+    buffer: [CAPACITY]U8
     dst_index := CAPACITY
 
     while i != 0 {
@@ -138,7 +138,7 @@ stringize :: (_val: UInt, state: *Void, callback: StringizeCallback) {
     i := val
 
     CAPACITY :: 64
-    buffer: U8[CAPACITY]
+    buffer: [CAPACITY]U8
     dst_index := CAPACITY
 
     while i != 0 {
@@ -168,7 +168,7 @@ stringize_hex :: (_val: UInt, state: *Void, callback: StringizeCallback) {
 	CAPACITY :: 16
 
     i := val
-    buffer: U8[CAPACITY]
+    buffer: [CAPACITY]U8
     dst_index := CAPACITY
 
     while i != 0 {
@@ -558,7 +558,7 @@ StringBuilder :: struct {
 
 	allocator: Allocator
 	first: Block
-	initial_buffer: U8[STRING_BUILDER_INITIAL_BUFFER_CAPACITY]
+	initial_buffer: [STRING_BUILDER_INITIAL_BUFFER_CAPACITY]U8
 	last: *Block
 	alloc_last: *Block
     count: Int

@@ -12,7 +12,7 @@ bool type_is_built_in(AstExpression *type) {
 	switch (type->kind) {
 		case Ast_Struct: return struct_is_built_in((AstStruct *)type);
 		case Ast_UnaryOperator: return true;
-		case Ast_Subscript: return true;
+		case Ast_Array: return true;
 	}
 	invalid_code_path();
 	return {};
@@ -88,18 +88,18 @@ void append_type(StringBuilder &builder, AstExpression *type, bool silent_error)
 			append_type(builder, unop->expression, silent_error);
 			break;
 		}
-		case Ast_Subscript: {
-			auto subscript = (AstSubscript *)type;
+		case Ast_Array: {
+			auto array = (AstArray *)type;
 			append(builder, '[');
-			append(builder, get_constant_integer(subscript->index_expression).map<s64>().value_or(-1));
+			append(builder, array->count);
 			append(builder, ']');
-			append_type(builder, subscript->expression, silent_error);
+			append_type(builder, array->element_type, silent_error);
 			break;
 		}
 		case Ast_Span: {
-			auto subscript = (AstSpan *)type;
+			auto span = (AstSpan *)type;
 			append(builder, "[]");
-			append_type(builder, subscript->expression, silent_error);
+			append_type(builder, span->expression, silent_error);
 			break;
 		}
 		case Ast_Enum: {
@@ -445,27 +445,6 @@ List<Expression<>> get_arguments(AstCall *call) {
 	}
 }
 */
-
-bool is_sized_array(AstExpression *type) {
-	return type->kind == Ast_Subscript;
-}
-
-AstSubscript *as_array(AstExpression *type) {
-	auto d = direct(type);
-	if (!d)
-		return 0;
-	if (d->kind == Ast_Subscript)
-		return (AstSubscript *)d;
-	return 0;
-}
-AstSpan *as_span(AstExpression *type) {
-	auto d = direct(type);
-	if (!d)
-		return 0;
-	if (d->kind == Ast_Span)
-		return (AstSpan *)d;
-	return 0;
-}
 
 bool is_addressable(AstExpression *expression) {
 	switch (expression->kind) {
