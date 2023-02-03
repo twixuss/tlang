@@ -2402,6 +2402,7 @@ void FrameBuilder::append(AstBinaryOperator *bin, RegisterOrAddress destination)
 						case 8: I(cmpf8, .d=r2, .a=rl, .b=rr, .c = comparison); break;
 						default: invalid_code_path(bin->location);
 					}
+					I(mov1_mr, destination.address, r2);
 				} else if (::types_match(left->type, compiler->builtin_bool)) {
 					switch (comparison) {
 						case Comparison::e:

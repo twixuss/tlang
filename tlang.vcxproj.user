@@ -19,10 +19,10 @@
     <LocalDebuggerWorkingDirectory>$(ProjectDir)devtest</LocalDebuggerWorkingDirectory>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
-    <LocalDebuggerCommandArguments>--lowermain --profile a.tl</LocalDebuggerCommandArguments>
+    <LocalDebuggerCommandArguments>--lowermain --keep-temp --profile a.tl</LocalDebuggerCommandArguments>
     <DebuggerFlavor>WindowsLocalDebugger</DebuggerFlavor>
     <LocalDebuggerWorkingDirectory>$(ProjectDir)devtest</LocalDebuggerWorkingDirectory>
-    <RemoteDebuggerCommandArguments>--lowermain --profile a.tl</RemoteDebuggerCommandArguments>
+    <RemoteDebuggerCommandArguments>--lowermain --keep-temp --profile a.tl</RemoteDebuggerCommandArguments>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
     <LocalDebuggerCommandArguments>--keep-temp --profile a.tl</LocalDebuggerCommandArguments>
