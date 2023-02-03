@@ -43,6 +43,7 @@ e(Using) \
 e(ArrayInitializer) \
 e(Yield) \
 e(Array) \
+e(PropertyAccess) \
 
 enum AstKind : u8 {
 	Ast_Unknown = 0,
@@ -746,7 +747,7 @@ e(dot,         .)         /*   .           */\
 e(pack,        ..)        /*   ..          */\
 e(insert,      #insert)   /*   #insert     */\
 e(star, *) \
-e(internal_move_to_temporary, XXX) // move the value into temporary space, result is a pointer to that space.
+e(move_to_temporary, XXX) // move the value into temporary space, result is a pointer to that space.
 
 
 enum class UnaryOperation : u8 {
@@ -777,7 +778,7 @@ inline String as_string(UnaryOperation unop) {
 		case pack:        return ".."str;
 		case insert:      return "#insert"str;
 		case star:        return "*"str;
-		case internal_move_to_temporary: return "<tmp>"str;
+		case move_to_temporary: return "<tmp>"str;
 	}
 	invalid_code_path();
 }
@@ -973,6 +974,16 @@ struct AstArrayInitializer : AstExpression, ExpressionPool<AstArrayInitializer> 
 	}
 
 	SmallList<AstExpression *> elements = {};
+};
+
+struct AstPropertyAccess : AstExpression, ExpressionPool<AstPropertyAccess> {
+	AstPropertyAccess() {
+		kind = Ast_PropertyAccess;
+	}
+
+	Expression<AstBinaryOperator> binary_operator = {};
+	Expression<AstLambda> getter = {};
+	Expression<AstLambda> setter = {};
 };
 
 struct BuiltinStruct {

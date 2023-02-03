@@ -3151,7 +3151,7 @@ void FrameBuilder::append(AstUnaryOperator *unop, RegisterOrAddress destination)
 			append(unop->expression, destination);
 			break;
 		}
-		case internal_move_to_temporary: {
+		case move_to_temporary: {
 			auto size = get_size(unop->expression->type);
 
 			auto tmp = allocate_temporary_space(size);

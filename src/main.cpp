@@ -2796,6 +2796,10 @@ bool simplify(Reporter *reporter, CExpression auto *_expression) {
 				using enum UnaryOperation;
 				auto unop = (AstUnaryOperator *)expression;
 
+				switch (unop->operation) {
+					case UnaryOperation::move_to_temporary: return true;
+				}
+
 				if (unop->expression->kind == Ast_Literal) {
 					auto literal = (AstLiteral *)unop->expression;
 					switch (literal->literal_kind) {
@@ -2864,6 +2868,7 @@ bool simplify(Reporter *reporter, CExpression auto *_expression) {
 			case Ast_Test:
 			case Ast_Enum:
 			case Ast_ArrayInitializer:
+			case Ast_PropertyAccess:
 				break;
 			default:
 				with(ConsoleColor::yellow, print("unhandled case in simplify: {}\n", expression->kind));
@@ -4150,6 +4155,8 @@ struct TypecheckState {
 
 	List<EvaluationParameter> evaluation_parameters;
 
+	bool replace_properties_with_getter_call = true;
+
 	TypecheckResult result;
 
 	// msvc crashed when i used `auto value`
@@ -4624,7 +4631,7 @@ void evaluate(TypecheckState *state, AstExpression *expression, AstLiteral *&res
 					result = l;
 					return;
 				}
-				case internal_move_to_temporary: {
+				case move_to_temporary: {
 					state->reporter.error(expression->location, "FIXME: This expression can't be evaluated at compile time.");
 					return;
 				}
@@ -5321,7 +5328,7 @@ bool implicitly_cast(TypecheckState *state, Reporter *reporter, CExpression auto
 
 				temporary->expression = expression;
 				temporary->location = expression->location;
-				temporary->operation = UnaryOperation::internal_move_to_temporary;
+				temporary->operation = UnaryOperation::move_to_temporary;
 				temporary->type = make_pointer_type(expression->type);
 
 				initializer->sorted_arguments[0] = make_cast_if_types_dont_match(temporary, compiler->builtin_u8.pointer);
@@ -5606,6 +5613,7 @@ bool implicitly_cast(TypecheckState *state, Reporter *reporter, CExpression auto
 		}
 	}
 
+	// Implicit address of
 	// x => &x
 	if (auto dst_ptr = as_pointer(type)) {
 		if (types_match(dst_ptr->expression, expression->type)) {
@@ -5613,8 +5621,17 @@ bool implicitly_cast(TypecheckState *state, Reporter *reporter, CExpression auto
 				if (is_addressable(expression)) {
 					expression = make_address_of(reporter, expression);
 				} else {
-					expression = make_unary(UnaryOperation::internal_move_to_temporary, expression);
+					expression = make_unary(UnaryOperation::move_to_temporary, expression);
 				}
+			}
+			return true;
+		}
+	}
+	// Implicit dereference
+	if (auto src_ptr = as_pointer(expression->type)) {
+		if (types_match(src_ptr->expression, type)) {
+			if (apply) {
+				expression = make_unary(UnaryOperation::dereference, expression, type);
 			}
 			return true;
 		}
@@ -9206,6 +9223,10 @@ AstExpression *typecheck(TypecheckState *state, AstIdentifier *identifier) {
 	return identifier;
 }
 AstExpression *typecheck(TypecheckState *state, AstCall *call) {
+	if (call->debug_overload) {
+		immediate_info(call->location, "DEBUG: Overload resolution");
+	}
+
 	for (auto &argument : call->unsorted_arguments) {
 		typecheck(state, argument.expression);
 	}
@@ -9218,10 +9239,6 @@ AstExpression *typecheck(TypecheckState *state, AstCall *call) {
 
 	List<Overload *> matches;
 	matches.allocator = temporary_allocator;
-
-	if (call->debug_overload) {
-		immediate_info(call->location, "DEBUG: Overload resolution");
-	}
 
 	for (umm overload_index = 0; overload_index != overloads.count; ++overload_index) {
 		auto &overload = overloads[overload_index];
@@ -9817,7 +9834,12 @@ AstExpression *typecheck(TypecheckState *state, AstLambdaType *lambda_type) {
 AstExpression *typecheck(TypecheckState *state, AstBinaryOperator *bin) {
 	using enum BinaryOperation;
 
-	typecheck(state, bin->left);
+
+	{
+		scoped_replace(state->replace_properties_with_getter_call, bin->operation != ass);
+
+		typecheck(state, bin->left);
+	}
 
 	/*
 	if (!bin->left->type) {
@@ -9873,18 +9895,90 @@ AstExpression *typecheck(TypecheckState *state, AstBinaryOperator *bin) {
 
 						DefinitionList definitions;
 
-						wait_for(state, bin->location, "members",
-							[&] {
-								if (auto member = Struct->member_scope->definition_map.find(name)) {
-									definitions.add(member->value);
+						if (auto member = Struct->member_scope->definition_map.find(name)) {
+							definitions.add(member->value);
+						}
+						if (auto parameter = Struct->parameter_scope->definition_map.find(name)) {
+							definitions.add(parameter->value);
+						}
+
+						if (definitions.count == 0) {
+							AstLambda *getter = 0;
+							AstLambda *setter = 0;
+
+							auto getter_name = format("get_{}"str, name);
+							auto setter_name = format("set_{}"str, name);
+
+							for (auto scope = state->current_scope; scope; scope = scope->parent) {
+								auto get_property_lambda_definition = [&] (DefinitionList list) {
+									AstLambda *result = 0;
+									for (auto definition : list) {
+										if (definition->is_constant && definition->expression) {
+											if (auto Lambda = ::as<AstLambda>(definition->expression)) {
+												if (Lambda->parameters.count > 0) {
+													if (implicitly_cast(state, 0, &bin->left, Lambda->parameters[0]->type, 0, false)) {
+														if (result) {
+															state->reporter.error(bin->location, "Ambiguous property.");
+															state->reporter.info(result->definition->location, "First here:");
+															state->reporter.info(definition->location, "Second here:");
+															yield(TypecheckResult::fail);
+														} else {
+															result = Lambda;
+														}
+													}
+												}
+											}
+										}
+									}
+									return result;
+								};
+
+								if (!getter) {
+									if (auto found = scope->definition_map.find(getter_name)) {
+										getter = get_property_lambda_definition(found->value);
+									}
 								}
-								if (auto parameter = Struct->parameter_scope->definition_map.find(name)) {
-									definitions.add(parameter->value);
+								if (!setter) {
+									if (auto found = scope->definition_map.find(setter_name)) {
+										setter = get_property_lambda_definition(found->value);
+									}
 								}
 
-								return definitions.count != 0;
-							},
-							[&] {
+							}
+
+							if (getter || setter) {
+								if (state->replace_properties_with_getter_call) {
+									if (!getter) {
+										state->reporter.error(bin->location, "There is no such get_{} lambda that accepts {}.", bin->right->location, type_to_string(bin->left->type));
+										yield(TypecheckResult::fail);
+									}
+
+									auto getter_definition = getter->definition;
+
+									auto ident = AstIdentifier::create();
+									ident->name = getter_definition->name;
+									ident->location = bin->right->location;
+									ident->possible_definitions.set(getter_definition);
+									ident->type = getter_definition->type;
+
+									auto call = AstCall::create();
+									call->callable = ident;
+									call->unsorted_arguments.set({.expression = bin->left});
+									call->location = bin->location;
+
+									typecheck(state, call);
+
+									return call;
+								} else {
+									auto property = AstPropertyAccess::create();
+									property->binary_operator = bin;
+									property->getter = getter;
+									property->setter = setter;
+									property->type = property;
+									property->location = bin->location;
+									return property;
+								}
+							} else {
 								if (left_is_type) {
 									state->reporter.error(bin->right->location, "Type '{}' does not contain constant '{}'", Struct->definition->name, bin->right->location);
 								} else {
@@ -9903,8 +9997,9 @@ AstExpression *typecheck(TypecheckState *state, AstBinaryOperator *bin) {
 										state->reporter.info("{}", available_members);
 									}
 								}
+								yield(TypecheckResult::fail);
 							}
-						);
+						}
 
 						if (definitions.count > 1) {
 							member_identifier->possible_definitions.set(definitions);
@@ -9956,7 +10051,7 @@ AstExpression *typecheck(TypecheckState *state, AstBinaryOperator *bin) {
 
 							auto array_address = is_addressable(bin->left) ?
 								make_address_of(&state->reporter, bin->left) :
-								make_unary(UnaryOperation::internal_move_to_temporary, bin->left, make_pointer_type(bin->left->type));
+								make_unary(UnaryOperation::move_to_temporary, bin->left, make_pointer_type(bin->left->type));
 
 							if (!array_address)
 								yield(TypecheckResult::fail);
@@ -10121,16 +10216,46 @@ AstExpression *typecheck(TypecheckState *state, AstBinaryOperator *bin) {
 			break;
 		}
 		case ass: {
-			if (!ensure_assignable(&state->reporter, bin->left)) {
-				yield(TypecheckResult::fail);
-			}
+			if (auto property = ::as<AstPropertyAccess>(bin->left)) {
 
-			typecheck(state, bin->right);
+				auto setter = property->setter;
 
-			if (!implicitly_cast(state, &state->reporter, &bin->right, bin->left->type)) {
-				yield(TypecheckResult::fail);
+				if (!setter) {
+					state->reporter.error(bin->location, "There is no such set_{} lambda that accepts {}.", bin->right->location, type_to_string(bin->left->type));
+					yield(TypecheckResult::fail);
+				}
+
+				auto setter_definition = setter->definition;
+
+				auto ident = AstIdentifier::create();
+				ident->name = setter_definition->name;
+				ident->location = bin->right->location;
+				ident->possible_definitions.set(setter_definition);
+				ident->type = setter_definition->type;
+
+				auto call = AstCall::create();
+				call->callable = ident;
+				call->unsorted_arguments.set({{ .expression = property->binary_operator->left}, {.expression = bin->right }});
+				call->location = bin->location;
+
+				typecheck(state, call);
+
+				return call;
+
+			} else {
+
+				if (!ensure_assignable(&state->reporter, bin->left)) {
+					yield(TypecheckResult::fail);
+				}
+
+				typecheck(state, bin->right);
+
+				if (!implicitly_cast(state, &state->reporter, &bin->right, bin->left->type)) {
+					yield(TypecheckResult::fail);
+				}
+
+				bin->type = compiler->builtin_void.ident;
 			}
-			bin->type = compiler->builtin_void.ident;
 			return bin;
 		}
 		case lor:
@@ -10891,8 +11016,8 @@ AstExpression *typecheck(TypecheckState *state, AstUnaryOperator *unop) {
 		}
 		case address_of: {
 			typecheck(state, unop->expression);
-			if (!ensure_addressable(&state->reporter, unop->expression)) {
-				yield(TypecheckResult::fail);
+			if (!is_addressable(unop->expression)) {
+				unop->operation = UnaryOperation::move_to_temporary;
 			}
 			make_concrete(state, &unop->expression);
 			unop->type = make_pointer_type(unop->expression->type);
@@ -12257,6 +12382,7 @@ void mark_referenced_definitions(AstLoopControl *LoopControl) {}
 void mark_referenced_definitions(AstEmptyStatement *EmptyStatement) {}
 void mark_referenced_definitions(AstFor *For) { invalid_code_path("'For' node should be replaced with 'While' after typechecking"); }
 void mark_referenced_definitions(AstSpan *Span) { invalid_code_path("'Span' node should be replaced with an instance of 'Span' struct after typechecking"); }
+void mark_referenced_definitions(AstPropertyAccess *PropertyAccess) { invalid_code_path("'PropertyAccess' node should be replaced with a call to a getter or a setter after typechecking"); }
 
 struct ParsedArguments {
 	String target;
