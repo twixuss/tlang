@@ -7421,12 +7421,14 @@ struct MatchedTemplate {
 	AstExpression *matching = 0;
 };
 
-bool match_templates(TypecheckState *state, Reporter *reporter, AstLambda *hardened_lambda, AstDefinition *matching_parameter, AstExpression *template_expression, AstExpression *matching_expression, MatchedTemplate &mismatch) {
+bool match_templates(TypecheckState *state, Reporter *reporter, AstLambda *hardened_lambda, AstDefinition *matching_parameter, AstExpression *template_expression, AstExpression *matching_expression, MatchedTemplate *mismatch) {
 	switch (template_expression->kind) {
 		case Ast_Identifier: {
 			auto p = (AstIdentifier *)template_expression;
 
-			auto found = hardened_lambda->constant_scope->definition_map.find(p->name);
+			KeyValue<KeyString, DefinitionList> *found = 0;
+			if (hardened_lambda)
+				found = hardened_lambda->constant_scope->definition_map.find(p->name);
 			if (found) {
 				auto definiton = found->value[0];
 				assert(definiton->container_node);
@@ -7453,15 +7455,17 @@ bool match_templates(TypecheckState *state, Reporter *reporter, AstLambda *harde
 					if (template_struct->is_template) {
 						if (auto instantiated_struct = direct_as<AstStruct>(matching_expression)) {
 							if (instantiated_struct->instantiated_from == template_struct) {
-								for (auto parameter : instantiated_struct->parameter_scope->definition_list) {
-									auto definition = AstDefinition::create();
-									definition->name = format("\\{}.{}"str, matching_parameter->name, parameter->name);
-									definition->is_constant = true;
-									definition->expression = parameter->expression;
-									definition->type = definition->expression->type;
-									definition->location = template_expression->location;
-									definition->container_node = hardened_lambda;
-									hardened_lambda->constant_scope->add(definition);
+								if (hardened_lambda) {
+									for (auto parameter : instantiated_struct->parameter_scope->definition_list) {
+										auto definition = AstDefinition::create();
+										definition->name = format("\\{}.{}"str, matching_parameter->name, parameter->name);
+										definition->is_constant = true;
+										definition->expression = parameter->expression;
+										definition->type = definition->expression->type;
+										definition->location = template_expression->location;
+										definition->container_node = hardened_lambda;
+										hardened_lambda->constant_scope->add(definition);
+									}
 								}
 								return true;
 							}
@@ -7482,9 +7486,11 @@ bool match_templates(TypecheckState *state, Reporter *reporter, AstLambda *harde
 
 			if (auto e = as<AstUnaryOperator>(matching_expression)) {
 				if (p->operation == e->operation) {
-					return match_templates(state, reporter, hardened_lambda, matching_parameter, p->expression, e->expression, mismatch);
+					if (match_templates(state, reporter, hardened_lambda, matching_parameter, p->expression, e->expression, mismatch))
+						return true;
 				}
 			}
+
 			break;
 		}
 		case Ast_Call: {
@@ -7525,7 +7531,21 @@ bool match_templates(TypecheckState *state, Reporter *reporter, AstLambda *harde
 			break;
 		}
 	}
-	mismatch = {template_expression, matching_expression};
+
+	// Allow implicit dereferencing
+	if (auto e = as<AstUnaryOperator>(matching_expression); e && e->operation == UnaryOperation::pointer) {
+		if (match_templates(state, reporter, hardened_lambda, matching_parameter, template_expression, e->expression, mismatch))
+			return true;
+	}
+
+	// Allow implicit address of
+	if (auto e = as<AstUnaryOperator>(template_expression); e && e->operation == UnaryOperation::pointer) {
+		if (match_templates(state, reporter, hardened_lambda, matching_parameter, e->expression, matching_expression, mismatch))
+			return true;
+	}
+
+	if (mismatch)
+		*mismatch = {template_expression, matching_expression};
 	return false;
 }
 
@@ -7625,7 +7645,7 @@ AstLambda *instantiate_head(TypecheckState *state, Reporter *reporter, Overload 
 
 	auto match_poly_param = [&](AstDefinition *parameter, AstExpression *argument) {
 		MatchedTemplate mismatch;
-		if (!match_templates(state, reporter, hardened_lambda, parameter, parameter->parsed_type, argument->type, mismatch)) {
+		if (!match_templates(state, reporter, hardened_lambda, parameter, parameter->parsed_type, argument->type, &mismatch)) {
 			reporter->error(argument->location, "Could not match the type {} to {}", type_to_string(argument->type), type_to_string(parameter->parsed_type));
 			reporter->info(parameter->location, "Because {} doesn't match {}", mismatch.matching, mismatch.poly);
 			return false;
@@ -9910,13 +9930,21 @@ AstExpression *typecheck(TypecheckState *state, AstBinaryOperator *bin) {
 							auto setter_name = format("set_{}"str, name);
 
 							for (auto scope = state->current_scope; scope; scope = scope->parent) {
-								auto get_property_lambda_definition = [&] (DefinitionList list) {
+								auto get_property_lambda_definition = [&] (DefinitionList list, bool is_setter) {
 									AstLambda *result = 0;
 									for (auto definition : list) {
 										if (definition->is_constant && definition->expression) {
 											if (auto Lambda = ::as<AstLambda>(definition->expression)) {
 												if (Lambda->parameters.count > 0) {
-													if (implicitly_cast(state, 0, &bin->left, Lambda->parameters[0]->type, 0, false)) {
+
+													auto matching_type = bin->left->type;
+													if (is_setter) {
+														matching_type = make_pointer_type(matching_type);
+													}
+
+													if (implicitly_cast(state, 0, &bin->left, Lambda->parameters[0]->type, 0, false) ||
+														match_templates(state, 0, 0, 0, Lambda->parameters[0]->type, matching_type, 0)
+													) {
 														if (result) {
 															state->reporter.error(bin->location, "Ambiguous property.");
 															state->reporter.info(result->definition->location, "First here:");
@@ -9935,12 +9963,12 @@ AstExpression *typecheck(TypecheckState *state, AstBinaryOperator *bin) {
 
 								if (!getter) {
 									if (auto found = scope->definition_map.find(getter_name)) {
-										getter = get_property_lambda_definition(found->value);
+										getter = get_property_lambda_definition(found->value, false);
 									}
 								}
 								if (!setter) {
 									if (auto found = scope->definition_map.find(setter_name)) {
-										setter = get_property_lambda_definition(found->value);
+										setter = get_property_lambda_definition(found->value, true);
 									}
 								}
 
@@ -10221,7 +10249,7 @@ AstExpression *typecheck(TypecheckState *state, AstBinaryOperator *bin) {
 				auto setter = property->setter;
 
 				if (!setter) {
-					state->reporter.error(bin->location, "There is no such set_{} lambda that accepts {}.", bin->right->location, type_to_string(bin->left->type));
+					state->reporter.error(bin->location, "There is no such set_{} lambda that accepts {}.", property->binary_operator->right->location, type_to_string(property->binary_operator->left->type));
 					yield(TypecheckResult::fail);
 				}
 
@@ -10235,7 +10263,7 @@ AstExpression *typecheck(TypecheckState *state, AstBinaryOperator *bin) {
 
 				auto call = AstCall::create();
 				call->callable = ident;
-				call->unsorted_arguments.set({{ .expression = property->binary_operator->left}, {.expression = bin->right }});
+				call->unsorted_arguments.set({{ .expression = make_address_of(0, property->binary_operator->left)}, {.expression = bin->right }});
 				call->location = bin->location;
 
 				typecheck(state, call);
