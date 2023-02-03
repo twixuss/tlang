@@ -6811,7 +6811,7 @@ AstStatement *typecheck(TypecheckState *state, AstFor *For) {
 			auto it1 = AstDefinition::create();
 			it1->name = "_it"str;
 			it1->container_node = state->current_lambda_or_struct_or_enum;
-			it1->expression = make_unary(UnaryOperation::address_of, make_subscript(make_unary(UnaryOperation::pointer_or_dereference_or_unwrap, make_identifier(range_definition->name)), make_integer(0ll)));
+			it1->expression = make_unary(UnaryOperation::address_of, make_subscript(make_unary(UnaryOperation::star, make_identifier(range_definition->name)), make_integer(0ll)));
 			replacement_block->scope->add(raw(it1));
 
 			auto end = AstDefinition::create();
@@ -6821,7 +6821,7 @@ AstStatement *typecheck(TypecheckState *state, AstFor *For) {
 			// FIXME: we already know array count, no need for this
 			end->expression = make_binop(BinaryOperation::add,
 				make_identifier(it1->name),
-				make_binop(BinaryOperation::dot, make_unary(UnaryOperation::pointer_or_dereference_or_unwrap, make_identifier(range_definition->name)), make_identifier("count"str))
+				make_binop(BinaryOperation::dot, make_unary(UnaryOperation::star, make_identifier(range_definition->name)), make_identifier("count"str))
 			);
 			replacement_block->scope->add(raw(end));
 
@@ -6925,7 +6925,7 @@ AstStatement *typecheck(TypecheckState *state, AstFor *For) {
 			auto it2 = AstDefinition::create();
 			it2->name = For->iterator_name;
 			it2->container_node = state->current_lambda_or_struct_or_enum;
-			it2->expression = make_unary(UnaryOperation::pointer_or_dereference_or_unwrap, make_identifier(it1->name));
+			it2->expression = make_unary(UnaryOperation::star, make_identifier(it1->name));
 			While->scope->add(raw(it2));
 
 			auto inner = AstBlock::create();
@@ -6957,7 +6957,7 @@ AstStatement *typecheck(TypecheckState *state, AstFor *For) {
 			auto it1 = AstDefinition::create();
 			it1->name = "_it"str;
 			it1->container_node = state->current_lambda_or_struct_or_enum;
-			it1->expression = make_unary(UnaryOperation::address_of, make_subscript(make_unary(UnaryOperation::pointer_or_dereference_or_unwrap, make_identifier(range_definition->name)), make_integer(0ll)));
+			it1->expression = make_unary(UnaryOperation::address_of, make_subscript(make_unary(UnaryOperation::star, make_identifier(range_definition->name)), make_integer(0ll)));
 			replacement_block->scope->add(raw(it1));
 
 			auto end = AstDefinition::create();
@@ -6966,7 +6966,7 @@ AstStatement *typecheck(TypecheckState *state, AstFor *For) {
 			// FIXME: we already know array count, no need for this
 			end->expression = make_binop(BinaryOperation::add,
 				make_identifier(it1->name),
-				make_binop(BinaryOperation::dot, make_unary(UnaryOperation::pointer_or_dereference_or_unwrap, make_identifier(range_definition->name)), make_identifier("count"str))
+				make_binop(BinaryOperation::dot, make_unary(UnaryOperation::star, make_identifier(range_definition->name)), make_identifier("count"str))
 			);
 			replacement_block->scope->add(raw(end));
 
@@ -6978,7 +6978,7 @@ AstStatement *typecheck(TypecheckState *state, AstFor *For) {
 			auto it2 = AstDefinition::create();
 			it2->name = For->iterator_name;
 			it2->container_node = state->current_lambda_or_struct_or_enum;
-			it2->expression = make_unary(UnaryOperation::pointer_or_dereference_or_unwrap, make_identifier(it1->name));
+			it2->expression = make_unary(UnaryOperation::star, make_identifier(it1->name));
 			While->scope->add(raw(it2));
 
 			auto inner = AstBlock::create();
@@ -7404,7 +7404,7 @@ struct MatchedTemplate {
 	AstExpression *matching = 0;
 };
 
-bool match_templates(TypecheckState *state, Reporter *reporter, AstLambda *hardened_lambda, AstExpression *template_expression, AstExpression *matching_expression, MatchedTemplate &mismatch) {
+bool match_templates(TypecheckState *state, Reporter *reporter, AstLambda *hardened_lambda, AstDefinition *matching_parameter, AstExpression *template_expression, AstExpression *matching_expression, MatchedTemplate &mismatch) {
 	switch (template_expression->kind) {
 		case Ast_Identifier: {
 			auto p = (AstIdentifier *)template_expression;
@@ -7432,6 +7432,26 @@ bool match_templates(TypecheckState *state, Reporter *reporter, AstLambda *harde
 				}
 			} else {
 				typecheck(state, template_expression);
+				if (auto template_struct = direct_as<AstStruct>(template_expression)) {
+					if (template_struct->is_template) {
+						if (auto instantiated_struct = direct_as<AstStruct>(matching_expression)) {
+							if (instantiated_struct->instantiated_from == template_struct) {
+								for (auto parameter : instantiated_struct->parameter_scope->definition_list) {
+									auto definition = AstDefinition::create();
+									definition->name = format("\\{}.{}"str, matching_parameter->name, parameter->name);
+									definition->is_constant = true;
+									definition->expression = parameter->expression;
+									definition->type = definition->expression->type;
+									definition->location = template_expression->location;
+									definition->container_node = hardened_lambda;
+									hardened_lambda->constant_scope->add(definition);
+								}
+								return true;
+							}
+						}
+					}
+				}
+
 				if (types_match(template_expression, matching_expression)) {
 					return true;
 				}
@@ -7440,12 +7460,12 @@ bool match_templates(TypecheckState *state, Reporter *reporter, AstLambda *harde
 		}
 		case Ast_UnaryOperator: {
 			auto p = (AstUnaryOperator *)template_expression;
-			if (p->operation == UnaryOperation::pointer_or_dereference_or_unwrap)
+			if (p->operation == UnaryOperation::star)
 				p->operation = UnaryOperation::pointer;
 
 			if (auto e = as<AstUnaryOperator>(matching_expression)) {
 				if (p->operation == e->operation) {
-					return match_templates(state, reporter, hardened_lambda, p->expression, e->expression, mismatch);
+					return match_templates(state, reporter, hardened_lambda, matching_parameter, p->expression, e->expression, mismatch);
 				}
 			}
 			break;
@@ -7459,7 +7479,7 @@ bool match_templates(TypecheckState *state, Reporter *reporter, AstLambda *harde
 
 						if (call->unsorted_arguments.count == poly_struct->parameter_scope->definition_list.count) {
 							for (umm i = 0; i < call->unsorted_arguments.count; ++i) {
-								if (!match_templates(state, reporter, hardened_lambda, call->unsorted_arguments[i].expression, matching_struct->parameter_scope->definition_list[i]->expression, mismatch)) {
+								if (!match_templates(state, reporter, hardened_lambda, matching_parameter, call->unsorted_arguments[i].expression, matching_struct->parameter_scope->definition_list[i]->expression, mismatch)) {
 									return false;
 								}
 							}
@@ -7588,7 +7608,7 @@ AstLambda *instantiate_head(TypecheckState *state, Reporter *reporter, Overload 
 
 	auto match_poly_param = [&](AstDefinition *parameter, AstExpression *argument) {
 		MatchedTemplate mismatch;
-		if (!match_templates(state, reporter, hardened_lambda, parameter->parsed_type, argument->type, mismatch)) {
+		if (!match_templates(state, reporter, hardened_lambda, parameter, parameter->parsed_type, argument->type, mismatch)) {
 			reporter->error(argument->location, "Could not match the type {} to {}", type_to_string(argument->type), type_to_string(parameter->parsed_type));
 			reporter->info(parameter->location, "Because {} doesn't match {}", mismatch.matching, mismatch.poly);
 			return false;
@@ -9764,6 +9784,10 @@ AstExpression *typecheck(TypecheckState *state, AstLambda *lambda) {
 		}
 	}
 
+	if (lambda->is_poly) {
+		return lambda;
+	}
+
 	if (lambda->return_parameter) {
 		typecheck(state, lambda->return_parameter);
 	}
@@ -10874,7 +10898,7 @@ AstExpression *typecheck(TypecheckState *state, AstUnaryOperator *unop) {
 			unop->type = make_pointer_type(unop->expression->type);
 			break;
 		}
-		case pointer_or_dereference_or_unwrap: {
+		case star: {
 			typecheck(state, unop->expression);
 			unop->operation = is_type(unop->expression) ? pointer : as_option(unop->expression->type) ? unwrap : dereference;
 			switch (unop->operation) {
@@ -10886,7 +10910,7 @@ AstExpression *typecheck(TypecheckState *state, AstUnaryOperator *unop) {
 		}
 		case pointer: {
 		_pointer:
-			// done in case pointer_or_dereference_or_unwrap
+			// done in case star
 			//typecheck(state, unop->expression);
 			assert(is_type(unop->expression));
 			unop->type = compiler->builtin_type.ident;
@@ -10894,7 +10918,7 @@ AstExpression *typecheck(TypecheckState *state, AstUnaryOperator *unop) {
 		}
 		case dereference: {
 		_dereference:
-			// done in case pointer_or_dereference_or_unwrap
+			// done in case star
 			//typecheck(state, unop->expression);
 			assert(!is_type(unop->expression));
 			if (!is_pointer(unop->expression->type)) {
@@ -10906,7 +10930,7 @@ AstExpression *typecheck(TypecheckState *state, AstUnaryOperator *unop) {
 		}
 		case unwrap: {
 		_unwrap:
-			// done in case pointer_or_dereference_or_unwrap
+			// done in case star
 			//typecheck(state, unop->expression);
 			assert(!is_type(unop->expression));
 			auto option = as_option(unop->expression->type);

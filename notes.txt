@@ -1,3 +1,45 @@
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+IDEA:
+
+in c# there is fluent interface pattern:
+```
+class Builder {
+    Builder CreateButton() {
+        Instantiate(buttonPrefab);
+        return this;
+    }
+    Builder CreateLabel() {
+        Instantiate(labelPrefab);
+        return this;
+    }
+    ...
+}
+class DifferentBuilder : Builder {
+    // Create* methods return Builder, not DifferentBuilder!
+    // have to do this:
+    DifferentBuilder CreateButton() {
+        base.CreateButton();
+        return this;
+    }
+}
+```
+The idea is to add `derived` keyword
+
+```
+class Builder {
+    derived CreateButton() {
+        Instantiate(buttonPrefab);
+    }
+    derived CreateLabel() {
+        Instantiate(labelPrefab);
+    }
+    ...
+}
+```
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+
 CURRENT LIMITATIONS:
     MAX 4 gb of definitions;
     MAX 4 gb of expressions;

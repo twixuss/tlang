@@ -745,7 +745,7 @@ e(typeinfo,    #typeinfo) /*   #typeinfo   */\
 e(dot,         .)         /*   .           */\
 e(pack,        ..)        /*   ..          */\
 e(insert,      #insert)   /*   #insert     */\
-e(pointer_or_dereference_or_unwrap, *) \
+e(star, *) \
 e(internal_move_to_temporary, XXX) // move the value into temporary space, result is a pointer to that space.
 
 
@@ -776,7 +776,7 @@ inline String as_string(UnaryOperation unop) {
 		case dot:         return "."str;
 		case pack:        return ".."str;
 		case insert:      return "#insert"str;
-		case pointer_or_dereference_or_unwrap: return "<*>"str;
+		case star:        return "*"str;
 		case internal_move_to_temporary: return "<tmp>"str;
 	}
 	invalid_code_path();
@@ -793,7 +793,7 @@ inline Optional<UnaryOperation> as_unary_operation(Token token) {
 		case '!': return lnot;
 		case '~': return bnot;
 		case '&': return address_of;
-		case '*': return pointer_or_dereference_or_unwrap;
+		case '*': return star;
 		case '?': return option;
 		case '@': return autocast;
 		case '$': return poly;
@@ -1778,11 +1778,6 @@ inline bool is_pointer(AstExpression *type) {
 		}
 		case Ast_UnaryOperator: {
 			auto unop = (AstUnaryOperator *)type;
-			if (unop->operation == UnaryOperation::pointer_or_dereference_or_unwrap) {
-				// This fails at parse time.
-				// assert(is_type(unop->expression));
-				return true;
-			}
 			return unop->operation == UnaryOperation::pointer;
 		}
 	}
@@ -1816,7 +1811,7 @@ inline AstUnaryOperator *as_pointer(AstExpression *type) {
 		case Ast_UnaryOperator: {
 			auto unop = (AstUnaryOperator *)type;
 			switch (unop->operation) {
-				case UnaryOperation::pointer_or_dereference_or_unwrap:
+				case UnaryOperation::star:
 				// This fails at parse time.
 				// assert(is_type(unop->expression));
 				case UnaryOperation::pointer:
