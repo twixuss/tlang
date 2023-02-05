@@ -434,6 +434,9 @@ inline void tlang_assertion_failed(char const *cause, char const *file, int line
 	tlang_assertion_failed(cause, file, line, expression, function, location, "");
 }
 
+inline thread_local struct AstNode *(*get_current_node)();
+
+String dumb_get_location(struct AstNode *);
 
 template <class ...Args, class Char>
 inline void tlang_assertion_failed(char const *cause, char const *file, int line, char const *expression, char const *function, String location, Char const *format_string, Args ...args) {
@@ -441,6 +444,11 @@ inline void tlang_assertion_failed(char const *cause, char const *file, int line
 	::tl::print("{}\n{}:{}: {} at {}\n", expression, file, line, cause, function);
 
 	immediate_error(location, format_string, args...);
+
+	auto current_node = get_current_node();
+
+	if (current_node)
+		immediate_error(dumb_get_location(current_node), "Current node:");
 
 	if (debugger_attached())
 		debug_break();

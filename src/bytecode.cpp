@@ -103,7 +103,6 @@ struct FrameBuilder {
 
 	Scope *current_scope = 0;
 
-	AstNode *current_node = 0;
 	String comment;
 
 	void init() {
@@ -143,7 +142,7 @@ struct FrameBuilder {
 
 	Register allocate_temporary_register(std::source_location location = std::source_location::current()) {
 		auto result = temporary_register_set.pop().value_or([this] {
-			invalid_code_path(current_node->location, "INTERNAL ERROR: attempt to use too many temporary registers.");
+			invalid_code_path("INTERNAL ERROR: attempt to use too many temporary registers.");
 			return 0;
 		});
 #if DEBUG_TEMPORARY_REGISTER_ALLOCATION
@@ -564,6 +563,8 @@ void FrameBuilder::copy(RegisterOrAddress dst, RegisterOrAddress src, s64 size, 
 		}
 	}
 }
+
+thread_local AstNode *current_node;
 
 Instruction *FrameBuilder::add_instruction(Instruction next) {
 #if BYTECODE_DEBUG
@@ -4460,7 +4461,7 @@ void BytecodeBuilder::append(AstLambda *lambda) {
 
 	// ls.stack_state.init(get_size(lambda->return_parameter->type));
 
-	frame.current_node = lambda;
+	scoped_replace(current_node, lambda);
 
 	auto first_instruction = count_of(builder);
 
@@ -4571,6 +4572,8 @@ frame.add_instruction(MI(_kind, __VA_ARGS__))
 
 Bytecode build_bytecode() {
 	timed_function(compiler->profiler);
+
+	get_current_node = []{ return current_node; };
 
 	assert(compiler->general_purpose_register_count != 0);
 

@@ -33,8 +33,6 @@ enum class TypecheckResult {
 	success,
 };
 
-void typecheck_global(struct CoroState *corostate, struct TypecheckState *state);
-
 u32 yield_wait_count;
 void pre_yield(TypecheckResult result) {
 	if (result == TypecheckResult::fail) {
@@ -49,12 +47,12 @@ void pre_yield(TypecheckResult result) {
 #if USE_FIBERS
 TypecheckResult fiber_result;
 bool throwing = false;
-#define PARENT_FIBER state->parent_fiber
 #define yield(x) (\
 	fiber_result = x,\
 	state->result = x,\
 	pre_yield(x),\
-	SWITCH_TO_FIBER(PARENT_FIBER),\
+	SWITCH_TO_FIBER(state->parent_fiber),\
+	current_typecheck_state = state, \
 	x == TypecheckResult::fail ? ((throwing = true, throw 0), 0) : 0\
 )
 #else
@@ -4170,6 +4168,7 @@ struct TypecheckState {
 	TypecheckState() = default;
 	TypecheckState(TypecheckState const &) = delete;
 
+	AstNode *current_node = 0;
 	AstStatement *statement = 0;
 	AstLambda *lambda = 0;
 	AstDefinition *definition = 0;
@@ -4245,6 +4244,8 @@ struct TypecheckState {
 	}
 
 };
+
+thread_local TypecheckState *current_typecheck_state;
 
 #undef push_scope
 #define push_scope(scope) \
@@ -6377,6 +6378,7 @@ bool try_typecheck(TypecheckState *state, AstExpression *expression) {
 	auto typechecker = [](LPVOID param) -> void {
 		auto params = (Params *)param;
 		auto state = params->new_state;
+		current_typecheck_state = state;
 		typecheck(state, *params->expression);
 		yield(TypecheckResult::success);
 	};
@@ -6394,6 +6396,8 @@ bool try_typecheck(TypecheckState *state, AstExpression *expression) {
 
 	while (1) {
 		SWITCH_TO_FIBER(new_state.fiber);
+		current_typecheck_state = state;
+
 		switch (fiber_result) {
 			case TypecheckResult::success: {
 				return true;
@@ -7236,6 +7240,7 @@ AstStatement *typecheck(TypecheckState *state, AstUsing *Using) {
 }
 void typecheck(TypecheckState *state, AstStatement *&statement) {
 	defer { atomic_add(&shared_progress, 1); };
+	scoped_replace(state->current_node, statement);
 	switch (statement->kind) {
 		case Ast_Return:              statement = typecheck(state, (AstReturn              *)statement); break;
 		case Ast_Yield:               statement = typecheck(state, (AstYield               *)statement); break;
@@ -10681,6 +10686,8 @@ AstExpression *typecheck(TypecheckState *state, AstBinaryOperator *bin) {
 						auto typechecker = [](LPVOID param_) -> void {
 							auto param = (TypecheckStateAndCall *)param_;
 
+							current_typecheck_state = param->state;
+
 							typecheck(param->state, param->call);
 
 							auto state = param->state;
@@ -10766,6 +10773,7 @@ AstExpression *typecheck(TypecheckState *state, AstBinaryOperator *bin) {
 
 					retry:
 						SWITCH_TO_FIBER(new_state.fiber);
+						current_typecheck_state = state;
 						switch (fiber_result) {
 							case TypecheckResult::wait: {
 								yield(TypecheckResult::wait);
@@ -10842,6 +10850,8 @@ AstExpression *typecheck(TypecheckState *state, AstBinaryOperator *bin) {
 						auto typechecker = [](LPVOID param_) -> void {
 							auto param = (TypecheckStateAndCall *)param_;
 
+							current_typecheck_state = param->state;
+
 							try {
 								typecheck(param->state, param->call);
 							} catch (...) {
@@ -10863,6 +10873,7 @@ AstExpression *typecheck(TypecheckState *state, AstBinaryOperator *bin) {
 
 					retry2:
 						SWITCH_TO_FIBER(new_state.fiber);
+						current_typecheck_state = state;
 						switch (fiber_result) {
 							case TypecheckResult::wait: {
 								yield(TypecheckResult::wait);
@@ -10886,6 +10897,7 @@ AstExpression *typecheck(TypecheckState *state, AstBinaryOperator *bin) {
 
 								retry3:
 									SWITCH_TO_FIBER(new_state.fiber);
+									current_typecheck_state = state;
 									switch (fiber_result) {
 										case TypecheckResult::wait: {
 											yield(TypecheckResult::wait);
@@ -11306,6 +11318,7 @@ AstExpression *typecheck(TypecheckState *state, AstStruct *Struct) {
 
 			auto typechecker = [](LPVOID param) -> void {
 				auto state = (TypecheckState *)param;
+				current_typecheck_state = state;
 				typecheck(state, state->statement);
 				yield(TypecheckResult::success);
 			};
@@ -11325,6 +11338,7 @@ AstExpression *typecheck(TypecheckState *state, AstStruct *Struct) {
 					continue;
 
 				SWITCH_TO_FIBER(new_state.fiber);
+				current_typecheck_state = state;
 				switch ((TypecheckResult)fiber_result) {
 					case TypecheckResult::fail: {
 						state->reporter.reports.add(new_state.reporter.reports);
@@ -11647,6 +11661,7 @@ AstExpression *typecheck(TypecheckState *state, AstTest *test) {
 
 	while (1) {
 		SWITCH_TO_FIBER(fiberstate);
+		current_typecheck_state = state;
 		switch ((TypecheckResult)fiber_result) {
 			case TypecheckResult::success: {
 				did_compile = true;
@@ -11660,6 +11675,7 @@ AstExpression *typecheck(TypecheckState *state, AstTest *test) {
 				scoped_replace(state->fiber, original_fiber);
 				fiber_result = TypecheckResult::wait;
 				SWITCH_TO_FIBER(original_parent_fiber);
+				current_typecheck_state = state;
 				break;
 			}
 			default: {
@@ -11945,6 +11961,8 @@ void typecheck(TypecheckState *state, CExpression auto &expression) {
 		assert(expression->type);
 	}};
 
+	scoped_replace(state->current_node, expression);
+
 	auto new_expression = expression;
 
 	switch (expression->kind) {
@@ -12027,11 +12045,13 @@ void typecheck(TypecheckState *state, CExpression auto &expression) {
 	expression = new_expression;
 }
 
-void typecheck_global(CoroState *corostate, TypecheckState *state) {
+void WINAPI typecheck_pooled(void *_state) {
+	auto state = (TypecheckState *)_state;
 	// Keep using pooled fibers
 	while (1) {
 		throwing = false;
 		defer { state = state->next_state; };
+		current_typecheck_state = state;
 		try {
 			push_scope(&compiler->global_scope);
 			typecheck(state, state->statement);
@@ -12040,14 +12060,6 @@ void typecheck_global(CoroState *corostate, TypecheckState *state) {
 		}
 		yield(TypecheckResult::success);
 	}
-}
-
-umm typecheck_coroutine(CoroState *corostate, umm param) {
-	typecheck_global(corostate, (TypecheckState *)param);
-	return 0;
-}
-VOID WINAPI typecheck_fiber(LPVOID lpFiberParameter) {
-	typecheck_global(0, (TypecheckState *)lpFiberParameter);
 }
 
 bool typecheck_finished;
@@ -13633,6 +13645,8 @@ restart_main:
 
 			List<FiberPoolEntry> fiber_pool;
 
+			get_current_node = []{ return current_typecheck_state ? current_typecheck_state->current_node : 0; };
+
 			while (1) {
 				for (u32 i = 0; i < typecheck_states.count; ++i) {
 					if (typechecks_finished == typecheck_states.count) {
@@ -13649,7 +13663,7 @@ restart_main:
 							state.fiber = pooled.fiber;
 							pooled.state->next_state = &state;
 						} else {
-							state.fiber = CreateFiber(4096, typecheck_fiber, &state);
+							state.fiber = CreateFiber(4096, typecheck_pooled, &state);
 							if (!state.fiber) {
 								immediate_error(state.statement->location, "INTERNAL COMPILER ERROR: Failed to create fiber");
 								return -1;
@@ -13673,6 +13687,7 @@ restart_main:
 						continue;
 #if USE_FIBERS
 					SWITCH_TO_FIBER(state.fiber);
+					current_typecheck_state = 0;
 					auto result = fiber_result;
 #else
 #undef YIELD_STATE

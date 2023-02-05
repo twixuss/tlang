@@ -1994,3 +1994,5 @@ inline AstExpression *get_container_node(Scope *scope) {
 }
 
 inline AstExpression *get_container_node(AstStatement *statement) { return get_container_node(statement->parent_scope); }
+
+inline String dumb_get_location(struct AstNode *node) { return node->location; }

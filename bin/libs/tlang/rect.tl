@@ -1,18 +1,18 @@
 import "std.tl"
 
-Rect :: struct {
-	min: V2s // inclusive
-	max: V2s // exclusive
+Rect :: struct (T: Type) {
+	min: T // inclusive
+	max: T // exclusive
 }
 
-rect :: (minx: S32, miny: S32, maxx: S32, maxy: S32) => Rect(V2s(minx, miny), V2s(maxx, maxy))
-rect :: (min: V2s, max: V2s) => Rect(min, max)
-rect :: (min: V2s, size: V2s) => Rect(min, min+size)
+rect :: (minx, miny, maxx, maxy: $T) => Rect(Vector2(T))(Vector2(T)(minx, miny), Vector2(T)(maxx, maxy))
+rect :: (min, max: Vector($T)) => Rect(Vector2(T))(min, max)
+rect :: (min, size: Vector($T)) => Rect(Vector2(T))(min, min+size)
 
 size :: (using this: Rect) => max - min
 
-extend :: (using this: *Rect, extent: V2s) => Rect(min - extent, max + extent)
+extend :: (using this: *Rect, extent: this.T) => Rect(min - extent, max + extent)
 
-in_bounds :: (using this: V2s, rect: Rect) =>
+in_bounds :: (using this: $T, rect: Rect(T)) =>
     rect.min.x <= x && x < rect.max.x &&
     rect.min.y <= y && y < rect.max.y;
