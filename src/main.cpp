@@ -689,6 +689,7 @@ struct Parser {
 	StructLayout current_struct_layout = StructLayout::tlang;
 	AstLambda *current_lambda_for_parameters = 0;
 	AstDefinition *current_parameter = 0;
+	String current_directory = {};
 
 #define ENABLE_PARSER_BREAKS 1
 	bool next() {
@@ -3909,14 +3910,62 @@ Map<String, SourceFileContext *> parsed_files;
 
 u64 total_tokens_parsed;
 
+String normalize_path(String path) {
+	auto prev_allocator = current_allocator;
+
+	List<List<utf8>> directories;
+	scoped_allocator(temporary_allocator);
+
+	auto s = path.begin();
+	if (path.count >= 2 && path[1] == ':') {
+		s += 3;
+	}
+
+	for (auto p = s; p < path.end(); ++p) {
+		if (*p == '\\' || *p == '/') {
+			auto dir = Span<utf8>{s, p};
+			s = p + 1;
+
+			if (dir.is_empty()) {
+				continue;
+			}
+
+			if (dir == "..") {
+				directories.pop();
+				continue;
+			}
+
+			directories.add(to_list(dir));
+		}
+	}
+
+	StringBuilder builder;
+	if (path.count >= 2 && path[1] == ':') {
+		append(builder, path.subspan(0, 2));
+		append(builder, '\\');
+	}
+	for (auto dir : directories) {
+		append(builder, dir);
+		append(builder, '\\');
+	}
+	append(builder, Span<utf8>{s, path.end()});
+	return (String)to_string(builder, prev_allocator);
+}
+
 // TODO: replace \ with / in paths
-SourceFileContext *parse_file(String path, String import_location) {
+SourceFileContext *parse_file(String current_directory, String import_path, String import_location) {
 	timed_function(compiler->profiler);
 
-	String full_path = make_absolute_path(path);
+	String full_path = import_path;
+
+	if (!is_absolute_path(full_path))
+		full_path = concatenate(current_directory, "\\"str, import_path);
+
 	if (!file_exists(full_path)) {
-		full_path = (String)concatenate(compiler->compiler_directory, "\\libs\\", path);
+		full_path = concatenate(compiler->compiler_directory, "\\libs\\"str, import_path);
 	}
+
+	full_path = normalize_path(full_path);
 
 	if (auto found = parsed_files.find(full_path)) {
 		return found->value;
@@ -3930,7 +3979,7 @@ SourceFileContext *parse_file(String path, String import_location) {
 
 	context->lexer.source_buffer = read_entire_file(full_path, {.extra_space_before=1, .extra_space_after=1});
 	if (!context->lexer.source_buffer.data) {
-		immediate_error(import_location, "Failed to read '{}'", full_path);
+		immediate_error(import_location, "Failed to read '{}'. Import path: '{}'", full_path, import_path);
 		context->result = ParseResult::read_error;
 		return context;
 	}
@@ -3972,6 +4021,7 @@ SourceFileContext *parse_file(String path, String import_location) {
 
 	context->parser.lexer = &context->lexer;
 	context->parser.reporter = context->lexer.reporter = &context->reporter;
+	context->parser.current_directory = parse_path(full_path).directory;
 	// context->parser.current_scope = &context->scope;
 
 	auto source_info = &::compiler->sources.add({full_path, source});
@@ -4096,7 +4146,7 @@ ParseResult parser_function(Parser *parser) {
 				return ParseResult::syntax_error;
 			}
 			auto libname = unescaped.value_unchecked();
-			auto child = parse_file(libname, parser->token->string);
+			auto child = parse_file(parser->current_directory, libname, parser->token->string);
 			// compiler->global_scope.append(child->scope);
 			parser->next();
 		} else {
@@ -9126,6 +9176,11 @@ AstExpression *typecheck(TypecheckState *state, AstIdentifier *identifier) {
 					auto definition = suitable_members[0].definition;
 					auto member = suitable_members[0].member;
 
+					wait_for(state, identifier->location, "using member type", [&] {
+						return member->type;
+					}, [&] {
+					});
+
 					identifier->possible_definitions.set(member);
 					identifier->type = member->type;
 
@@ -9259,6 +9314,8 @@ AstExpression *typecheck(TypecheckState *state, AstIdentifier *identifier) {
 		identifier->possible_definitions.set(definition);
 		identifier->type = definition->type;
 		identifier->directed = definition->expression ? definition->expression->directed : nullptr;
+
+		assert(identifier->type);
 
 		// if (definition->evaluated) {
 		// 	return definition->evaluated;
@@ -11288,6 +11345,7 @@ AstExpression *typecheck(TypecheckState *state, AstStruct *Struct) {
 					}
 					case TypecheckResult::wait: {
 						all_finished = false;
+						yield(TypecheckResult::wait);
 						break;
 					}
 				}
@@ -13510,7 +13568,7 @@ restart_main:
 	{
 		scoped_phase("Parsing");
 
-		auto parsed = parse_file("tlang/preload.tl"str, {});
+		auto parsed = parse_file(compiler->current_directory, "tlang/preload.tl"str, {});
 		if (parsed->result == ParseResult::read_error) {
 			immediate_error("Unable to read preload.tl");
 			return 1;
@@ -13519,7 +13577,7 @@ restart_main:
 
 
 		for (auto path : args.source_files) {
-			parsed = parse_file(path, {});
+			parsed = parse_file(compiler->current_directory, path, {});
 			switch (parsed->result) {
 				case ParseResult::read_error:
 				case ParseResult::alloc_error:
