@@ -64,7 +64,6 @@ bool throwing = false;
 #endif
 
 #define USE_SLABS 0
-#define NO_PROGRESS_THRESHOLD 256
 
 struct Parser;
 struct Reporter;
@@ -791,7 +790,7 @@ u32 not_typechecked_binary_operators_count;
 u32 not_typechecked_has_value_overloads_count;
 
 List<AstLambda *> implicit_casts;
-List<AstLambda *> explicit_casts;
+List<AstLambda *> typechecked_explicit_casts;
 
 struct BinaryOperatorOverload {
 	AstLambda *lambda;
@@ -4165,6 +4164,8 @@ umm append(StringBuilder &b, AstDefinition *definition) {
 	return append(b, definition->name);
 }
 
+u32 shared_progress = 0;
+
 struct TypecheckState {
 	TypecheckState() = default;
 	TypecheckState(TypecheckState const &) = delete;
@@ -4191,7 +4192,7 @@ struct TypecheckState {
 	void *fiber = 0;
 	void *parent_fiber = 0;
 
-	u32 no_progress_counter = 0;
+	u32 progress_counter = 0;
 
 	TypecheckState *next_state = 0;
 
@@ -4968,22 +4969,26 @@ AstLiteral *find_enum_value(TypecheckState *state, AstEnum *Enum, KeyString name
 	//return state->make_integer(copy(get_constant_integer(member->expression).value()), ident, location);
 }
 
-void wait_for(TypecheckState *state, String location, auto message, auto &&predicate, auto &&error_callback) {
+bool wait_for(TypecheckState *state, String location, auto message, auto &&predicate, auto &&error_callback, bool yield_failure = true) {
 	while (1) {
 		if (predicate()) {
-			state->no_progress_counter = 0;
-			break;
+			atomic_add(&shared_progress, 1);
+			return true;
 		}
 
-		if (state->no_progress_counter >= NO_PROGRESS_THRESHOLD) {
-			error_callback();
-			yield(TypecheckResult::fail);
-		}
+		auto prev_shared_progress = shared_progress;
+
 		if (compiler->print_yields) {
 			immediate_info(location, "Waiting for {}", message);
 		}
-		state->no_progress_counter += 1;
 		yield(TypecheckResult::wait);
+
+		if (prev_shared_progress == shared_progress) {
+			error_callback();
+			if (yield_failure)
+				yield(TypecheckResult::fail);
+			return false;
+		}
 	}
 }
 
@@ -5119,18 +5124,7 @@ struct TypeinfoDefinition {
 
 List<TypeinfoDefinition> typeinfo_definitinos;
 AstUnaryOperator *get_typeinfo(TypecheckState *state, AstExpression *type, String location) {
-	// NOTE: Copypasted from typecheck(AstIdentifier)
-	while (!type->type) {
-		++state->no_progress_counter;
-		if (state->no_progress_counter >= NO_PROGRESS_THRESHOLD) {
-			state->reporter.error(type->location, "Failed to resolve type.");
-			yield(TypecheckResult::fail);
-		}
-		if (compiler->print_yields) {
-			immediate_info(type->location, "Waiting for type to get typeinfo");
-		}
-		yield(TypecheckResult::wait);
-	}
+	wait_for(state, location, "typeinfo", [&] { return type->type; }, [&]{});
 
 	auto directed = direct(type);
 
@@ -5459,8 +5453,9 @@ bool implicitly_cast(TypecheckState *state, Reporter *reporter, CExpression auto
 				}
 			}
 
-			do {
-				for (auto lambda : explicit_casts) {
+			bool was_found = true;
+			was_found &= wait_for(state, expression->location, "explicit casts", [&] {
+				for (auto lambda : typechecked_explicit_casts) {
 					if (lambda->is_poly) {
 						if (match_templates(state, 0, 0, 0, lambda->return_parameter->type, dst_type, 0) &&
 							match_templates(state, 0, 0, 0, lambda->parameters[0]->type, src_type, 0)
@@ -5476,7 +5471,6 @@ bool implicitly_cast(TypecheckState *state, Reporter *reporter, CExpression auto
 								call->lambda_type = (AstLambdaType *)lambda->type;
 								expression = call;
 							}
-							state->no_progress_counter = 0;
 							return true;
 						}
 					} else {
@@ -5492,21 +5486,19 @@ bool implicitly_cast(TypecheckState *state, Reporter *reporter, CExpression auto
 								call->lambda_type = (AstLambdaType *)lambda->type;
 								expression = call;
 							}
-							state->no_progress_counter = 0;
 							return true;
 						}
 					}
 				}
 				if (not_typechecked_implicit_casts_count == 0) {
-					break;
+					was_found = false;
+					return true;
 				}
+				return false;
+			}, []{}, false);
 
-				if (compiler->print_yields) {
-					immediate_info(expression->location, "Waiting for casts");
-				}
-				++state->no_progress_counter;
-				yield(TypecheckResult::wait);
-			} while (state->no_progress_counter < NO_PROGRESS_THRESHOLD);
+			if (was_found)
+				return true;
 
 			if (reporter) {
 				reporter->error(expression->location, "Expression of type {} is not convertible to {}.", type_to_string(expression->type), type_to_string(type));
@@ -5717,7 +5709,8 @@ bool implicitly_cast(TypecheckState *state, Reporter *reporter, CExpression auto
 	if (conversion_distance)
 		*conversion_distance = TypeDistance::any_or_custom;
 
-	do {
+	bool was_found = true;
+	was_found &= wait_for(state, expression->location, "implicit casts", [&] {
 		for (auto lambda : implicit_casts) {
 			if (types_match(lambda->return_parameter->type, type) && types_match(lambda->parameters[0]->type, expression->type)) {
 				if (apply) {
@@ -5732,20 +5725,18 @@ bool implicitly_cast(TypecheckState *state, Reporter *reporter, CExpression auto
 					call->lambda_type = (AstLambdaType *)lambda->type;
 					expression = call;
 				}
-				state->no_progress_counter = 0;
 				return true;
 			}
 		}
 		if (not_typechecked_implicit_casts_count == 0) {
-			break;
+			was_found = false;
+			return true;
 		}
+		return false;
+	}, []{}, false);
 
-		if (compiler->print_yields) {
-			immediate_info(expression->location, "Waiting for casts");
-		}
-		++state->no_progress_counter;
-		yield(TypecheckResult::wait);
-	} while (state->no_progress_counter < NO_PROGRESS_THRESHOLD);
+	if (was_found)
+		return true;
 
 	if (reporter) {
 		reporter->error(expression->location, "Expression of type {} is not implicitly convertible to {}.", type_to_string(expression->type), type_to_string(type));
@@ -7096,6 +7087,14 @@ AstStatement *typecheck(TypecheckState *state, AstExpressionStatement *Expressio
 	return ExpressionStatement;
 }
 AstStatement *typecheck(TypecheckState *state, AstAssert *Assert) {
+
+	auto test = as<AstTest>(Assert->condition);
+
+	if (!test) {
+		if (auto unop = as<AstUnaryOperator>(Assert->condition))
+			test = as<AstTest>(unop->expression);
+	}
+
 	typecheck(state, Assert->condition);
 
 	if (!implicitly_cast(state, &state->reporter, &Assert->condition, compiler->builtin_bool.Struct))
@@ -7113,10 +7112,11 @@ AstStatement *typecheck(TypecheckState *state, AstAssert *Assert) {
 		}
 
 		if (result->Bool == false) {
-			if (Assert->message.data) {
-				state->reporter.error(Assert->location, "Assertion failed: {}", Assert->message);
+			if (test) {
+				state->reporter.error(Assert->location, "Assertion failed: {}. #compiles reports:", Assert->message);
+				state->reporter.reports.add(test->reports);
 			} else {
-				state->reporter.error(Assert->location, "Assertion failed");
+				state->reporter.error(Assert->location, "Assertion failed: {}", Assert->message);
 			}
 			yield(TypecheckResult::fail);
 		}
@@ -7154,7 +7154,7 @@ AstStatement *typecheck(TypecheckState *state, AstOperatorDefinition *OperatorDe
 				implicit_casts.add(OperatorDefinition->lambda);
 				not_typechecked_implicit_casts_count -= 1;
 			} else {
-				explicit_casts.add(OperatorDefinition->lambda);
+				typechecked_explicit_casts.add(OperatorDefinition->lambda);
 			}
 			break;
 		}
@@ -7235,6 +7235,7 @@ AstStatement *typecheck(TypecheckState *state, AstUsing *Using) {
 	return Using;
 }
 void typecheck(TypecheckState *state, AstStatement *&statement) {
+	defer { atomic_add(&shared_progress, 1); };
 	switch (statement->kind) {
 		case Ast_Return:              statement = typecheck(state, (AstReturn              *)statement); break;
 		case Ast_Yield:               statement = typecheck(state, (AstYield               *)statement); break;
@@ -9223,7 +9224,14 @@ AstExpression *typecheck(TypecheckState *state, AstIdentifier *identifier) {
 			assert(identifier->name == definition->name);
 
 		auto wait_iteration = [&] {
-			if (state->no_progress_counter >= NO_PROGRESS_THRESHOLD) { /* TODO: This might not be the best solution */
+			if (compiler->print_yields) {
+				immediate_info(identifier->location, "Waiting for identifier");
+			}
+
+			auto old_progress = shared_progress;
+			yield(TypecheckResult::wait);
+
+			if (old_progress == shared_progress) {
 				if (state->currently_typechecking_definition && state->currently_typechecking_definition->name == identifier->name) {
 					state->reporter.error(identifier->location, "Can't use object while defining it.");
 					state->reporter.info(state->currently_typechecking_definition->location, "Declared here:");
@@ -9264,11 +9272,6 @@ AstExpression *typecheck(TypecheckState *state, AstIdentifier *identifier) {
 				}
 				yield(TypecheckResult::fail);
 			}
-			if (compiler->print_yields) {
-				immediate_info(identifier->location, "Waiting for identifier");
-			}
-			state->no_progress_counter++;
-			yield(TypecheckResult::wait);
 		};
 
 		if (definitions.count) {
@@ -9277,9 +9280,11 @@ AstExpression *typecheck(TypecheckState *state, AstIdentifier *identifier) {
 					wait_iteration();
 				}
 			}
-			state->no_progress_counter = 0;
+
 			for (auto definition : definitions)
 				assert(identifier->name == definition->name);
+
+			atomic_add(&shared_progress, 1);
 			break;
 		}
 
@@ -9292,25 +9297,10 @@ AstExpression *typecheck(TypecheckState *state, AstIdentifier *identifier) {
 	if (definitions.count == 1) {
 		auto definition = definitions[0];
 		assert(definition->type);
-#if 0
-		if (!definition->type->type) {
-			// This is probably due to errors while typecheching definition.
-			yield(TypecheckResult::fail);
-		}
-#else
-		while (!definition->type->type) {
-			++state->no_progress_counter;
-			if (state->no_progress_counter >= NO_PROGRESS_THRESHOLD) {
-				state->reporter.error(definition->type->location, "Failed to resolve this type.");
-				state->reporter.info(identifier->location, "While typechecking this identifier.");
-				yield(TypecheckResult::fail);
-			}
-			if (compiler->print_yields) {
-				immediate_info(definition->type->location, "Waiting for type (ident)");
-			}
-			yield(TypecheckResult::wait);
-		}
-#endif
+		wait_for(state, identifier->location, "definition type type", [&]{ return definition->type->type; }, [&]{
+			state->reporter.error(definition->type->location, "Failed to resolve this type.");
+			state->reporter.info(identifier->location, "While typechecking this identifier.");
+		});
 		identifier->possible_definitions.set(definition);
 		identifier->type = definition->type;
 		identifier->directed = definition->expression ? definition->expression->directed : nullptr;
@@ -10253,8 +10243,9 @@ AstExpression *typecheck(TypecheckState *state, AstBinaryOperator *bin) {
 					}
 				}
 
-				do {
-					for (auto lambda : explicit_casts) {
+				AstExpression *result = 0;
+				wait_for(state, bin->location, "explicit casts", [&] {
+					for (auto lambda : typechecked_explicit_casts) {
 						if (types_match(lambda->return_parameter->type, dst_type) && types_match(lambda->parameters[0]->type, src_type)) {
 							auto call = AstCall::create();
 							call->location = cast->location;
@@ -10264,20 +10255,18 @@ AstExpression *typecheck(TypecheckState *state, AstBinaryOperator *bin) {
 							call->type = dst_type;
 							assert(lambda->type->kind == Ast_LambdaType);
 							call->lambda_type = (AstLambdaType *)lambda->type;
-							state->no_progress_counter = 0;
-							return call;
+							result = call;
+							return true;
 						}
 					}
 					if (not_typechecked_implicit_casts_count == 0) {
-						break;
+						return true;
 					}
+					return false;
+				}, []{}, false);
 
-					if (compiler->print_yields) {
-						immediate_info(bin->location, "Waiting for casts");
-					}
-					++state->no_progress_counter;
-					yield(TypecheckResult::wait);
-				} while (state->no_progress_counter < NO_PROGRESS_THRESHOLD);
+				if (result)
+					return result;
 
 				state->reporter.error(
 					cast->location,
@@ -10935,11 +10924,11 @@ AstExpression *typecheck(TypecheckState *state, AstBinaryOperator *bin) {
 			};
 			List<Candidate> candidates;
 
-			while (state->no_progress_counter < NO_PROGRESS_THRESHOLD) {
+			wait_for(state, bin->location, "binary overload", [&] {
+				candidates.clear();
+
 				auto found = binary_operators.find(bin->operation);
 				if (found) {
-					state->no_progress_counter = 0;
-
 					for (auto overload : found->value) {
 						if (
 							implicitly_cast(state, 0, &bin->left,  overload.lambda->parameters[0]->type, 0, false) &&
@@ -10948,15 +10937,15 @@ AstExpression *typecheck(TypecheckState *state, AstBinaryOperator *bin) {
 							candidates.add({overload});
 						}
 					}
+
+					// nocheckin there was no return before
+					return true;
 				}
 				if (not_typechecked_binary_operators_count == 0)
-					break;
-				if (compiler->print_yields) {
-					immediate_info(bin->location, "Waiting for operator overloads");
-				}
-				++state->no_progress_counter;
-				yield(TypecheckResult::wait);
-			}
+					return true;
+
+				return false;
+			}, []{}, false);
 
 			if (candidates.count == 0) {
 				switch (bin->operation) {
@@ -10983,12 +10972,11 @@ AstExpression *typecheck(TypecheckState *state, AstBinaryOperator *bin) {
 							case bsrass:  return bsr;
 							default: return count;
 						}}();
-						state->no_progress_counter = 0;
-						while (state->no_progress_counter < NO_PROGRESS_THRESHOLD) {
+
+						wait_for(state, bin->location, "binary overload", [&] {
+							candidates.clear();
 							auto found = binary_operators.find(operation);
 							if (found) {
-								state->no_progress_counter = 0;
-
 								for (auto overload : found->value) {
 									if (
 										implicitly_cast(state, 0, &bin->left,  overload.lambda->parameters[0]->type, 0, false) &&
@@ -10997,15 +10985,15 @@ AstExpression *typecheck(TypecheckState *state, AstBinaryOperator *bin) {
 										candidates.add({overload, true});
 									}
 								}
+
+								// nocheckin there was no return before
+								return true;
 							}
 							if (not_typechecked_binary_operators_count == 0)
-								break;
-							if (compiler->print_yields) {
-								immediate_info(bin->location, "Waiting for operator overloads");
-							}
-							++state->no_progress_counter;
-							yield(TypecheckResult::wait);
-						}
+								return true;
+							return false;
+						}, []{}, false);
+
 						break;
 					}
 				}
@@ -11653,7 +11641,7 @@ AstExpression *typecheck(TypecheckState *state, AstTest *test) {
 
 	auto original_reporter = state->reporter;
 	state->reporter = {};
-	defer { state->reporter = original_reporter; };
+	defer { test->reports = state->reporter.reports; state->reporter = original_reporter; };
 
 	bool did_compile = false;
 
@@ -11666,7 +11654,6 @@ AstExpression *typecheck(TypecheckState *state, AstTest *test) {
 			}
 			case TypecheckResult::fail: {
 				did_compile = false;
-				state->no_progress_counter = 0;
 				goto _break;
 			}
 			case TypecheckResult::wait: {
@@ -11951,6 +11938,9 @@ void typecheck(TypecheckState *state, CExpression auto &expression) {
 	if (expression->type) {
 		return;
 	}
+
+	defer { atomic_add(&shared_progress, 1); };
+
 	defer { if (!throwing) {
 		assert(expression->type);
 	}};
@@ -12023,18 +12013,10 @@ void typecheck(TypecheckState *state, CExpression auto &expression) {
 				yield(TypecheckResult::fail);
 			assert(new_expression->type);
 
-			// NOTE: Copypasted from typecheck(AstIdentifier)
-			while (!new_expression->type->type) {
-				++state->no_progress_counter;
-				if (state->no_progress_counter >= NO_PROGRESS_THRESHOLD) {
-					state->reporter.error(new_expression->location, "Failed to resolve type of type of this expression.");
-					yield(TypecheckResult::fail);
-				}
-				if (compiler->print_yields) {
-					immediate_info(new_expression->type->location, "Waiting for type (expr)");
-				}
-				yield(TypecheckResult::wait);
-			}
+
+			wait_for(state, new_expression->location, "expression type type", [&]{ return new_expression->type->type; }, [&]{
+				state->reporter.error(new_expression->location, "Failed to resolve type of type of this expression.");
+			});
 
 			if (!direct(new_expression->type))
 				yield(TypecheckResult::fail);
@@ -13356,7 +13338,7 @@ restart_main:
 	construct(import_paths);
 
 	construct(implicit_casts);
-	construct(explicit_casts);
+	construct(typechecked_explicit_casts);
 	construct(binary_operators);
 	construct(has_value_overloads);
 

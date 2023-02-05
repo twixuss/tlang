@@ -857,6 +857,7 @@ struct AstTest : AstExpression, ExpressionPool<AstTest> {
 	}
 
 	Scope *scope;
+	List<Report> reports;
 };
 
 struct AstAssert : AstStatement, StatementPool<AstAssert> {
