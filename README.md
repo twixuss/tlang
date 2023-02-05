@@ -1,5 +1,7 @@
 
 # tlang
+tlang is a compiled language, intended to be simple, expressive and easy to use.
+
 Inspired by jai, odin, zig, nim and other languages.
 # Hello world!
 ```java
@@ -25,7 +27,7 @@ The only thing that's different is that you can have nested multiline comments.
 # Identifiers
 An identifier is a name that references something.
 
-It's first symbol can't be a number. Examples:
+Its first symbol can't be a number. Examples:
 ```java
 x
 hello_mister_123
@@ -166,8 +168,6 @@ add :: (a, b: Int) => a + b // Here `add` is a regular function
 add := (a, b: Int) => a + b // Here `add` is a function pointer, that can later be reassigned.
 ```
 
-#### TODO: default arguments.
-
 ### Using lambdas
 To call a function `add` which we wrote in the previous chapter, we can use the following syntax:
 ```java
@@ -187,6 +187,57 @@ add(1, 2) // Free syntax
 1 add 2   // Binary (infix) syntax (obviously only for functions with 2 arguments)
 ```
 All of these are available by default.
+## Uniform function call syntax
+All functions you write are freestanding. If a function satisfies syntax's rules,
+it is callable with that syntax by default, without any extra declarations.
+### Member
+Any free function with at least
+one parameter is callable using member call syntax:
+```java
+fma :: (a, b, c: Int) => a * b + c
+
+1.fma(2, 3) // a = 1, b = 2, c = 3
+```
+First parameter to such function can be a pointer. In that case,
+if the expression before the dot is addressable, its address is
+implicitly taken, otherwise the value is put on the stack and only then its address is taken:
+```java
+Vector2 :: struct { x, y: Float }
+length :: (using v: Vector2) => sqrt(x*x + y*y)
+
+normalized :: (v: Vector2) => v / v.length() // v is passed by value
+                                             // and can not be modified.
+
+normalize :: (v: *Vector2) { *v = v.normalized() } // v is passed by pointer
+                                                   // and can be modified.
+
+a := Vector2(1, 2)
+a.normalize() // a is modified
+
+println(Vector2(3, 4).normalize()) // `Vector2(3, 4)` is not addressable,
+                                   // so it is put on the stack
+```
+### Infix
+Any free function with exactly
+two parameters is callable using infix syntax:
+```java
+add :: (a, b: Int) => a + b
+
+println(1 add 2)
+```
+How this operator behaves with other operators is described in [Operator precedence](#operator-precedence) section
+
+Note: I think this feature is not worth it, because it makes error messages terrible
+if you for example forgot `then` keyword in an `if` statement.
+## Default arguments
+Any parameter in a lambda can be assigned a default value. If an argument was not provided
+for that parameter when calling this function, the default will be used.
+```java
+foo :: (a: Int = 5) => println(a)
+
+foo()   // prints 5
+foo(42) // prints 42
+```
 ## Variadics
 There is a way to say that a lambda accepts an unknown number of arguments:
 ```java
@@ -205,107 +256,6 @@ foo(true, "hello", "world")
 ```
 There must be a clear boundary between variadics. If the types are implicitly convertible,
 the compiler will not be able to disambiguate the argument order.
-## Templates
-### TODO: Constraints
-
-Templates are used to avoid code duplication.
-Consider the following example:
-```java
-add :: (a, b: Int) => a + b
-add :: (a, b: Float) => a + b
-```
-Bodies of those functions are identical, only argument types are different.
-### Type templates
-We can reduces this to a single function by using a templated type:
-```java
-add :: (a, b: $T) => a + b
-```
-Here $T introduces a type that is not known yet. Because it isn't,
-that function is not processed by the compiler until someone uses it.
-```java
-add(1, 2)
-```
-Now that we called this function, the compiler will do the copy-pasting for us -
-it will replace $T with Int.
-So now we can call `add` with other types without having to reimplement it:
-```java
-add(1.2, 3.4) // calls add(Float, Float).
-```
-### Constant templates
-You can force the parameter to be constant by using `%`:
-```java
-get :: (value: %Int) {
-  arr: [value]String
-  return arr
-}
-```
-
-To call this function, you'll have to pass a constant to it.
-```java
-get(12) // ok
-x := 12
-get(x) // error, x is not constant.
-```
-For every unique constant you pass in, a copy of the template will be instantiated. This can be used not only with values, but also types:
-```java
-new :: (T: %Type): *T {
-  return malloc(#sizeof T) as *T
-}
-```
-## Overloading
-### Basics
-This language allows multiple definitions in one scope to have the same name.
-This is mostly used with functions, because in most other cases you will not be able to differentiate the definitions.
-There are tree ways of overloading functions.
-1) Different number of arguments.
-```java
-foo :: (a: Int)
-foo :: (a, b: Int)
-
-foo(1)    // Calls the first one
-foo(1, 2) // Calls the second one
-```
-2) Different argument types.
-```java
-foo :: (a: Int)
-foo :: (a: String)
-
-foo(1)   // Calls the first one
-foo("a") // Calls the second one
-```
-3) Different argument names.
-```java
-foo :: (a: Int)
-foo :: (b: Int)
-
-foo(a=1) // Calls the first one
-foo(b=1) // Calls the second one
-// foo(1)  // Ambiguous, does not compile.
-```
-### Resolution
-There are rules for overload resolution regarding variadics, templates and `Any` type.
-Compiler collects all information about possible overloads and selects one as follows:
-1) If argument types match exactly, that overload is picked.
-2) Regular arguments are preferred to variadic.
-3) Template is preferred to Any
-```java
-foo :: (a: Int)
-foo :: (a: $T)
-foo :: (a: Any)
-
-foo(1) // Calls foo(Int)
-foo("hello") // Calls foo($T)
-x: Any = 1
-foo(x) // Calls foo(Any)
-```
-```java
-foo :: (a: Int)
-foo :: (a: ..Int)
-
-foo()     // Calls foo(..Int)
-foo(1)    // Calls foo(Int)
-foo(2, 3) // Calls foo(..Int)
-```
 ## External functions
 ```java
 import "windows.tl"
@@ -316,12 +266,13 @@ import "windows.tl"
 OpenFile :: (...) ... #stdcall
 // functions without a body will be searched for in extern libraries.
 ```
-Windows uses stdcall convention, so #stdcall directive says to use stdcall calling
-convention for this function. if you want to add a lot more functions with this
+Windows uses stdcall convention, so #stdcall directive says to use that calling
+convention for this function. If you want to add a lot more functions with this
 convention, you don't have to write #stdcall for every function. Instead you can write
 the following statement:
 ```java
 #stdcall
+// define all stdcall functions
 ```
 This directive says to use stdcall calling convention for ALL following functions. if you want to restore language default calling convention, use `#tlangcall` directive.
 # Structs
@@ -400,7 +351,7 @@ at compile time, prefix `if` with a `#`:
 #if condition then do_stuff()
 else do_other_stuff()
 ```
-Compiler has to evaluate `condition` at compile time, and depending on it's value it
+Compiler has to evaluate `condition` at compile time, and depending on its value it
 will only keep a single branch in the executable.
 ## If expression
 ```java
@@ -446,6 +397,140 @@ match x {
 Only constant integers and enums are supported right now.
 Matching an enum without default case is going to throw a warning if not all cases are handled.
 Maybe I'll add a way to match with default case and the checks.
+# Templates
+Templates are used to avoid code duplication.
+A template is not a real lambda or struct, it is a 'recipe' of how to create one.
+
+A struct template is made by providing a parameter list after `struct` keyword.
+
+A lambda template is made by making its parameter constant, or by introducing a deducable type.
+## Constant parameters
+You can force a parameter to be constant by using `%`:
+```java
+func :: (value: %Int) {
+  arr: [value]String
+  // do something with arr
+}
+```
+
+To call this function, you'll have to pass a constant to it.
+```java
+get(12) // ok
+x := 12
+get(x) // error, x is not constant.
+```
+For every unique constant you pass in, a copy of the template will be instantiated. This can be used not only with values, but also types:
+```java
+new :: (T: %Type): *T {
+  return malloc(#sizeof T) as *T
+}
+
+a := new(Int)
+```
+## Struct templates
+Structs can be templated like this:
+```java
+Vector2 :: struct (Scalar: Type) {
+  x, y: Scalar
+}
+```
+Now `Vector2` is a struct template, which can be instantiated with parameters specified in parentheses:
+```java
+a: Vector2(Float)
+
+b := Vector2(Int)(x=1, y=2)
+```
+## Deducable templates
+Consider the following example:
+```java
+add :: (a, b: Int) => a + b
+add :: (a, b: Float) => a + b
+```
+Bodies of these functions are identical, only argument types are different.
+We could reduce this to a single function by using a constant type:
+```java
+add :: (T: %Type, a, b: T) => a + b
+
+add(Int, 1, 2)
+add(Float, 1.2, 2.3)
+```
+It works, but you always have to explicitly specify the type. It would be nice if compiler
+automatically deduced the type for us:
+```java
+add :: (a, b: $T) => a + b
+
+add(1, 2) // instantiates add with T = Int
+add(1.2, 3.4) // instantiates add with T = Float
+```
+`$T` introduces a deducable type `T`. It will be matched to argument's type.
+## Constraints
+You can constran a template parameter of a lambda:
+```java
+length :: (v: Vector2($T)) => sqrt(v.x*v.x + v.y*v.y)
+```
+`length` can only be called with a `Vector2`, any other type will not match this.
+
+In the above example `($T)` may be omitted:
+```java
+length :: (v: Vector2) => sqrt(v.x*v.x + v.y*v.y)
+```
+In that case compiler sees that `Vector2` is a
+template struct, and automatically makes this lambda a template. You will not
+be able to use `T` directly anymore, but you could access it through `v.Scalar`.
+# Overloading
+## Basics
+This language allows multiple definitions in one scope to have the same name.
+This is mostly used with functions, because in most other cases you will not be able to differentiate the definitions.
+There are tree ways of overloading functions.
+1) Different number of arguments.
+```java
+foo :: (a: Int)
+foo :: (a, b: Int)
+
+foo(1)    // Calls the first one
+foo(1, 2) // Calls the second one
+```
+2) Different argument types.
+```java
+foo :: (a: Int)
+foo :: (a: String)
+
+foo(1)   // Calls the first one
+foo("a") // Calls the second one
+```
+3) Different argument names.
+```java
+foo :: (a: Int)
+foo :: (b: Int)
+
+foo(a=1) // Calls the first one
+foo(b=1) // Calls the second one
+// foo(1)  // Ambiguous, does not compile.
+```
+## Resolution
+There are rules for overload resolution regarding variadics, templates and `Any` type.
+Compiler collects all information about possible overloads and selects one as follows:
+1) If argument types match exactly, that overload is picked.
+2) Regular arguments are preferred to variadic.
+3) Template is preferred to Any
+```java
+foo :: (a: Int)
+foo :: (a: $T)
+foo :: (a: Any)
+
+foo(1) // Calls foo(Int)
+foo("hello") // Calls foo($T)
+x: Any = 1
+foo(x) // Calls foo(Any)
+```
+```java
+foo :: (a: Int)
+foo :: (a: ..Int)
+
+foo()     // Calls foo(..Int)
+foo(1)    // Calls foo(Int)
+foo(2, 3) // Calls foo(..Int)
+```
 # Whitespace and semicolons
 Spaces and tabs are not significant:
 ```java
@@ -691,11 +776,11 @@ big_value :: 1 << 1000 // this won't fit in any sized integer type
 println(big_value) // error, does not fit into any type
 println(big_value >> 1000)// ok, prints 1
 ```
-Note that checks for too big numbers is not fully implemented yet, so be careful to not use all your RAM.
+Note that checks for too big numbers is not fully implemented yet, so be careful to not overflow your RAM.
 
 # Using
 `using` is a keyword that can be used before a definition or an identifier.
-All it does is it brings all inner names from the definition inside the current scope.
+It brings all inner names from the definition inside the current scope.
 ```java
 Vector3 :: struct { x,y,z: Float }
 
@@ -769,45 +854,49 @@ ptr: (): Int #type
 // ambiguous if it's a type or a lambda without a body.
 // So to distinguish between them we have to use #type directive.
 ```
-# Uniform function call syntax
-All functions you write are free. If a function follows specific syntax rules,
-it is callable with that syntax by default, without any extra declarations.
-## Member
-Any free function with at least
-one parameter is callable using member call syntax:
+# Implicit addressing and dereferencing
 ```java
-fma :: (a, b, c: Int) => a * b + c
+by_value :: (v: Int) => v * 2
+by_pointer :: (v: *Int) => *v * 2
 
-1.fma(2, 3) // a = 1, b = 2, c = 3
+x := 1
+
+by_pointer(x) // address of x is implicitly taken
+
+ptr := &x
+
+by_value(ptr) // ptr is implicitly dereferenced
 ```
-First parameter to such function can be a pointer. In that case,
-if the expression before the dot is addressable, it's address is
-implicitly taken, otherwise the value is put on the stack and only then it's address is taken:
+
+# Properties
+A property is a pair of `get`/`set` methods.
+
+To make a getter define a function that starts with `get_` and has one parameter:
 ```java
-Vector2 :: struct { x, y: Float }
-length :: (using v: Vector2) => sqrt(x*x + y*y)
-
-normalized :: (v: Vector2) => v / v.length() // v is passed by value
-                                             // and can not be modified.
-
-normalize :: (v: *Vector2) { *v = v.normalized() } // v is passed by pointer
-                                                   // and can be modified.
-
-a := Vector2(1, 2)
-a.normalize() // a is modified
-
-println(Vector2(3, 4).normalize()) // `Vector2(3, 4)` is not addressable,
-                                   // so it is put on the stack
+get_length :: (v: Vector) => sqrt(v.x*v.x + v.y*v.y)
 ```
-## Infix
-Any free function with exactly
-two parameters is callable using infix syntax:
+This property is now accessible just like a member of a struct:
 ```java
-add :: (a, b: Int) => a + b
+v: Vector(1, 2)
 
-println(1 add 2)
+println(v.length)
+
+// v.length is transformed into get_length(v)
+
+// Note that v.get_length() and get_length(v) are still valid
 ```
-How this operator behaves with other operators is described in [Operator precedence](#operator-precedence) section
+Setters are defined similarly, by prefixing a function with `set_`, but taking two parameters instead:
+```java
+set_length :: (v: *Vector, l: Float) => *v = *v * (l / v.length)
+
+v.length = 5 // This becomes set_length(&v, 5)
+
+v.length *= 10 // This becomes set_length(&v, get_length(v) * 10)
+
+```
+Note that getter can take the first parameter by pointer, and setter does not have to (not sure why but it's possible).
+
+Also it doesn't have to be a pair. You may have only getter or only setter.
 
 # Operator precedence
 All binary operators are left associative and have following precedence:
@@ -832,7 +921,7 @@ a = b + c * d dot e              (a = (b + (c * (d dot e))))
 This language provides a lot of implicit conversions to simplify things,
 for example from array to span, or from any type to `Any` type, etc.
 These conversions require taking a pointer to something, which is fine if
-that something is for example a stack variable, just take it's address.
+that something is for example a stack variable, just take its address.
 However, what if conversion from a non-addressable value happens?
 ```java
 foo :: (x: Any) { ... }

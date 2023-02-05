@@ -43,7 +43,6 @@ e(Using) \
 e(ArrayInitializer) \
 e(Yield) \
 e(Array) \
-e(PropertyAccess) \
 
 enum AstKind : u8 {
 	Ast_Unknown = 0,
@@ -723,6 +722,7 @@ struct AstBinaryOperator : AstExpression, ExpressionPool<AstBinaryOperator> {
 	}
 
 	BinaryOperation operation = {};
+	bool is_property : 1 = false;
 
 	Expression<> left = {};
 	Expression<> right = {};
@@ -974,16 +974,6 @@ struct AstArrayInitializer : AstExpression, ExpressionPool<AstArrayInitializer> 
 	}
 
 	SmallList<AstExpression *> elements = {};
-};
-
-struct AstPropertyAccess : AstExpression, ExpressionPool<AstPropertyAccess> {
-	AstPropertyAccess() {
-		kind = Ast_PropertyAccess;
-	}
-
-	Expression<AstBinaryOperator> binary_operator = {};
-	Expression<AstLambda> getter = {};
-	Expression<AstLambda> setter = {};
 };
 
 struct BuiltinStruct {

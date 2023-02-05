@@ -208,8 +208,11 @@ is_infinity :: (v: F64) => v bitas U64 == 0x7ff0000000000000
 
 absolute :: (v: F32) => (v bitas U32 & 0x7fff_ffff) bitas F32
 
-sign :: (v: F32) F32 => if (v bitas U32)[31] then -1 else +1
-set_sign :: (v: F32, s: F32) => (v bitas U32 & 0x7fff_ffff) | (s bitas U32 & 0x8000_0000)
+get_sign :: (v: F32) F32 => if (v bitas U32)[31] then -1 else +1
+set_sign :: (v: F32, s: F32) => ((v bitas U32 & 0x7fff_ffff) | (s bitas U32 & 0x8000_0000)) bitas F32
+
+get_length :: (v: F32) => absolute(v)
+set_length :: (v: F32, new_length: F32) => v.sign * new_length
 
 stringize :: (_val: F64, state: *Void, callback: StringizeCallback) {
     bytes_written: Int
@@ -406,6 +409,9 @@ stringize :: (value: Any, state: *Void, callback: StringizeCallback) Int {
 		.\struct => {
 			if info.name == "String" {
 				return callback(state, *(value.pointer as *String))
+            } else if info.name.starts_with("Span") {
+                span := *(value.pointer as *[]U8)
+                return stringize_span(span.data, span.count, info.parameters[0], state, callback)
             } else if info.name.starts_with("LinkedList") {
                 bytes_written: Int
 
@@ -699,16 +705,28 @@ read_entire_file :: (path: *U8) using result: String {
 
 Vector2 :: struct(T: Type) {
     x, y: T
-    r, g: T #at x
 }
 
-vector2 :: (x: $T, y: T) => Vector2(T)(x, y)
-vector2 :: (v: $T) => Vector2(T)(v, v)
+Vector3 :: struct(T: Type) {
+    x, y, z: T
+}
 
-operator + :: (a: Vector2($T), b: Vector2(T)) => Vector2(T)(a.x + b.x, a.y + b.y)
-operator - :: (a: Vector2($T), b: Vector2(T)) => Vector2(T)(a.x - b.x, a.y - b.y)
-operator * :: (a: Vector2($T), b: Vector2(T)) => Vector2(T)(a.x * b.x, a.y * b.y)
-operator / :: (a: Vector2($T), b: Vector2(T)) => Vector2(T)(a.x / b.x, a.y / b.y)
+Vector4 :: struct(T: Type) {
+    x, y, z, w: T
+}
+
+vector2 :: (x, y: $T) => Vector2(T)(x, y)
+vector3 :: (x, y, z: $T) => Vector3(T)(x, y, z)
+vector4 :: (x, y, z, w: $T) => Vector4(T)(x, y, z, w)
+
+vector2 :: (v: $T) => Vector2(T)(v, v)
+vector3 :: (v: $T) => Vector3(T)(v, v, v)
+vector4 :: (v: $T) => Vector4(T)(v, v, v, v)
+
+operator + :: (a, b: Vector2($T)) => Vector2(T)(a.x + b.x, a.y + b.y)
+operator - :: (a, b: Vector2($T)) => Vector2(T)(a.x - b.x, a.y - b.y)
+operator * :: (a, b: Vector2($T)) => Vector2(T)(a.x * b.x, a.y * b.y)
+operator / :: (a, b: Vector2($T)) => Vector2(T)(a.x / b.x, a.y / b.y)
 
 operator + :: (a: Vector2($T), b: T) => Vector2(T)(a.x + b, a.y + b)
 operator - :: (a: Vector2($T), b: T) => Vector2(T)(a.x - b, a.y - b)
@@ -720,24 +738,71 @@ operator - :: (a: $T, b: Vector2(T)) => Vector2(T)(a - b.x, a - b.y)
 operator * :: (a: $T, b: Vector2(T)) => Vector2(T)(a * b.x, a * b.y)
 operator / :: (a: $T, b: Vector2(T)) => Vector2(T)(a / b.x, a / b.y)
 
+operator + :: (a, b: Vector3($T)) => Vector3(T)(a.x + b.x, a.y + b.y, a.z + b.z)
+operator - :: (a, b: Vector3($T)) => Vector3(T)(a.x - b.x, a.y - b.y, a.z - b.z)
+operator * :: (a, b: Vector3($T)) => Vector3(T)(a.x * b.x, a.y * b.y, a.z * b.z)
+operator / :: (a, b: Vector3($T)) => Vector3(T)(a.x / b.x, a.y / b.y, a.z / b.z)
+
+operator + :: (a, b: Vector4($T)) => Vector4(T)(a.x + b.x, a.y + b.y, a.z + b.z, a.w + b.w)
+operator - :: (a, b: Vector4($T)) => Vector4(T)(a.x - b.x, a.y - b.y, a.z - b.z, a.w - b.w)
+operator * :: (a, b: Vector4($T)) => Vector4(T)(a.x * b.x, a.y * b.y, a.z * b.z, a.w * b.w)
+operator / :: (a, b: Vector4($T)) => Vector4(T)(a.x / b.x, a.y / b.y, a.z / b.z, a.w / b.w)
+
+operator as explicit :: (using from: Vector2(S32)) => Vector2(F32)(@x, @y)
+operator as explicit :: (using from: Vector2(F32)) => Vector2(S32)(@x, @y)
+
+get_data :: (using v: *Vector2) => &x
+get_data :: (using v: *Vector3) => &x
+get_data :: (using v: *Vector4) => &x
+
+get_length :: (using v: Vector2) => sqrt(x*x + y*y)
+get_length :: (using v: Vector3) => sqrt(x*x + y*y + z*z)
+get_length :: (using v: Vector4) => sqrt(x*x + y*y + z*z + w*w)
+
+set_length :: (v: *Vector2, new_length: F32) => *v *= new_length / v.length
+set_length :: (v: *Vector3, new_length: F32) => *v *= new_length / v.length
+set_length :: (v: *Vector4, new_length: F32) => *v *= new_length / v.length
+
+get_normalized :: (v: Vector2) => v / v.length
+get_normalized :: (v: Vector3) => v / v.length
+get_normalized :: (v: Vector4) => v / v.length
+
+get_r :: (v: Vector2) => v.x
+get_r :: (v: Vector3) => v.x
+get_r :: (v: Vector4) => v.x
+
+get_g :: (v: Vector2) => v.y
+get_g :: (v: Vector3) => v.y
+get_g :: (v: Vector4) => v.y
+
+get_b :: (v: Vector2) => v.z
+get_b :: (v: Vector3) => v.z
+get_b :: (v: Vector4) => v.z
+
+get_a :: (v: Vector2) => v.w
+get_a :: (v: Vector3) => v.w
+get_a :: (v: Vector4) => v.w
+
+set_r :: (v: *Vector2($T), n: T) => v.x = n
+set_r :: (v: *Vector3($T), n: T) => v.x = n
+set_r :: (v: *Vector4($T), n: T) => v.x = n
+
+set_g :: (v: *Vector2($T), n: T) => v.y = n
+set_g :: (v: *Vector3($T), n: T) => v.y = n
+set_g :: (v: *Vector4($T), n: T) => v.y = n
+
+set_b :: (v: *Vector2($T), n: T) => v.z = n
+set_b :: (v: *Vector3($T), n: T) => v.z = n
+set_b :: (v: *Vector4($T), n: T) => v.z = n
+
+set_a :: (v: *Vector2($T), n: T) => v.w = n
+set_a :: (v: *Vector3($T), n: T) => v.w = n
+set_a :: (v: *Vector4($T), n: T) => v.w = n
+
 // I found an interesting thing:
 // If you have an arbitrary quad (not necessarily flat),
 // and connect midpoints of it's edges,
 // you get another quad, that always lies flat on some plane.
-
-Vector3 :: struct(T: Type) {
-    x, y, z: T
-    r, g, b: T #at x
-}
-
-vector3 :: (x: $T, y: T, z: T) => Vector3(T)(x, y, z)
-vector3 :: (v: $T) => Vector3(T)(v, v, v)
-
-operator + :: (a: Vector3($T), b: Vector3(T)) => Vector3(T)(a.x + b.x, a.y + b.y, a.z + b.z)
-operator - :: (a: Vector3($T), b: Vector3(T)) => Vector3(T)(a.x - b.x, a.y - b.y, a.z - b.z)
-operator * :: (a: Vector3($T), b: Vector3(T)) => Vector3(T)(a.x * b.x, a.y * b.y, a.z * b.z)
-operator / :: (a: Vector3($T), b: Vector3(T)) => Vector3(T)(a.x / b.x, a.y / b.y, a.z / b.z)
-
 
 
 RGB_U8 :: Vector3(U8)
