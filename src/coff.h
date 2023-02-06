@@ -324,7 +324,7 @@ inline umm append(StringBuilder &builder, coff::Reader reader) {
 		result += append_format(builder, "  Number of relocations:  {}\n", section.NumberOfRelocations);
 		result += append_format(builder, "  Number of linenumbers:  {}\n", section.NumberOfLinenumbers);
 		result += append_format(builder, "  Characteristics:        {}\n", with(temporary_allocator, coff::section_characteristics_to_string(section.Characteristics)));
-		result += append_format(builder, "  Data:                   {}\n", FormatSpan<u8, FormatInt<u8>>{.value=Span(reader.buffer.data + section.PointerToRawData, section.SizeOfRawData), .format=FormatInt<u8>{.radix=16,.leading_zero_count=2}});
+		result += append_format(builder, "  Data:                   {}\n", FormatSpan<u8, umm, FormatInt<u8>>{.value=Span(reader.buffer.data + section.PointerToRawData, section.SizeOfRawData), .format=FormatInt<u8>{.radix=16,.leading_zero_count=2}});
 		result += append       (builder, "  Relocations:\n");
 		result += append_format(builder, "    {} {} {}\n",
 			Format<const char *, char>("VirtualAddress",   {FormatAlign_left, ' ', 20}),

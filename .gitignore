@@ -11,3 +11,4 @@ bin/*
 !bin/nasm.exe
 devtest/
 *.args.json
+notes.txt

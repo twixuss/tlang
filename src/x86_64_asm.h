@@ -105,15 +105,15 @@ inline umm append_instruction(StringBuilder &builder, s64 idx, Instruction i) {
 			return append_format(builder, "mov dword{},{}\nmov dword{},{}", i.d, (u32)i.s, i.d + 4, (u32)(i.s >> 32));
 		}
 
-		case mov1_rm: return append_format(builder, "mov {},{}", part1b(i.mov1_rm.d), i.mov1_rm.s);
-		case mov2_rm: return append_format(builder, "mov {},{}", part2b(i.mov2_rm.d), i.mov2_rm.s);
-		case mov4_rm: return append_format(builder, "mov {},{}", part4b(i.mov4_rm.d), i.mov4_rm.s);
-		case mov8_rm: return append_format(builder, "mov {},{}", part8b(i.mov8_rm.d), i.mov8_rm.s);
+		case mov1_rm: return append_format(builder, "mov {},byte {}", part1b(i.mov1_rm.d), i.mov1_rm.s);
+		case mov2_rm: return append_format(builder, "mov {},word {}", part2b(i.mov2_rm.d), i.mov2_rm.s);
+		case mov4_rm: return append_format(builder, "mov {},dword{}", part4b(i.mov4_rm.d), i.mov4_rm.s);
+		case mov8_rm: return append_format(builder, "mov {},qword{}", part8b(i.mov8_rm.d), i.mov8_rm.s);
 
-		case mov1_mr: return append_format(builder, "mov {},{}", i.mov1_mr.d, part1b(i.mov1_mr.s));
-		case mov2_mr: return append_format(builder, "mov {},{}", i.mov2_mr.d, part2b(i.mov2_mr.s));
-		case mov4_mr: return append_format(builder, "mov {},{}", i.mov4_mr.d, part4b(i.mov4_mr.s));
-		case mov8_mr: return append_format(builder, "mov {},{}", i.mov8_mr.d, part8b(i.mov8_mr.s));
+		case mov1_mr: return append_format(builder, "mov byte {},{}", i.mov1_mr.d, part1b(i.mov1_mr.s));
+		case mov2_mr: return append_format(builder, "mov word {},{}", i.mov2_mr.d, part2b(i.mov2_mr.s));
+		case mov4_mr: return append_format(builder, "mov dword{},{}", i.mov4_mr.d, part4b(i.mov4_mr.s));
+		case mov8_mr: return append_format(builder, "mov qword{},{}", i.mov8_mr.d, part8b(i.mov8_mr.s));
 
 		case push_c: {
 			if (min_value<s32> <= i.push_c.s && i.push_c.s <= max_value<s32>) {

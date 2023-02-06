@@ -1162,6 +1162,21 @@ GetModuleHandleA :: (
 
 ExitProcess :: (ret: UINT)
 
+SetFilePointerEx :: (
+	hFile: HANDLE,
+	liDistanceToMove: LARGE_INTEGER,
+	lpNewFilePointer: PLARGE_INTEGER,
+	dwMoveMethod: DWORD
+) BOOL
+
+ReadFile :: (
+	hFile: HANDLE,
+	lpBuffer: LPVOID,
+	nNumberOfBytesToRead: DWORD,
+	lpNumberOfBytesRead: LPDWORD,
+	lpOverlapped: LPOVERLAPPED
+) BOOL
+
 #extern_library "user32"
 
 RegisterClassExA :: (
@@ -1240,18 +1255,3 @@ GetRawInputData :: (
 GetCursorPos :: (p: *POINT)
 
 ScreenToClient :: (window: HWND, p: *POINT)
-
-SetFilePointerEx :: (
-	hFile: HANDLE,
-	liDistanceToMove: LARGE_INTEGER,
-	lpNewFilePointer: PLARGE_INTEGER,
-	dwMoveMethod: DWORD
-) BOOL
-
-ReadFile :: (
-	hFile: HANDLE,
-	lpBuffer: LPVOID,
-	nNumberOfBytesToRead: DWORD,
-	lpNumberOfBytesRead: LPDWORD,
-	lpOverlapped: LPOVERLAPPED
-) BOOL

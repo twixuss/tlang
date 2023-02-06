@@ -1,7 +1,7 @@
 #define TL_IMPL
 #pragma warning(disable: 4702) // unreachable
 #include <bytecode.h>
-#include <ast.h>
+#include <compiler.h>
 #include "../x86_64.h"
 #include "msvc.h"
 #include "../coff.h"
@@ -109,9 +109,9 @@ DECLARE_OUTPUT_BUILDER {
 	init_allocator();
 	current_printer = console_printer;
 
-	timed_function(context.profiler);
+	timed_function(compiler->profiler);
 
-	auto output_path_base = format("{}\\{}", context.current_directory, parse_path(context.source_path).name);
+	auto output_path_base = format("{}\\{}", compiler->current_directory, parse_path(compiler->source_path).name);
 	auto obj_path = to_pathchars(format(u8"{}.obj", output_path_base));
 
 	auto msvc_directory = locate_msvc();
@@ -139,7 +139,7 @@ DECLARE_OUTPUT_BUILDER {
 			.NumberOfAuxSymbols = 1,
 		});
 		writer.symbols.add({
-			.name = parse_path(context.source_path).name_and_extension(),
+			.name = parse_path(compiler->source_path).name_and_extension(),
 		});
 
 		auto &text_section = writer.sections.add();
@@ -183,7 +183,7 @@ DECLARE_OUTPUT_BUILDER {
 		e(FE_PUSHi, 0);
 		e(FE_CLD);
 		e(FE_CALL, (s64)cur+5);
-		local_relocations.get_or_insert(cur-4) = index_of(bytecode.instructions, context.main_lambda->first_instruction);
+		local_relocations.get_or_insert(cur-4) = compiler->main_lambda->location_in_bytecode;
 		e(FE_MOV64rm, FE_CX, FE_MEM(FE_SP, 0, 0, 0));
 		e(FE_CALL, (s64)cur+5);
 		external_relocations.get_or_insert("ExitProcess"str).add(&text_section.relocations.add({.offset=size()-4,.type=IMAGE_REL_AMD64_REL32}));
@@ -271,75 +271,10 @@ DECLARE_OUTPUT_BUILDER {
 
 				case sub_rr: e(FE_SUB64rr, fe(i.sub_rr.d), fe(i.sub_rr.s)); break;
 				case sub_rc: e(FE_SUB64ri, fe(i.sub_rc.d), i.sub_rc.s); break;
-				case sub_mc: e(FE_SUB64mi, fe(i.sub_mc.d), i.sub_mc.s); break;
-				case sub_mr: e(FE_SUB64mr, fe(i.sub_mr.d), fe(i.sub_mr.s)); break;
 
 				case add_rr: e(FE_ADD64rr, fe(i.add_rr.d), fe(i.add_rr.s)); break;
 				case add_rc: e(FE_ADD64ri, fe(i.add_rc.d), i.add_rc.s); break;
-				case add_mc: e(FE_ADD64mi, fe(i.add_mc.d), i.add_mc.s); break;
-				case add_mr: e(FE_ADD64mr, fe(i.add_mr.d), fe(i.add_mr.s)); break;
 
-				case and_mc: e(FE_AND64mi, fe(i.and_mc.d), i.and_mc.s); break;
-				case and_mr: e(FE_AND64mr, fe(i.and_mr.d), fe(i.and_mr.s)); break;
-
-				case or_mc: e(FE_OR64mi, fe(i.or_mc.d), i.or_mc.s); break;
-				case or_mr: e(FE_OR64mr, fe(i.or_mr.d), fe(i.or_mr.s)); break;
-
-				case xor_mc: e(FE_XOR64mi, fe(i.xor_mc.d), i.xor_mc.s); break;
-				case xor_mr: e(FE_XOR64mr, fe(i.xor_mr.d), fe(i.xor_mr.s)); break;
-
-				case shl_mr:
-					e(FE_MOV8rr, FE_CX, fe(i.shl_mr.s));
-					e(FE_SHL64mr, fe(i.shl_mr.d), FE_CX);
-					break;
-				case shr_mr:
-					e(FE_MOV8rr, FE_CX, fe(i.shr_mr.s));
-					e(FE_SHR64mr, fe(i.shr_mr.d), FE_CX);
-					break;
-
-				case div_mr:
-					if (to_x86_register(i.div_mr.s) == rdx) {
-						e(FE_MOV64rr, FE_BX, FE_DX);
-						e(FE_XOR64rr, FE_DX, FE_DX);
-						e(FE_MOV64rm, FE_AX, fe(i.div_mr.d));
-						e(FE_DIV64r, FE_BX);
-						e(FE_MOV64mr, fe(i.div_mr.d), FE_AX);
-						e(FE_MOV64rr, FE_DX, FE_BX);
-					} else {
-						e(FE_MOV64rr, FE_BX, FE_DX);
-						e(FE_XOR64rr, FE_DX, FE_DX);
-						e(FE_MOV64rm, FE_AX, fe(i.div_mr.d));
-						e(FE_DIV64r, fe(i.div_mr.s));
-						e(FE_MOV64mr, fe(i.div_mr.d), FE_AX);
-						e(FE_MOV64rr, FE_DX, FE_BX);
-					}
-					break;
-				case mod_mr:
-					if (to_x86_register(i.div_mr.s) == rdx) {
-						e(FE_MOV64rr, FE_BX, FE_DX);
-						e(FE_XOR64rr, FE_DX, FE_DX);
-						e(FE_MOV64rm, FE_AX, fe(i.div_mr.d));
-						e(FE_DIV64r, FE_BX);
-						e(FE_MOV64mr, fe(i.div_mr.d), FE_DX);
-						e(FE_MOV64rr, FE_DX, FE_BX);
-					} else {
-						e(FE_MOV64rr, FE_BX, FE_DX);
-						e(FE_XOR64rr, FE_DX, FE_DX);
-						e(FE_MOV64rm, FE_AX, fe(i.div_mr.d));
-						e(FE_DIV64r, fe(i.div_mr.s));
-						e(FE_MOV64mr, fe(i.div_mr.d), FE_DX);
-						e(FE_MOV64rr, FE_DX, FE_BX);
-					}
-					break;
-
-				case setf_mcc: {
-					REDECLARE_REF(i, i.setf_mcc);
-					e(FE_LEA64rm, FE_DI, fe(i.d));
-					e(FE_MOV64ri, FE_AX, i.s);
-					e(FE_MOV64ri, FE_CX, i.size);
-					e(FE_REP_STOS8);
-					break;
-				}
 				case copyf_mmc: {
 					REDECLARE_REF(i, i.copyf_mmc);
 					e(FE_LEA64rm, FE_SI, fe(i.s));
@@ -530,11 +465,11 @@ DECLARE_OUTPUT_BUILDER {
 
 		{
 			print("==== test.obj ====\n");
-			print(coff::read("test.obj").value());
+			print(coff::read("test.obj"s).value());
 		}
 		{
 			print("==== a.obj ====\n");
-			print(coff::read("a.obj").value());
+			print(coff::read("a.obj"s).value());
 		}
 	}
 
@@ -549,17 +484,17 @@ DECLARE_OUTPUT_BUILDER {
 		append_format(bat_builder, R"("{}link" /nologo "{}.obj" /out:"{}" /nodefaultlib /entry:"main" /subsystem:console /DEBUG:FULL /LIBPATH:"{}" kernel32.lib)",
 			msvc_directory,
 			output_path_base,
-			context.output_path,
+			compiler->output_path,
 			wkits_directory
 		);
-		for_each(bytecode.extern_libraries, [&](auto library, auto) {
+		for_each(compiler->extern_libraries, [&](auto library, auto) {
 			append_format(bat_builder, " {}.lib", library);
 		});
 
 		auto bat_path = u8"tlang_build.bat"s;
 		write_entire_file(bat_path, as_bytes(to_string(bat_builder)));
 #if 1
-		timed_block(context.profiler, "link"s);
+		timed_block(compiler->profiler, "link"s);
 
 		auto process = start_process(bat_path);
 		if (!process.handle) {
@@ -592,18 +527,19 @@ DECLARE_OUTPUT_BUILDER {
 			return false;
 		}
 #endif
-		if (!context.keep_temp)
+		if (!compiler->keep_temp)
 			delete_file(bat_path);
 	}
 
-	if (!context.keep_temp)
+	if (!compiler->keep_temp)
 		delete_file(obj_path);
 
 	return true;
 }
 
 DECLARE_TARGET_INFORMATION_GETTER {
-	context.stack_word_size = 8;
-	context.register_size = 8;
-	context.general_purpose_register_count = 16;
+	::compiler = compiler;
+	compiler->stack_word_size = 8;
+	compiler->register_size = 8;
+	compiler->general_purpose_register_count = 16;
 }

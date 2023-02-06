@@ -3949,7 +3949,6 @@ String normalize_path(String path) {
 	return (String)to_string(builder, prev_allocator);
 }
 
-// TODO: replace \ with / in paths
 SourceFileContext *parse_file(String current_directory, String import_path, String import_location) {
 	timed_function(compiler->profiler);
 
@@ -12462,7 +12461,9 @@ ParsedArguments parse_arguments(Span<Span<utf8>> arguments) {
 	compiler->compiler_name = parsed.name;
 	compiler->compiler_directory = parsed.directory;
 
-	result.target = "nasm_x86_64_windows"str;
+	// nasm is debuggable, fasm is fast
+	// set default target to fasm because waiting for nasm is not fun
+	result.target = "fasm_x86_64_windows"str;
 
 	//print("compiler_path: {}\ncompiler_name: {}\ncompiler_directory: {}\n", compiler_path, compiler_name, compiler_directory);
 

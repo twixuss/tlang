@@ -314,7 +314,7 @@ inline Report make_report(ReportKind kind, String location, Char const *format_s
 }
 
 // Library name -> list of function names
-using ExternLibraries = Map<String, List<String>>;
+using ExternLibraries = Map<String, LinearSet<String>>;
 
 struct RelativeString {
 	u32 offset;
@@ -420,6 +420,12 @@ inline Optional<HeapString> unescape_string(String string) {
 template <class ...Args, class Char>
 void immediate_error(String location, Char const *format_string, Args const &...args);
 
+template <class ...Args, class Char>
+void immediate_warning(String location, Char const *format_string, Args const &...args);
+
+template <class ...Args, class Char>
+void immediate_info(String location, Char const *format_string, Args const &...args);
+
 template <>
 inline void tlang_assertion_failed(char const *cause, char const *file, int line, char const *expression, char const *function) {
 	tlang_assertion_failed(cause, file, line, expression, function, String{}, "");
@@ -445,10 +451,13 @@ inline void tlang_assertion_failed(char const *cause, char const *file, int line
 
 	immediate_error(location, format_string, args...);
 
-	auto current_node = get_current_node();
+	AstNode *current_node = 0;
+
+	if (get_current_node)
+		current_node = get_current_node();
 
 	if (current_node)
-		immediate_error(dumb_get_location(current_node), "Current node:");
+		immediate_info(dumb_get_location(current_node), "Current node:");
 
 	if (debugger_attached())
 		debug_break();

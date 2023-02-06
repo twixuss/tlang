@@ -116,6 +116,7 @@ DECLARE_OUTPUT_BUILDER {
 
 	timed_function(compiler->profiler);
 
+	x86_64::init();
 
 	StringBuilder builder;
 
@@ -139,13 +140,203 @@ section '.idata' import data readable writeable
 
 		append(builder, "format PE64 console\nentry main\ninclude 'win64a.inc'\n");
 
+
+		// prepare stack routine.
+		// touches every 4096th byte to mark the pages.
+		// expects size in rax
+		// in debug mode fills the memory with known value
+		if (/*debug*/ true) {
+			append(builder, R"(
+_ps:
+	push rcx
+	push rdi
+	lea rdi, [rsp-1]
+	mov rcx, rax
+	xor rax, rax
+	std
+	rep stosb
+	cld
+	pop rdi
+	pop rcx
+	ret
+)"
+			);
+		} else {
+			append(builder, R"(
+_ps:
+	push rbx
+	mov rbx, rsp
+	sub rbx, rax
+	lea rax, [rsp-1]
+._psl:
+	mov byte [rax], 0
+	sub rax, 4096
+	cmp rax, rbx
+	jg ._psl
+	pop rbx
+	ret
+)"
+			);
+		}
+
+		// stdcall routine
+		// Input:
+		//     rax - lambda
+		//     rbx - args size
+		// Does:
+		//     1. convert tlangcall arguments to stdcall arguments
+		//     2. call rax
+		//     3. put rax into return value
+		// NOTE: to keep stack aligned to 16 bytes there are two versions, for even and odd number of arguments.
+		append(builder, R"(
+_stdcall_even:
+	push rcx
+	push rdx
+	push r8
+	push r9
+	push rsi
+	sub rsp, 32
+	mov rsi, rbx
+	xor rcx, rcx
+._stdcall_l0:
+	cmp rcx, rsi
+	je ._stdcall_l1
+
+	push qword [rsp + 80 + rcx*2]
+
+	add rcx, 8
+	jmp ._stdcall_l0
+._stdcall_l1:
+
+	mov rcx, rsp
+	and rcx, 15
+	test rcx, rcx
+	jz .ok
+	int3
+.ok:
+
+	mov rcx, [rsp + 0]
+	mov rdx, [rsp + 8]
+	mov r8,  [rsp + 16]
+	mov r9,  [rsp + 24]
+	movq xmm0, rcx
+	movq xmm1, rdx
+	movq xmm2, r8
+	movq xmm3, r9
+	call rax
+	add rsp, rsi
+	mov [rsp + 80 + rsi], rax
+	add rsp, 32
+	pop rsi
+	pop r9
+	pop r8
+	pop rdx
+	pop rcx
+	ret
+)"
+		);
+		append(builder, R"(
+_stdcall_odd:
+	push rcx
+	push rdx
+	push r8
+	push r9
+	push rsi
+	push rsi
+	sub rsp, 32
+	mov rsi, rbx
+	xor rcx, rcx
+._stdcall_l0:
+	cmp rcx, rsi
+	je ._stdcall_l1
+
+	push qword [rsp + 88 + rcx*2]
+
+	add rcx, 8
+	jmp ._stdcall_l0
+._stdcall_l1:
+
+	mov rcx, rsp
+	and rcx, 15
+	test rcx, rcx
+	jz .ok
+	int3
+.ok:
+
+	mov rcx, [rsp + 0]
+	mov rdx, [rsp + 8]
+	mov r8,  [rsp + 16]
+	mov r9,  [rsp + 24]
+	movq xmm0, rcx
+	movq xmm1, rdx
+	movq xmm2, r8
+	movq xmm3, r9
+	call rax
+	add rsp, rsi
+	mov [rsp + 88 + rsi], rax
+	add rsp, 32
+	pop rsi
+	pop rsi
+	pop r9
+	pop r8
+	pop rdx
+	pop rcx
+	ret
+)"
+		);
+		append(builder, R"(
+memcpy:
+	push rsi
+	push rdi
+	mov rdi, rcx
+	mov rsi, rdx
+	mov rcx, r8
+	rep movsb
+	pop rdi
+	pop rsi
+	ret
+memset:
+	push rsi
+	push rdi
+	mov rdi, rcx
+	mov rax, rdx
+	mov rcx, r8
+	rep stosb
+	pop rdi
+	pop rsi
+	ret
+)"
+		);
+
+		// Debug error message
+		// Inputs:
+		//     rdx - pointer to message string
+		//
+		append(builder, R"(
+_debug_error:
+	push rcx
+	push r8
+	push r9
+
+	xor rcx, rcx
+	xor r8, r8
+	xor r9, r9
+	call MessageBoxA
+
+	pop r9
+	pop r8
+	pop rcx
+	ret
+)"
+		);
+
 		append_instructions(compiler, builder, bytecode.instructions);
 
 		auto append_section = [&](auto name, auto label, auto &section) {
 			auto it = section.buffer.begin();
 			umm i = 0;
 			bool last_is_byte = true;
-			append_format(builder, "section {}\n{} db ", name, label);
+			append_format(builder, "section {}\n{} db  ", name, label);
 			while (it != section.buffer.end()) {
 				auto relocation = binary_search(section.relocations, i);
 				if (relocation) {
@@ -154,6 +345,8 @@ section '.idata' import data readable writeable
 						offset = (offset >> 8) | ((u64)*it++ << 56);
 
 					if (last_is_byte) {
+						// pop last comma because fasm...
+						builder.pop();
 						append(builder, "\ndq ");
 						last_is_byte = false;
 					}
@@ -162,16 +355,19 @@ section '.idata' import data readable writeable
 					i += 8;
 				} else {
 					if (!last_is_byte) {
+						// pop last comma because fasm...
+						builder.pop();
 						append(builder, "\ndb ");
 						last_is_byte = true;
 					}
-					if (it + 1 == section.buffer.end())
-						append_format(builder, "{}", *it++);
-					else
-						append_format(builder, "{},", *it++);
+					append_format(builder, "{},", *it++);
 					i += 1;
 				}
 			}
+
+			// pop last comma because fasm...
+			builder.pop();
+
 			append(builder, '\n');
 		};
 		append_section("'.rodata' data readable",         "constants", compiler->constant_section);
@@ -190,36 +386,47 @@ section '.idata' import data readable writeable
 			//	append(builder, "library kernel32,'kernel32.dll'\nimport kernel32,ExitProcess,'ExitProcess'\n");
 			//}
 
-			if (is_empty(compiler->extern_libraries)) {
-				append(builder, "library kernel32,'kernel32.dll'\nimport kernel32,ExitProcess,'ExitProcess'\n");
-			} else {
-				u32 library_index = 0;
-				append(builder, "library ");
-				for_each(compiler->extern_libraries, [&](auto library, auto functions) {
-					if (library_index != 0)
-						append(builder, ",\\\n\t");
-					append_format(builder, "{},'{}.dll'", library, library);
-					library_index += 1;
-				});
+			compiler->extern_libraries.get_or_insert("kernel32"str).add("ExitProcess"str);
+			compiler->extern_libraries.get_or_insert("user32"str).add("MessageBoxA"str);
+
+			u32 library_index = 0;
+			append(builder, "library ");
+			for_each(compiler->extern_libraries, [&](auto library, auto functions) {
+				if (library_index != 0)
+					append(builder, ",\\\n\t");
+				append_format(builder, "{},'{}.dll'", library, library);
+				library_index += 1;
+			});
+
+			append(builder, '\n');
+
+			for_each(compiler->extern_libraries, [&](auto library, auto functions) {
+				append_format(builder, "import {}", library);
+				for (auto function : functions) {
+					append_format(builder, ",\\\n\t{},'{}'", function, function);
+				}
+				if (library == u8"kernel32"s) {
+					if (!find(functions, "ExitProcess"str)) {
+						append(builder, ",\\\n\tExitProcess,'ExitProcess'");
+					}
+				}
 
 				append(builder, '\n');
-
-				for_each(compiler->extern_libraries, [&](auto library, auto functions) {
-					append_format(builder, "import {}", library);
-					for (auto function : functions) {
-						append_format(builder, ",\\\n\t{},'{}'", function, function);
-					}
-					if (library == u8"kernel32"s) {
-						if (!find(functions, "ExitProcess"str)) {
-							append(builder, ",\\\n\tExitProcess,'ExitProcess'");
-						}
-					}
-
-					append(builder, '\n');
-				});
-			}
-
+			});
 		}
+
+		append(builder, "section '.rodata' data readable\n_debug_messages: db  ");
+		debug_message_builder.for_each_block([&](StringBuilder::Block *block) {
+			for (auto c : *block) {
+				append_format(builder, "0x{},", FormatInt{.value = c, .radix = 16});
+			}
+		});
+
+		// pop last comma because fasm...
+		builder.pop();
+
+		append(builder, "\n");
+
 	}
 
 	auto output_path_base = format("{}\\{}", compiler->current_directory, parse_path(compiler->source_path).name);
@@ -242,7 +449,7 @@ section '.idata' import data readable writeable
 		"{}\\fasm\\fasm.exe -m {} \"{}\" \"{}\"\r\n",
 		compiler->compiler_directory, fasm_max_kilobytes, asm_path, compiler->output_path);
 
-	auto bat_path = to_pathchars(concatenate(compiler->compiler_directory, u8"\\fasm_build.bat"s));
+	auto bat_path = format(u8"{}.build.bat"s, output_path_base);
 	write_entire_file(bat_path, as_bytes(to_string(bat_builder)));
 	defer { if (!compiler->keep_temp) delete_file(bat_path); };
 
@@ -288,5 +495,5 @@ DECLARE_TARGET_INFORMATION_GETTER {
 	::compiler = compiler;
 	compiler->stack_word_size = 8;
 	compiler->register_size = 8;
-	compiler->general_purpose_register_count = 16;
+	compiler->general_purpose_register_count = 10;
 }

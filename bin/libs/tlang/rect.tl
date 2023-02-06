@@ -1,5 +1,6 @@
 import "std.tl"
 
+/*
 Rect :: struct (T: Type) {
 	min: T // inclusive
 	max: T // exclusive
@@ -16,3 +17,4 @@ extend :: (using this: *Rect, extent: this.T) => Rect(min - extent, max + extent
 in_bounds :: (using this: $T, rect: Rect(T)) =>
     rect.min.x <= x && x < rect.max.x &&
     rect.min.y <= y && y < rect.max.y;
+*/

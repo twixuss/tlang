@@ -859,3 +859,36 @@ HashMap :: struct(Key: Type, Value: Type) {
 
 // get_or_insert :: (using map: HashMap($Key, $Value), key: Key) {
 // }
+
+/*
+is_empty :: (span: []$T) => span.count == 0
+
+operator as implicit :: (span: []$T) => span.count != 0
+
+List :: struct (T: Type) {
+    data: []T
+    capacity: Int
+    allocator := current_allocator
+}
+
+reserve :: (using list: List($T), new_capacity: Int) {
+    if capacity >= new_capacity
+        return
+
+    new_data := allocator.new(T, new_capacity)
+
+    if data {
+        memcpy(new_data, data, count * #sizeof T)
+        free(data)
+    }
+
+    data = new_data
+    capacity = new_capacity
+}
+
+add :: (using list: List, value: list.T) {
+    list.reserve(count + 1)
+    data[count] = value
+    count += 1
+}
+*/
