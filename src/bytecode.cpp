@@ -2710,10 +2710,28 @@ void FrameBuilder::append(AstCall *call, RegisterOrAddress destination) {
 	if (call->lambda_type) {
 		auto lambda = call->lambda_type->lambda;
 
+		struct ParamArg {
+			AstDefinition *param;
+			AstExpression *arg;
+		};
+
+		List<ParamArg> param_args;
+		param_args.allocator = temporary_allocator;
+
+		for (umm i = 0; i < call->sorted_arguments.count; ++i) {
+			auto arg = call->sorted_arguments[i];
+			auto param = lambda->parameters[i];
+
+			// NOTE: constant arguments are null
+			if (arg) {
+				param_args.add({param, arg});
+			}
+		}
+
 		// NOTE:
 		// arguments with size <= compiler->stack_word_size are passed by value,
 		// otherwise they are passed by pointer
-		s64 parameters_bytes = tl::count(lambda->parameters, [](auto param){return !param->is_constant;}) * word_size;
+		s64 parameters_bytes = param_args.count * word_size;
 		s32 return_parameter_bytes = word_size;
 
 		auto return_value_size = get_size(lambda->return_parameter->type);
@@ -2734,11 +2752,11 @@ void FrameBuilder::append(AstCall *call, RegisterOrAddress destination) {
 
 			auto args_tmp = allocate_temporary_space(parameters_bytes);
 
-			for (umm i = 0; i < call->sorted_arguments.count; ++i) {
-				auto arg = call->sorted_arguments[i];
-				auto param = lambda->parameters[i];
+			for (umm i = 0; i < param_args.count; ++i) {
+				auto arg = param_args[i].arg;
+				auto param = param_args[i].param;
 
-				auto arg_addr = args_tmp + (call->sorted_arguments.count-1-i)*8;
+				auto arg_addr = args_tmp + (param_args.count-1-i)*8;
 
 				auto size = ceil(get_size(arg->type), word_size);
 				if (size > word_size) {
@@ -2761,10 +2779,10 @@ void FrameBuilder::append(AstCall *call, RegisterOrAddress destination) {
 				I(mov8_mr, return_value_address, r0);
 			}
 
-			for (umm i = 0; i < call->sorted_arguments.count; ++i) {
-				auto src = args_tmp + (call->sorted_arguments.count-1-i)*word_size;
+			for (umm i = 0; i < param_args.count; ++i) {
+				auto src = args_tmp + (param_args.count-1-i)*word_size;
 				tmpreg(r0);
-				auto dst = Register::rs + (call->sorted_arguments.count-1-i)*word_size;
+				auto dst = Register::rs + (param_args.count-1-i)*word_size;
 				I(mov8_rm, r0, src);
 				I(mov8_mr, dst, r0);
 			}
@@ -2842,8 +2860,6 @@ void FrameBuilder::append(AstCall *call, RegisterOrAddress destination) {
 
 		assert(word_size == 8);
 
-		auto &arguments = call->sorted_arguments;
-
 		bool lambda_is_constant = is_constant(call->callable);
 
 		append_arguments();
@@ -2877,78 +2893,6 @@ void FrameBuilder::append(AstCall *call, RegisterOrAddress destination) {
 		if (return_value_size && return_value_size <= word_size) {
 			copy(destination, return_value_address, return_value_size, false);
 		}
-#if 0
-			case CallingConvention::stdcall: {
-				not_implemented();
-				using namespace x86_64;
-
-				s64 const shadow_space_size = 32;
-
-				if (lambda->parameters.count < 4) {
-					// shadow space
-					parameters_bytes += 32;
-				}
-
-				for (auto argument : arguments) {
-					assert(get_size(argument->type) <= 8);
-				}
-
-				::Address fnptr;
-				if (!lambda_is_constant) {
-					fnptr = allocate_temporary_space(compiler->stack_word_size);
-					append(call->callable, fnptr);
-				}
-
-				append_arguments();
-
-				auto move_arg = [&](int arg_index, s64 stack_offset) {
-		 			if (lambda->parameters.count > arg_index)
-						if (::is_float(lambda->parameters[arg_index]->type))
-							I(mov8_xm, stdcall_float_registers[arg_index], rs + (lambda->parameters.count*8 - stack_offset));
-						else
-							I(mov8_rm, to_bc_register(stdcall_int_registers[arg_index]), rs + (lambda->parameters.count*8 - stack_offset));
-				};
-
-		 		move_arg(0,  8);
-				move_arg(1, 16);
-				move_arg(2, 24);
-				move_arg(3, 32);
-
-				if (lambda->parameters.count > 4) {
-					push_comment("Swap argument order"str);
-
-					// these are not used in bytecode and stdcall
-					auto r0 = x86_64::to_bc_register(x86_64::Register64::r10);
-					auto r1 = x86_64::to_bc_register(x86_64::Register64::r11);
-
-					for (s64 i = 0; i < lambda->parameters.count / 2; ++i) {
-						auto m0 = rs + i * 8;
-						auto m1 = rs + (lambda->parameters.count-i-1)*8;
-						I(mov8_rm, r0, m0);
-						I(xchg8_mr, m1, r0);
-						I(mov8_mr, m0, r0);
-					}
-				}
-
-				auto function_address_register = to_bc_register(Register64::rax);
-				if (lambda_is_constant) {
-					load_address_of(call->callable, function_address_register);
-					I(stdcall_r, function_address_register);
-				} else {
-					I(mov8_rm, function_address_register, fnptr);
-					I(stdcall_r, function_address_register);
-				}
-
-				if (return_value_size) {
-					copy(destination, to_bc_register(Register64::rax), return_value_size, false);
-				}
-
-				break;
-			}
-			default:
-				invalid_code_path();
-		}
-#endif
 	} else if (auto Struct = direct_as<AstStruct>(call->callable)) {
 		append_struct_initializer(Struct, call->sorted_arguments, destination);
 	} else {

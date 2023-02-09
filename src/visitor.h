@@ -30,7 +30,8 @@ void visit_children(AstLiteral *node, auto &&visitor) {}
 void visit_children(AstCall *node, auto &&visitor) {
 	visit(node->callable, visitor);
 	for (auto arg : node->sorted_arguments) {
-		visit(arg, visitor);
+		if (arg)
+			visit(arg, visitor);
 	}
 }
 void visit_children(AstBinaryOperator *node, auto &&visitor) {

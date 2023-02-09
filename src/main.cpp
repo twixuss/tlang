@@ -6794,9 +6794,9 @@ void typecheck_definition(TypecheckState *state, AstDefinition *definition, Type
 	if (definition->type) {
 		return;
 	}
-	defer {
+	defer { if (!throwing) {
 		assert(definition->type);
-	};
+	}};
 
 	scoped_replace(state->currently_typechecking_definition, definition);
 
@@ -6843,6 +6843,10 @@ void typecheck_definition(TypecheckState *state, AstDefinition *definition, Type
 		if (!(definition->expression && definition->expression->kind == Ast_Lambda)) {
 
 			typecheck(state, definition->parsed_type);
+
+			if (!definition->parsed_type->type) {
+				yield(TypecheckResult::fail);
+			}
 
 			definition->type = definition->parsed_type;
 
@@ -7955,19 +7959,16 @@ AstLambda *instantiate_head(TypecheckState *state, Reporter *reporter, Overload 
 	hardened_lambda->outer_scope()->parent = lambda->outer_scope()->parent;
 	hardened_lambda->original_poly = lambda;
 
-	List<AstDefinition *> parameters;
-	parameters.reserve(lambda->parameters.count);
 	for (auto &parameter : lambda->parameters) {
 		auto new_parameter = deep_copy(parameter);
 		new_parameter->container_node = hardened_lambda;
-		parameters.add(new_parameter);
-
-		// NOTE: Don't add parameter_scope yet. We need to strip constant parameters first.
+		hardened_lambda->parameters.add(new_parameter);
+		hardened_lambda->parameter_scope->add(new_parameter);
 	}
 
 
 	for (auto definition : lambda->constant_scope->definition_list) {
-		auto copied =deep_copy(definition);
+		auto copied = deep_copy(definition);
 		copied->container_node = hardened_lambda;
 		hardened_lambda->constant_scope->add(copied);
 	}
@@ -8013,7 +8014,7 @@ AstLambda *instantiate_head(TypecheckState *state, Reporter *reporter, Overload 
 		}
 
 		auto parameter_index = index_of(lambda->parameters, found_parameter);
-		auto parameter = parameters[parameter_index];
+		auto parameter = hardened_lambda->parameters[parameter_index];
 
 		if (parameter->is_constant) invalid_code_path("Not implemented");
 
@@ -8034,10 +8035,6 @@ AstLambda *instantiate_head(TypecheckState *state, Reporter *reporter, Overload 
 
 		if (parameter->is_constant) {
 			parameter->expression = argument.expression;
-			hardened_lambda->constant_scope->add(parameter);
-		} else {
-			hardened_lambda->parameters.add(parameter);
-			hardened_lambda->parameter_scope->add(parameter);
 		}
 	}
 
@@ -8078,23 +8075,29 @@ AstLambda *instantiate_head(TypecheckState *state, Reporter *reporter, Overload 
 				return 0;
 			}
 
-			auto parameter = parameters[parameter_index];
+			auto parameter = hardened_lambda->parameters[parameter_index];
 
 			if (parameter->is_constant) {
 				if (!is_constant(argument)) {
 					reporter->error(argument->location, "Argument is not constant");
 					return 0;
 				}
-				hardened_lambda->constant_scope->add(parameter);
-			} else {
-				hardened_lambda->parameters.add(parameter);
-				hardened_lambda->parameter_scope->add(parameter);
 			}
 
 			if (!parameter->is_poly && !parameter->type) {
 				scoped_replace(state->container_node, hardened_lambda);
 				scoped_replace(state->current_scope, hardened_lambda->parameter_scope);
-				typecheck(state, parameter);
+				typecheck(state, parameter->parsed_type);
+				if (!parameter->parsed_type->type)
+					yield(TypecheckResult::fail);
+
+				parameter->type = parameter->parsed_type;
+
+				if (parameter->expression) {
+					typecheck(state, parameter->expression);
+					if (!parameter->expression->type)
+						yield(TypecheckResult::fail);
+				}
 			}
 
 			if (parameter->is_poly) {
@@ -8145,11 +8148,38 @@ AstLambda *instantiate_head(TypecheckState *state, Reporter *reporter, Overload 
 			next_unassigned_parameter();
 		}
 
-		// FIXME: insert default arguments
+		// Assign default values to everything that is left over.
+		for (umm i = 0; i != sorted_arguments.count; ++i) {
+			auto &args = sorted_arguments[i];
+			auto parameter = hardened_lambda->parameters[i];
 
+			if (parameter->expression && args.count == 0) {
+				if (parameter->is_constant) {
+					typecheck(state, parameter->parsed_type);
+					if (!parameter->parsed_type)
+						yield(TypecheckResult::fail);
+
+					parameter->type = parameter->parsed_type;
+
+					typecheck(state, parameter->expression);
+					if (!implicitly_cast(state, reporter, &parameter->expression, parameter->type))
+						return 0;
+
+					if (!is_constant(parameter->expression)) {
+						reporter->error(parameter->expression->location, "Argument is not constant");
+						return 0;
+					}
+				}
+				auto copied = deep_copy(parameter->expression);
+				args.add(copied);
+			}
+		}
+
+
+		// Make sure argument count matches parameter count
 		for (umm i = 0; i != sorted_arguments.count; ++i) {
 			auto args = sorted_arguments[i];
-			auto param = lambda->parameters[i];
+			auto param = hardened_lambda->parameters[i];
 
 			if (args.count == 0 && !param->is_pack) {
 				reporter->error(call_location, "Not enough arguments. Value for {} was not provided", param->name);
@@ -8160,7 +8190,7 @@ AstLambda *instantiate_head(TypecheckState *state, Reporter *reporter, Overload 
 	}
 
 
-	for (auto &parameter : parameters) {
+	for (auto &parameter : hardened_lambda->parameters) {
 		assert(parameter->parent_scope);
 	}
 
@@ -8187,6 +8217,13 @@ AstLambda *instantiate_head(TypecheckState *state, Reporter *reporter, Overload 
 				goto next_cached;
 			}
 		}
+		for (umm i = 0; i < hardened_lambda->parameters.count; ++i) {
+			if (hardened_lambda->parameters[i]->is_constant) {
+				if (!are_equal(evaluate(state, hardened_lambda->parameters[i]), evaluate(state, cached.lambda->parameters[i]))) {
+					goto next_cached;
+				}
+			}
+		}
 		// FIXME: hardened_lambda leaked
 		return cached.lambda;
 	next_cached:;
@@ -8194,435 +8231,6 @@ AstLambda *instantiate_head(TypecheckState *state, Reporter *reporter, Overload 
 
 	lambda->cached_instantiations.add({.lambda=hardened_lambda, .definition=hardened_lambda_definition});
 	return hardened_lambda;
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-#if 0
-	if (!lambda->has_pack) {
-		// TODO: FIXME: implement for packs
-		for (auto cached : lambda->cached_instantiations) {
-			bool all_types_match = true;
-
-			if (arguments.count != cached.call->unsorted_arguments.count)
-				continue;
-
-			wait_for(state, call->location, "cached template head",
-				[&] {
-					return cached.lambda->finished_typechecking_head;
-				},
-				[&] {
-					state->reporter.error(lambda->location, "Could not finish typechecking head of instantiated lambda template.");
-					state->reporter.info(call->location, "Called here:");
-				}
-			);
-
-			for (umm i = 0; i < arguments.count; ++i) {
-				if (!types_match(arguments[i]->type, cached.call->unsorted_arguments[i].expression->type)) {
-					all_types_match = false;
-					break;
-				}
-				if (lambda->parameters[i]->is_constant) {
-					// Evaluate argument
-					auto evaluated_arg = evaluate(state, arguments[i]);
-					if (!evaluated_arg) {
-						all_types_match = false;
-						break;
-					}
-
-					// Find corresponding parameter.
-					// NOTE: We have to do this search because constant parameters are moved from parameter_scope into
-					//       constant_scope after typechecking, meaning we can't just index into parameter list anymore.
-					auto parameter = find_if(cached.lambda->constant_scope->definition_list, [&](AstDefinition *param){ return param->name == lambda->parameters[i]->name; });
-					assert(parameter);
-
-					// Evaluate cached parameter.
-					// FIXME: There is no need to reevaluate parameter all the time. We can cache the result somewhere.
-					auto evaluated_param = evaluate(state, (*parameter)->expression);
-					if (!evaluated_param) {
-						all_types_match = false;
-						break;
-					}
-
-					// Compare the values.
-					if (evaluated_arg->literal_kind != evaluated_param->literal_kind) {
-						all_types_match = false;
-						break;
-					}
-
-					switch (evaluated_arg->literal_kind) {
-						case LiteralKind::boolean:   all_types_match &= evaluated_arg->Bool         == evaluated_param->Bool; break;
-						case LiteralKind::character: all_types_match &= evaluated_arg->character    == evaluated_param->character; break;
-						case LiteralKind::Float:     all_types_match &= evaluated_arg->Float        == evaluated_param->Float; break;
-						case LiteralKind::integer:   all_types_match &= evaluated_arg->integer      == evaluated_param->integer; break;
-						case LiteralKind::string:    all_types_match &= evaluated_arg->string.get() == evaluated_param->string.get(); break;
-						case LiteralKind::type:      all_types_match &= types_match(evaluated_arg->type_value, evaluated_param->type_value); break;
-					}
-
-					if (!all_types_match)
-						break;
-				}
-			}
-			if (all_types_match) {
-				*success = true;
-				return cached.lambda;
-			}
-		}
-	}
-
-	// If we're here - we could'n find an exising instantiation, so make a new one.
-
-	state->poly_call_stack.add(call);
-	defer { state->poly_call_stack.pop(); };
-
-	// if (!lambda->definition) {
-	// 	state->reporter.error(lambda->location, "Poly lambda must have a name.");
-	// 	yield(TypecheckResult::fail);
-	// }
-
-	auto hardened_lambda = AstLambda::create();
-	auto hardened_lambda_definition = AstDefinition::create();
-
-	assert(lambda->definition); // TODO: deal with unnamed poly lambdas
-	hardened_lambda_definition->expression = hardened_lambda;
-	hardened_lambda_definition->location = hardened_lambda->location;
-	hardened_lambda_definition->name = lambda->definition->name;
-	hardened_lambda_definition->is_constant = true;
-	hardened_lambda_definition->container_node = lambda->definition->container_node;
-	hardened_lambda_definition->parent_scope = lambda->definition->parent_scope;
-	hardened_lambda->definition = hardened_lambda_definition;
-
-	// hardened_lambda->is_poly = false;
-	hardened_lambda->convention = lambda->convention;
-	hardened_lambda->extern_language = lambda->extern_language;
-	hardened_lambda->extern_library = lambda->extern_library;
-	hardened_lambda->has_body = false;
-	hardened_lambda->finished_typechecking_head = false;
-	hardened_lambda->is_intrinsic = lambda->is_intrinsic;
-	hardened_lambda->is_parenthesized = lambda->is_parenthesized;
-	hardened_lambda->is_type = lambda->is_type;
-	hardened_lambda->location = lambda->location;
-	hardened_lambda->extern_library = lambda->extern_library;
-	hardened_lambda->print_bytecode = lambda->print_bytecode;
-	hardened_lambda->type = create_lambda_type(hardened_lambda);
-	hardened_lambda->type->type = compiler->builtin_type.ident;
-	hardened_lambda->outer_scope()->parent = lambda->outer_scope()->parent;
-	hardened_lambda->original_poly = lambda;
-
-	if (lambda->has_pack) {
-		umm argument_index = 0;
-		umm parameter_index = 0;
-
-		overload.packs.resize(lambda->parameters.count);
-
-		List<AstDefinition *> hardened_params;
-
-		while (1) {
-			if (argument_index == arguments.count) {
-				while (1) {
-					if (parameter_index == lambda->parameters.count) {
-						goto break_outer;
-					}
-					if (lambda->parameters[parameter_index]->is_pack) {
-						++parameter_index;
-						continue;
-					}
-					if (parameter_index != lambda->parameters.count) {
-						reporter->error(call->location, "Not enough arguments.");
-						return hardened_lambda;
-					}
-				}
-			}
-			auto &argument = arguments[argument_index];
-			auto &parameter = lambda->parameters[parameter_index];
-
-			int distance = 0;
-			if (parameter->is_poly) {
-				if (parameter->is_pack) {
-					assert(parameter->type->kind == Ast_Span);
-					auto matched_type = match_poly_type(state, ((AstSpan *)parameter->type)->expression, argument->type);
-					if (matched_type) {
-						if (overload.packs[parameter_index].matched_poly_type) {
-							// FIXME: types_match should be replaced with implicitly_cast
-							if (!types_match(overload.packs[parameter_index].matched_poly_type, matched_type)) {
-								++parameter_index;
-								continue;
-							}
-						} else {
-							overload.packs[parameter_index].matched_poly_type = matched_type;
-
-							// COPYPASTA
-							if (parameter->poly_ident) {
-								auto ident = parameter->poly_ident;
-								auto type_def = AstDefinition::create();
-								type_def->name = ident->name;
-								type_def->expression = matched_type;
-								type_def->type = compiler->builtin_type.ident;
-								type_def->container_node = hardened_lambda;
-								type_def->location = ident->location;
-								hardened_lambda->constant_scope->add(type_def);
-								// TODO: do at parse time
-								if (hardened_lambda->constant_scope->definition_map.get_or_insert(type_def->name).count != 1) {
-									state->reporter.error(ident->location, "Redefinition of polymorpic argument");
-									yield(TypecheckResult::fail);
-								}
-							}
-							auto hardened_param = AstDefinition::create();
-							hardened_param->location = parameter->location;
-							hardened_param->name = parameter->name;
-
-							hardened_param->type = instantiate_span(argument->type, argument->location);
-							hardened_param->definition_location = LambdaDefinitionLocation::parameter;
-							hardened_param->is_constant = parameter->is_constant;
-							hardened_param->container_node = hardened_lambda;
-
-							hardened_params.add(hardened_param);
-							hardened_lambda->parameters.add(hardened_param);
-							hardened_lambda->parameter_scope->add(hardened_param);
-							if (parameter->is_constant) {
-								hardened_param->expression = argument;
-							}
-						}
-						overload.packs[parameter_index].expressions.add(argument);
-
-						++argument_index;
-					} else {
-						++parameter_index;
-					}
-				} else {
-					// COPYPASTA
-					// insert the parameter's type when it's in $name form.
-					if (parameter->poly_ident) {
-						auto ident = parameter->poly_ident;
-						auto type_def = AstDefinition::create();
-						type_def->location = ident->location;
-						type_def->name = ident->name;
-						type_def->expression = match_poly_type(state, parameter->type, argument->type);
-						if (!type_def->expression) {
-							reporter->error(argument->location, "Could not match the type {} to {}", type_to_string(argument->type), type_to_string(parameter->type));
-							reporter->info(parameter->location, "Declared here:");
-							return hardened_lambda;
-						}
-						type_def->type = compiler->builtin_type.ident;
-						type_def->container_node = hardened_lambda;
-						type_def->is_constant = true;
-						hardened_lambda->constant_scope->add(type_def);
-						// TODO: do at parse time
-						if (hardened_lambda->constant_scope->definition_map.get_or_insert(type_def->name).count != 1) {
-							state->reporter.error(ident->location, "Redefinition of polymorpic argument");
-							yield(TypecheckResult::fail);
-						}
-					}
-					// insert the parameter
-					auto hardened_param = AstDefinition::create();
-					hardened_param->location = parameter->location;
-					hardened_param->name = parameter->name;
-					hardened_param->type = argument->type;
-					hardened_param->definition_location = LambdaDefinitionLocation::parameter;
-					hardened_param->is_constant = parameter->is_constant;
-					hardened_param->container_node = hardened_lambda;
-					hardened_params.add(hardened_param);
-					hardened_lambda->parameters.add(hardened_param);
-					hardened_lambda->parameter_scope->add(hardened_param);
-					if (parameter->is_constant) {
-						hardened_param->expression = argument;
-					}
-
-					overload.packs[parameter_index].expression = argument;
-
-					++argument_index;
-					++parameter_index;
-				}
-			} else {
-				auto nonpoly_parameter = deep_copy(parameter);
-
-				typecheck(state, nonpoly_parameter);
-				if (nonpoly_parameter->is_pack) {
-					assert(nonpoly_parameter->type->kind == Ast_Span);
-					if (implicitly_cast(state, &overload.reporter, &argument, ((AstSpan *)nonpoly_parameter->type)->expression, &distance, false)) {
-						overload.packs[parameter_index].expressions.add(argument);
-
-						++argument_index;
-						// total_distance += distance;
-					} else {
-						++parameter_index;
-					}
-				} else {
-					if (!implicitly_cast(state, &overload.reporter, &argument, nonpoly_parameter->type, &distance, false)) {
-						return hardened_lambda;
-					}
-					// total_distance += distance;
-
-					overload.packs[parameter_index].expression = argument;
-
-					++argument_index;
-					++parameter_index;
-				}
-
-				hardened_lambda->parameters.add(nonpoly_parameter);
-				hardened_lambda->parameter_scope->add(nonpoly_parameter);
-			}
-		}
-	break_outer:;
-		if (hardened_lambda->parameters.count != lambda->parameters.count) {
-			reporter->error(call->location, "Could not determine pack type.");
-			return hardened_lambda;
-		}
-	} else {
-		if (arguments.count != lambda->parameters.count) {
-			reporter->error(call->location, "Argument count does not match. Expected {}, got {}", lambda->parameters.count, arguments.count);
-			return 0;
-		}
-
-		List<AstDefinition *> hardened_params;
-		hardened_params.allocator = temporary_allocator;
-		hardened_params.resize(arguments.count);
-
-		for (u32 i = 0; i < arguments.count; ++i) {
-			auto &arg = arguments[i];
-			auto &param = lambda->parameters[i];
-			auto &hardened_param = hardened_params[i];
-
-			if (param->is_poly) {
-				// insert the parameter's type when it's in $name form.
-				if (param->poly_ident) {
-					auto ident = param->poly_ident;
-					auto type_def = AstDefinition::create();
-					type_def->location = ident->location;
-					type_def->name = ident->name;
-					type_def->expression = match_poly_type(state, param->type, arg->type);
-					if (!type_def->expression) {
-						reporter->error(arg->location, "Could not match the type {} to {}", type_to_string(arg->type), type_to_string(param->type));
-						reporter->info(param->location, "Declared here:");
-						return hardened_lambda;
-					}
-					type_def->type = compiler->builtin_type.ident;
-					type_def->container_node = hardened_lambda;
-					type_def->is_constant = true;
-					hardened_lambda->constant_scope->add(type_def);
-					// TODO: do at parse time
-					if (hardened_lambda->constant_scope->definition_map.get_or_insert(type_def->name).count != 1) {
-						state->reporter.error(ident->location, "Redefinition of polymorpic argument");
-						yield(TypecheckResult::fail);
-					}
-				} else {
-					auto type_def = AstDefinition::create();
-					type_def->location = param->location;
-					type_def->name = to_string(i);
-					type_def->expression = arg->type;
-					type_def->type = compiler->builtin_type.ident;
-					type_def->container_node = hardened_lambda;
-					type_def->is_constant = true;
-					hardened_lambda->constant_scope->add(type_def);
-				}
-				// insert the parameter
-				{
-					hardened_param = AstDefinition::create();
-					hardened_param->location = param->location;
-					hardened_param->name = param->name;
-					hardened_param->type = arg->type;
-					hardened_param->definition_location = LambdaDefinitionLocation::parameter;
-					hardened_param->is_constant = param->is_constant;
-					hardened_param->container_node = hardened_lambda;
-					hardened_param->has_using = param->has_using;
-					if (hardened_param->has_using)
-						hardened_lambda->parameter_scope->usings.add({.definition = hardened_param});
-
-					hardened_lambda->parameters.add(hardened_param);
-					hardened_lambda->parameter_scope->add(hardened_param);
-				}
-			} else {
-				hardened_param = deep_copy(param);
-				hardened_param->container_node = hardened_lambda;
-				if (param->is_constant) {
-					hardened_lambda->constant_scope->add(hardened_param);
-				} else {
-					hardened_lambda->parameters.add(hardened_param);
-					hardened_lambda->parameter_scope->add(hardened_param);
-				}
-			}
-			if (param->is_constant) {
-				hardened_param->expression = arg;
-			}
-		}
-
-		for (u32 i = 0; i < arguments.count; ++i) {
-			auto &arg = arguments[i];
-			auto &param = lambda->parameters[i];
-			auto &hardened_param = hardened_params[i];
-
-			if (!param->is_poly) {
-				{
-					scoped_replace(state->current_scope, hardened_lambda->parameter_scope);
-					scoped_replace(state->container_node, hardened_lambda);
-					typecheck(state, hardened_param);
-
-
-					if (hardened_param->type->kind == Ast_Identifier) {
-						auto ident = (AstIdentifier *)hardened_param->type;
-						auto def = ident->definition();
-						assert(def);
-						auto found = hardened_lambda->constant_scope->definition_map.find(def->name);
-						if (found) {
-							assert(found->value.count == 1);
-							hardened_param->type = found->value.data[0]->expression;
-						}
-					}
-				}
-
-				if (!implicitly_cast(state, reporter, &arg, hardened_param->type)) {
-					return hardened_lambda;
-				}
-
-				if (param->is_constant) {
-					hardened_param->expression = arg;
-				}
-			}
-
-			if (hardened_param->is_constant) {
-				if (!is_constant(arg)) {
-					reporter->error(arg->location, "Expected a constant argument.");
-					reporter->info(hardened_param->location, "Definition marked as constant.");
-					return hardened_lambda;
-				}
-			}
-		}
-	}
-
-	scoped_replace(state->container_node, hardened_lambda);
-	scoped_replace(state->current_scope, hardened_lambda->parameter_scope);
-
-	if (compiler->debug_template) {
-		immediate_info(call->location, "Instantiated poly head: {} with {}", type_to_string(lambda->type), StringizePolyTypes{hardened_lambda});
-	}
-
-	if (lambda->return_parameter) {
-		hardened_lambda->return_parameter = deep_copy(lambda->return_parameter);
-		hardened_lambda->parameter_scope->add(hardened_lambda->return_parameter);
-		typecheck(state, hardened_lambda->return_parameter);
-	}
-
-	hardened_lambda->finished_typechecking_head = true;
-
-	lambda->cached_instantiations.add({.lambda=hardened_lambda, .definition=hardened_lambda_definition, .call=call});
-
-	*success = true;
-	return hardened_lambda;
-#endif
 }
 void instantiate_body(TypecheckState *state, AstLambda *hardened_lambda) {
 	auto original_lambda = hardened_lambda->original_poly;
@@ -9392,17 +9000,13 @@ AstExpression *apply_overload_lambda(TypecheckState *state, AstCall *call, Overl
 
 			for (u32 i = 0; i < match.sorted_arguments_lambda.count; ++i) {
 				auto &argument = match.sorted_arguments_lambda[i];
+				auto &parameter = lambda->parameters[i];
 
-				// FIXME: looks shitty
-				if (auto found = lambda->constant_scope->definition_map.find(lambda->original_poly->parameters[i]->name)) {
-					auto &parameter = found->value[0];
-
-					if (parameter->is_constant) {
-						if (!implicitly_cast(state, &state->reporter, &parameter->expression, parameter->type)) {
-							state->reporter.error(parameter->location, "INTERNAL ERROR: implicit cast did not succeed the second time for constant parameter.");
-							state->reporter.info(argument[0]->location, "Argument is here:");
-							yield(TypecheckResult::fail);
-						}
+				if (parameter->is_constant) {
+					if (!implicitly_cast(state, &state->reporter, &parameter->expression, parameter->type)) {
+						state->reporter.error(parameter->location, "INTERNAL ERROR: implicit cast did not succeed the second time for constant parameter.");
+						state->reporter.info(argument[0]->location, "Argument is here:");
+						yield(TypecheckResult::fail);
 					}
 				}
 			}
@@ -9431,22 +9035,6 @@ AstExpression *apply_overload_lambda(TypecheckState *state, AstCall *call, Overl
 
 		ident->possible_definitions.set(match.instantiated_lambda->definition);
 		ident->type = match.instantiated_lambda->type;
-
-
-		// ---- Remove arguments to constant parameters
-
-		decltype(match.sorted_arguments_lambda) new_sorted_arguments;
-
-		for (u32 i = 0; i < match.sorted_arguments_lambda.count; ++i) {
-			auto &argument = match.sorted_arguments_lambda[i];
-			auto &parameter = lambda->original_poly->parameters[i];
-
-			if (!parameter->is_constant) {
-				new_sorted_arguments.add(argument);
-			}
-		}
-
-		match.sorted_arguments_lambda = new_sorted_arguments;
 	}
 
 	auto lambda = match.lambda;
@@ -9508,8 +9096,12 @@ AstExpression *apply_overload_lambda(TypecheckState *state, AstCall *call, Overl
 			auto &args = match.sorted_arguments_lambda[i];
 
 			assert(args.count == 1);
-			make_concrete(state, &args.data[0]);
-			call->sorted_arguments.add(args.data[0]);
+			if (param->is_constant) {
+				call->sorted_arguments.add(0);
+			} else {
+				make_concrete(state, &args.data[0]);
+				call->sorted_arguments.add(args.data[0]);
+			}
 		}
 	}
 
@@ -9521,9 +9113,11 @@ AstExpression *apply_overload_lambda(TypecheckState *state, AstCall *call, Overl
 		auto &parameter = lambda->parameters[i];
 
 		assert(!parameter->is_poly);
-		if (!implicitly_cast(state, &state->reporter, &argument, parameter->type, 0)) {
-			state->reporter.error(argument->location, "INTERNAL ERROR: implicit cast did not succeed the second time.");
-			yield(TypecheckResult::fail);
+		if (argument) {
+			if (!implicitly_cast(state, &state->reporter, &argument, parameter->type, 0)) {
+				state->reporter.error(argument->location, "INTERNAL ERROR: implicit cast did not succeed the second time.");
+				yield(TypecheckResult::fail);
+			}
 		}
 	}
 

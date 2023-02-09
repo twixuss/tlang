@@ -256,6 +256,14 @@ main :: () {
 
 
 	{
+		foo :: (x: %Int = 2) {
+			return x
+		}
+		assert foo() == 2
+		assert foo(3) == 3
+	}
+
+	{
 		Foo :: struct {}
 
 		operator as implicit :: (x: Int) => Foo()

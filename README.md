@@ -615,7 +615,9 @@ x := 12
 #file // file string
 
 #location // string in form "file:line:column"
-
+```
+## Current function type
+```java
 #function // function type string
 // NOTE: this directive includes return type name.
 // If the return type is explicitly specified, #function is usable in constant
@@ -637,8 +639,19 @@ paradox :: () {
 foo :: (a, b: Int) Float => #function // will return "(a: Int, b: Int) Float"
 // NOTE: argument names are included in the signature, because of
 //       overloading on argument names.
+
 ```
-### TODO: #definition
+## Current container name
+```java
+#container // ""
+main :: () {
+  #print #container // "main"
+}
+
+Vector :: struct {
+    name :: #container // "Vector"
+}
+```
 ## Assertions
 ```java
 #assert expression // assert at compile time that expression evaluates to `true`
