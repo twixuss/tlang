@@ -61,10 +61,12 @@ void append_type(StringBuilder &builder, AstExpression *type, bool silent_error)
 				if (&parameter != lambda->parameters.data) {
 					append(builder, ", ");
 				}
+				append(builder, parameter->name);
+				append(builder, ": ");
 				append_type(builder, parameter->type, silent_error);
 			}
 			if (lambda->return_parameter) {
-				append(builder, "): ");
+				append(builder, ") ");
 				append_type(builder, lambda->return_parameter->type, silent_error);
 			} else {
 				append(builder, ")");
@@ -123,6 +125,12 @@ void append_type(StringBuilder &builder, AstExpression *type, bool silent_error)
 				}
 			}
 			append(builder, ')');
+			break;
+		}
+		case Ast_Distinct: {
+			auto Distinct = (AstDistinct *)type;
+			append(builder, "#distinct ");
+			append_type(builder, Distinct->expression, silent_error);
 			break;
 		}
 		default: {

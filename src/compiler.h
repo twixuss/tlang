@@ -43,6 +43,7 @@ e(Using) \
 e(ArrayInitializer) \
 e(Yield) \
 e(Array) \
+e(Distinct) \
 
 enum AstKind : u8 {
 	Ast_Unknown = 0,
@@ -978,6 +979,16 @@ struct AstArrayInitializer : AstExpression, ExpressionPool<AstArrayInitializer> 
 	SmallList<AstExpression *> elements = {};
 };
 
+struct AstDistinct : AstExpression, ExpressionPool<AstDistinct> {
+	AstDistinct() {
+		kind = Ast_Distinct;
+		directed = this;
+	}
+
+	Expression<> expression = {};
+	Expression<AstIdentifier> identifier = {}; // e.g. 'Radians' in 'Radians :: #distinct Float'
+};
+
 struct BuiltinStruct {
 	AstDefinition *definition;
 
@@ -1033,6 +1044,14 @@ bool is_type(AstExpression *expression);
 
 AstExpression *get_definition_expression(AstExpression *expression);
 
+template <class T>
+T *as(AstNode *node) {
+	if (node->kind == kind_of<T>) {
+		return (T *)node;
+	}
+	return 0;
+}
+
 /*
 Returns the first expression assigned to an alias.
 For example:
@@ -1074,14 +1093,13 @@ inline AstExpression *direct(AstExpression *type) {
 	}
 }
 
-
-template <class T>
-T *as(AstNode *node) {
-	if (node->kind == kind_of<T>) {
-		return (T *)node;
-	}
-	return 0;
+inline AstExpression *direct_through_distinct(AstExpression *type) {
+	type = direct(type);
+	if (auto Distinct = as<AstDistinct>(type))
+		return direct_through_distinct(Distinct->expression);
+	return type;
 }
+
 
 template <class T>
 T *direct_as(AstExpression *expression) {
@@ -1762,6 +1780,9 @@ inline bool types_match(AstExpression *a, AstExpression *b) {
 
 			return true;
 		}
+		case Ast_Distinct: {
+			return a == b;
+		}
 	}
 	invalid_code_path();
 }
@@ -1877,6 +1898,7 @@ inline s64 get_size(AstExpression *_type, bool check_struct) {
 			assert(!((AstEnum *)type)->underlying_type, "not implemented");
 			return compiler->stack_word_size;
 		}
+		case Ast_Distinct: return get_size(((AstDistinct *)type)->expression, check_struct);
 		default: {
 			invalid_code_path();
 			return -1;
@@ -1922,6 +1944,7 @@ inline s64 get_align(AstExpression *type, bool check_struct) {
 		case Ast_Span: {
 			return compiler->stack_word_size;
 		}
+		case Ast_Distinct: return get_align(((AstDistinct *)type)->expression, check_struct);
 		default: {
 			invalid_code_path();
 			return 0;

@@ -589,7 +589,24 @@ Basically the rule is:
 
 Note that empty statements and block statements, like `while`, `defer` and others, can not be terminated with a semicolon.
 A semicolon after such statement will always be independent
-# Compile time queries
+# Compile time stuff
+## Type of
+You can get the type of an expression by prefixing it with `#typeof`
+```java
+#typeof expression // returns the type of expression
+
+x := "Hello"
+y: #typeof x // y is a String
+```
+## Printing
+You can print type names and constant values at compile time
+```java
+#print "Hello"
+
+x := 12
+#print #typeof x // prints S64
+```
+## Source location
 ```java
 #line // line number
 
@@ -602,42 +619,47 @@ A semicolon after such statement will always be independent
 #function // function type string
 // NOTE: this directive includes return type name.
 // If the return type is explicitly specified, #function is usable in constant
-// context. Otherwise it will result in "undefined". If no return type was
-// specified, #function has to be evaluated after typechecking the entire body.
-// But constant expressions have to be evaluated as they are encountered, which
+// context. Otherwise it will result in "undefined", because return type is not
+// deduced yet, so it will be available only after typechecking the entire body.
+// Constant expressions have to be evaluated as they are encountered, which
 // is always before inferring the return type, meaning that you can't use this
 // directive in constant context.
+
+// Because of that this function will return 1, as #function evaluates to "undefined"
 paradox :: () {
   #if #function contains "Int" {
-    return true // makes #function return "(): Bool"
+    return true // makes #function return "() Bool"
   } else {
-    return 1 // makes #function return "(): Int"
+    return 1 // makes #function return "() Int"
   }
 }
-////////////////////////////
 
-// TODO: implement
-#definition // current definition name
-// Example:
-Thing :: struct {
-  name := #definition // evaluates to "Thing"
-  do_stuff :: () {
-    return #definition // returns "do_stuff"
-  }
-}
-////////////////////////////
-
+foo :: (a, b: Int) Float => #function // will return "(a: Int, b: Int) Float"
+// NOTE: argument names are included in the signature, because of
+//       overloading on argument names.
+```
+### TODO: #definition
+## Assertions
+```java
 #assert expression // assert at compile time that expression evaluates to `true`
-
-#print expression // prints the value at compile time
-
-#typeof expression // returns the type of expression
-
+```
+## Test if compiles
+```java
 #compiles statement // Evaluates to true or false depending if the
                     // following statement compiles or not.
                     // That block will not be evaluated at runtime.
-
-# lambda // evaluate lambda at compile time.
+// Example:
+#assert !#compiles { "Hello" + "World" }
+```
+## Evaluate
+```java
+# lambda // evaluates lambda at compile time, returns it's result
+// Example:
+result :: # () {
+  println("Hello world!") // This is executed at compile time!
+  return 42
+}
+// result is a constant 42
 ```
 # Types
 ## Builtin types

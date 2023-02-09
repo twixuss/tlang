@@ -33,6 +33,7 @@ void print_lowered(AstExpression *expression) {
 	void print_lowered(AstSpan *);
 	void print_lowered(AstBlock *);
 	void print_lowered(AstMatch *);
+	void print_lowered(AstDistinct *);
 
 	auto print_if_needed = [&] (char c) {
 		switch (expression->kind) {
@@ -65,6 +66,7 @@ void print_lowered(AstExpression *expression) {
 		case Ast_Span:             print_lowered((AstSpan             *)expression); break;
 		case Ast_Block:            print_lowered((AstBlock            *)expression); break;
 		case Ast_Match:            print_lowered((AstMatch            *)expression); break;
+		case Ast_Distinct:         print_lowered((AstDistinct         *)expression); break;
 		default:
 			print("!unknown expression!");
 			break;
@@ -463,6 +465,10 @@ void print_lowered(AstMatch * match) {
 
 	tab_count -= 1;
 	print_tabbed("}\n");
+}
+void print_lowered(AstDistinct * Distinct) {
+	print("#distinct ");
+	print_lowered(Distinct->expression);
 }
 
 void print_lowered() {

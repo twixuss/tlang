@@ -1713,8 +1713,16 @@ void FrameBuilder::append_cast(RegisterOrAddress src, AstExpression *src_type, R
 		return 0;
 	};
 
+	src_type = direct_through_distinct(src_type);
+	dst_type = direct_through_distinct(dst_type);
+
 	AstExpression *from = get_internal_representation(src_type);
 	AstExpression *to   = get_internal_representation(dst_type);
+
+	if (types_match(from, to)) {
+		copy(dst, src, get_size(src_type), false);
+		return;
+	}
 
 	{
 		auto array = as<AstArray>(from);
@@ -2139,6 +2147,9 @@ void FrameBuilder::append(AstBinaryOperator *bin, RegisterOrAddress destination)
 	auto left = bin->left;
 	auto right = bin->right;
 
+	auto left_type = direct_through_distinct(left->type);
+	auto right_type = direct_through_distinct(right->type);
+
 	switch (bin->operation) {
 		using enum BinaryOperation;
 		case dot: {
@@ -2146,15 +2157,15 @@ void FrameBuilder::append(AstBinaryOperator *bin, RegisterOrAddress destination)
 				case Ast_Identifier: {
 					AstStruct *Struct = 0;
 					bool is_pointer = false;
-					if (auto pointer = as_pointer(left->type)) {
+					if (auto pointer = as_pointer(left_type)) {
 						Struct = direct_as<AstStruct>(pointer->expression);
 						is_pointer = true;
 					} else {
-						Struct = direct_as<AstStruct>(left->type);
+						Struct = direct_as<AstStruct>(left_type);
 					}
 
 					if (Struct) {
-						auto struct_size = get_size(left->type);
+						auto struct_size = get_size(left_type);
 
 
 						assert(right->kind == Ast_Identifier);
@@ -2194,7 +2205,7 @@ void FrameBuilder::append(AstBinaryOperator *bin, RegisterOrAddress destination)
 							free_temporary_register(member_address);
 					} else {
 						not_implemented();
-						//assert(is_sized_array(left->type));
+						//assert(is_sized_array(left_type));
 					}
 
 					break;
@@ -2218,9 +2229,7 @@ void FrameBuilder::append(AstBinaryOperator *bin, RegisterOrAddress destination)
 		case bsl: {
 			APPEND2(l, append, left, r, append, right);
 
-			auto lt = direct(bin->left->type);
-
-			if (lt == compiler->builtin_f32.Struct) {
+			if (types_match(left_type, compiler->builtin_f32)) {
 				switch (bin->operation) {
 					case add:  I(add4_ff, l, r); break;
 					case sub:  I(sub4_ff, l, r); break;
@@ -2228,7 +2237,7 @@ void FrameBuilder::append(AstBinaryOperator *bin, RegisterOrAddress destination)
 					case div:  I(div4_ff, l, r); break;
 					default: invalid_code_path(bin->location);
 				}
-			} else if (lt == compiler->builtin_f64.Struct) {
+			} else if (types_match(left_type, compiler->builtin_f64)) {
 				switch (bin->operation) {
 					case add:  I(add8_ff, l, r); break;
 					case sub:  I(sub8_ff, l, r); break;
@@ -2236,20 +2245,20 @@ void FrameBuilder::append(AstBinaryOperator *bin, RegisterOrAddress destination)
 					case div:  I(div8_ff, l, r); break;
 					default: invalid_code_path(bin->location);
 				}
-			} else if (::is_integer_or_pointer(lt)) {
-				if (auto pointer = as_pointer(lt)) {
+			} else if (::is_integer_or_pointer(left_type)) {
+				if (auto pointer = as_pointer(left_type)) {
 					I(mul_rc, r, get_size(pointer->expression));
 				}
 				switch (bin->operation) {
 					case add:  I(add_rr, l, r); break;
 					case sub:  I(sub_rr, l, r); break;
 					case mul:  I(mul_rr, l, r); break;
-					case div:  if (::is_signed(lt)) I(divs_rr, l, r); else I(divu_rr, l, r); break;
-					case mod:  if (::is_signed(lt)) I(mods_rr, l, r); else I(modu_rr, l, r); break;
+					case div:  if (::is_signed(left_type)) I(divs_rr, l, r); else I(divu_rr, l, r); break;
+					case mod:  if (::is_signed(left_type)) I(mods_rr, l, r); else I(modu_rr, l, r); break;
 					case bor:  I( or_rr, l, r); break;
 					case band: I(and_rr, l, r); break;
 					case bxor: I(xor_rr, l, r); break;
-					case bsr:  if (::is_signed(lt)) I(sar_rr, l, r); else I(slr_rr, l, r); break;
+					case bsr:  if (::is_signed(left_type)) I(sar_rr, l, r); else I(slr_rr, l, r); break;
 					case bsl:  I(shl_rr, l, r); break;
 					default: invalid_code_path(bin->location);
 				}
@@ -2260,7 +2269,7 @@ void FrameBuilder::append(AstBinaryOperator *bin, RegisterOrAddress destination)
 			if (destination.is_in_register) {
 				I(mov_rr, destination.reg, l);
 			} else {
-				mov_mr(destination.address, l, get_size(lt));
+				mov_mr(destination.address, l, get_size(left_type));
 			}
 
 			break;
@@ -2271,7 +2280,7 @@ void FrameBuilder::append(AstBinaryOperator *bin, RegisterOrAddress destination)
 		case ge:
 		case eq:
 		case ne: {
-			if (types_match(left->type, compiler->builtin_string)) {
+			if (types_match(left_type, compiler->builtin_string)) {
 				auto la = append(left).ensure_address();
 				auto ra = append(right).ensure_address();
 
@@ -2333,9 +2342,9 @@ void FrameBuilder::append(AstBinaryOperator *bin, RegisterOrAddress destination)
 
 			// FIXME: deduplicate following branches
 			if (destination.is_in_register) {
-				if (::is_integer_internally(left->type)) {
-					if (::is_signed(left->type)) {
-						switch (get_size(left->type)) {
+				if (::is_integer_internally(left_type)) {
+					if (::is_signed(left_type)) {
+						switch (get_size(left_type)) {
 							case 1: I(cmps1, .d=destination.reg, .a=rl, .b=rr, .c = comparison); break;
 							case 2: I(cmps2, .d=destination.reg, .a=rl, .b=rr, .c = comparison); break;
 							case 4: I(cmps4, .d=destination.reg, .a=rl, .b=rr, .c = comparison); break;
@@ -2343,7 +2352,7 @@ void FrameBuilder::append(AstBinaryOperator *bin, RegisterOrAddress destination)
 							default: invalid_code_path(bin->location);
 						}
 					} else {
-						switch (get_size(left->type)) {
+						switch (get_size(left_type)) {
 							case 1: I(cmpu1, .d=destination.reg, .a=rl, .b=rr, .c = comparison); break;
 							case 2: I(cmpu2, .d=destination.reg, .a=rl, .b=rr, .c = comparison); break;
 							case 4: I(cmpu4, .d=destination.reg, .a=rl, .b=rr, .c = comparison); break;
@@ -2351,13 +2360,13 @@ void FrameBuilder::append(AstBinaryOperator *bin, RegisterOrAddress destination)
 							default: invalid_code_path(bin->location);
 						}
 					}
-				} else if (::is_float(left->type)) {
-					switch (get_size(left->type)) {
+				} else if (::is_float(left_type)) {
+					switch (get_size(left_type)) {
 						case 4: I(cmpf4, .d=destination.reg, .a=rl, .b=rr, .c = comparison); break;
 						case 8: I(cmpf8, .d=destination.reg, .a=rl, .b=rr, .c = comparison); break;
 						default: invalid_code_path(bin->location);
 					}
-				} else if (::types_match(left->type, compiler->builtin_bool)) {
+				} else if (::types_match(left_type, compiler->builtin_bool)) {
 					switch (comparison) {
 						case Comparison::e:
 							I(xor_rr, rl, rr);
@@ -2376,9 +2385,9 @@ void FrameBuilder::append(AstBinaryOperator *bin, RegisterOrAddress destination)
 				}
 			} else {
 				tmpreg(r2);
-				if (::is_integer_internally(left->type)) {
-					if (::is_signed(left->type)) {
-						switch (get_size(left->type)) {
+				if (::is_integer_internally(left_type)) {
+					if (::is_signed(left_type)) {
+						switch (get_size(left_type)) {
 							case 1: I(cmps1, .d=r2, .a=rl, .b=rr, .c = comparison); break;
 							case 2: I(cmps2, .d=r2, .a=rl, .b=rr, .c = comparison); break;
 							case 4: I(cmps4, .d=r2, .a=rl, .b=rr, .c = comparison); break;
@@ -2386,7 +2395,7 @@ void FrameBuilder::append(AstBinaryOperator *bin, RegisterOrAddress destination)
 							default: invalid_code_path(bin->location);
 						}
 					} else {
-						switch (get_size(left->type)) {
+						switch (get_size(left_type)) {
 							case 1: I(cmpu1, .d=r2, .a=rl, .b=rr, .c = comparison); break;
 							case 2: I(cmpu2, .d=r2, .a=rl, .b=rr, .c = comparison); break;
 							case 4: I(cmpu4, .d=r2, .a=rl, .b=rr, .c = comparison); break;
@@ -2395,14 +2404,14 @@ void FrameBuilder::append(AstBinaryOperator *bin, RegisterOrAddress destination)
 						}
 					}
 					I(mov1_mr, destination.address, r2);
-				} else if (::is_float(left->type)) {
-					switch (get_size(left->type)) {
+				} else if (::is_float(left_type)) {
+					switch (get_size(left_type)) {
 						case 4: I(cmpf4, .d=r2, .a=rl, .b=rr, .c = comparison); break;
 						case 8: I(cmpf8, .d=r2, .a=rl, .b=rr, .c = comparison); break;
 						default: invalid_code_path(bin->location);
 					}
 					I(mov1_mr, destination.address, r2);
-				} else if (::types_match(left->type, compiler->builtin_bool)) {
+				} else if (::types_match(left_type, compiler->builtin_bool)) {
 					switch (comparison) {
 						case Comparison::e:
 							I(xor_rr, rl, rr);
@@ -2454,7 +2463,7 @@ void FrameBuilder::append(AstBinaryOperator *bin, RegisterOrAddress destination)
 					mov_rm(dst, dst_addr.address, compiler->stack_word_size);
 				}
 
-				auto size = get_size(bin->left->type);
+				auto size = get_size(left_type);
 
 				copy(Address(dst), src, size, false);
 			}
@@ -2472,7 +2481,7 @@ void FrameBuilder::append(AstBinaryOperator *bin, RegisterOrAddress destination)
 				I(mov8_rm, dst, dst_rm.address);
 			}
 
-			auto size = get_size(bin->left->type);
+			auto size = get_size(left_type);
 
 			if (src.is_in_register) {
 				mov_mr(size, dst, src.reg);
@@ -2492,7 +2501,7 @@ void FrameBuilder::append(AstBinaryOperator *bin, RegisterOrAddress destination)
 		case bxorass:
 		case bslass:
 		case bsrass: {
-			assert(get_size(bin->right->type) <= compiler->stack_word_size);
+			assert(get_size(right_type) <= compiler->stack_word_size);
 
 			APPEND2(
 				dst, load_address_of, bin->left,
@@ -2500,23 +2509,23 @@ void FrameBuilder::append(AstBinaryOperator *bin, RegisterOrAddress destination)
 			);
 
 			if (::is_integer_or_pointer(bin->type)) {
-				if (auto pointer = as_pointer(bin->left->type)) {
+				if (auto pointer = as_pointer(left_type)) {
 					I(mul_rc, src, get_size(pointer->expression));
 				}
 
-				auto size = get_size(bin->right->type);
+				auto size = get_size(right_type);
 
 				switch (bin->operation) {
 					case addass:  add_mr(Address(dst), src, size); break;
 					case subass:  sub_mr(Address(dst), src, size); break;
 					case mulass:  mul_mr(Address(dst), src, size); break;
-					case divass:  if (::is_signed(bin->left->type)) divs_mr(Address(dst), src, size); else divu_mr(Address(dst), src, size); break;
-					case modass:  if (::is_signed(bin->left->type)) mods_mr(Address(dst), src, size); else modu_mr(Address(dst), src, size); break;
+					case divass:  if (::is_signed(left_type)) divs_mr(Address(dst), src, size); else divu_mr(Address(dst), src, size); break;
+					case modass:  if (::is_signed(left_type)) mods_mr(Address(dst), src, size); else modu_mr(Address(dst), src, size); break;
 					case borass:   or_mr(Address(dst), src, size); break;
 					case bandass: and_mr(Address(dst), src, size); break;
 					case bxorass: xor_mr(Address(dst), src, size); break;
 					case bslass:  shl_mr(Address(dst), src, size); break;
-					case bsrass:  if (::is_signed(bin->left->type)) sar_mr(Address(dst), src, size); else slr_mr(Address(dst), src, size); break;
+					case bsrass:  if (::is_signed(left_type)) sar_mr(Address(dst), src, size); else slr_mr(Address(dst), src, size); break;
 					default: invalid_code_path(bin->location);
 				}
 			} else if (::is_float(bin->type)) {
@@ -2940,15 +2949,11 @@ void FrameBuilder::append(AstCall *call, RegisterOrAddress destination) {
 				invalid_code_path();
 		}
 #endif
-		return;
-	} else {
-		auto Struct = direct_as<AstStruct>(call->callable);
-		assert(Struct);
-
+	} else if (auto Struct = direct_as<AstStruct>(call->callable)) {
 		append_struct_initializer(Struct, call->sorted_arguments, destination);
-		return;
+	} else {
+		invalid_code_path(call->location);
 	}
-	invalid_code_path(call->location);
 }
 void FrameBuilder::append(AstLiteral *literal, RegisterOrAddress destination) {
 	if (literal->literal_kind == LiteralKind::string)
@@ -2958,7 +2963,7 @@ void FrameBuilder::append(AstLiteral *literal, RegisterOrAddress destination) {
 
 	assert(!types_match(literal->type, compiler->builtin_unsized_integer.Struct));
 	assert(!types_match(literal->type, compiler->builtin_unsized_float.Struct));
-	auto dtype = direct(literal->type);
+	auto dtype = direct_through_distinct(literal->type);
 
 	using enum LiteralKind;
 
