@@ -51,6 +51,10 @@ RanProcess run_process(String command) {
 
 	bool timed_out = !wait(process, 5000);
 
+	if (timed_out) {
+		terminate(process);
+	}
+
 	RanProcess result {
 		.exit_code = get_exit_code(process),
 		.output = as_utf8(to_string(output_builder)),

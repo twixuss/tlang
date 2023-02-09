@@ -7,11 +7,6 @@
 // TODO: Figure this out.
 #define OPTIMIZE_BYTECODE 0
 
-struct Relocation {
-	umm instruction_index;
-	AstLambda *lambda;
-};
-
 struct StringInfo {
 	s64 data_and_size_offset;
 	s64 string_offset;
@@ -417,9 +412,6 @@ struct BytecodeBuilder {
 
 	List<InstructionThatReferencesLambda> instructions_that_reference_lambdas;
 
-	List<Relocation> local_relocations;
-	List<Relocation> global_relocations;
-
 	Map<String, s64> constant_strings;
 
 	// FrameBuilder *current_frame = 0;
@@ -505,13 +497,13 @@ void remove_last_instruction(BytecodeBuilder &builder) {
 		name1 = CONCAT(_1, __LINE__).reg; \
 	} else { \
 		name1 = allocate_temporary_register(); \
-		mov_rm(name1, CONCAT(_1, __LINE__).address, get_size(source1->type)); \
+		mov_rm(name1, CONCAT(_1, __LINE__).address, #append1##s == "append"s ? get_size(source1->type) : compiler->stack_word_size); \
 	} \
 	if (CONCAT(_2, __LINE__).is_in_register) { \
 		name2 = CONCAT(_2, __LINE__).reg; \
 	} else { \
 		name2 = allocate_temporary_register(); \
-		mov_rm(name2, CONCAT(_2, __LINE__).address, get_size(source2->type)); \
+		mov_rm(name2, CONCAT(_2, __LINE__).address, #append2##s == "append"s ? get_size(source2->type) : compiler->stack_word_size); \
 	}
 
 void FrameBuilder::copy(RegisterOrAddress dst, RegisterOrAddress src, s64 size, bool reverse) {
@@ -531,10 +523,9 @@ void FrameBuilder::copy(RegisterOrAddress dst, RegisterOrAddress src, s64 size, 
 			REDECLARE_VAL(src, src.address);
 			REDECLARE_VAL(dst, dst.address);
 
-			tmpreg(intermediary);
-
 			if (size <= 16) {
 				s64 copied = 0;
+				tmpreg(intermediary);
 
 #define C(n) \
 	while (copied + n <= size) { \
@@ -1130,17 +1121,22 @@ Instruction *FrameBuilder::add_instruction(Instruction next) {
 }
 
 Address get_known_address_of(AstDefinition *definition) {
+
+	auto origin = get_definition_origin(definition);
+
+	if (definition->is_constant && definition->expression)
+		if (auto lambda = as<AstLambda>(definition->expression))
+			return Register::instructions + lambda->location_in_bytecode;
+
 	if (definition->offset == -1) {
 		invalid_code_path(definition->location, "INTERNAL ERROR: definition->offset is -1 in get_known_address_of");
 	}
 
 	auto offset = definition->offset;
 
-	switch (get_definition_origin(definition))
+	switch (origin)
 	{
 		case DefinitionOrigin::constants:
-			if (definition->expression && is_lambda(definition->expression))
-				return Register::instructions + offset;
 			return Register::constants + offset;
 
 		case DefinitionOrigin::rwdata:           return Register::rwdata + offset;
@@ -1320,8 +1316,7 @@ void FrameBuilder::load_address_of(AstExpression *expression, RegisterOrAddress 
 					default: invalid_code_path(subscript->location);
 				}
 				I(jlf_c, 2);
-				push_comment(format(u8"bounds check failed for {}"s, subscript->location));
-				I(debug_break);
+				I(debug_error, format(u8"bounds check failed for {} at {}"s, subscript->location, where(subscript->location.data)));
 				I(jmp_label);
 
 				I(mul_rc, index, get_size(subscript->type));
@@ -1654,7 +1649,7 @@ void FrameBuilder::append(AstWhile *While) {
 	for (auto &jmp : loop_control_stack.pop().value()) {
 		switch (jmp.control) {
 			case LoopControl::Break:
-				jmp.jmp->jmp.offset = (s64)count_after_body - (s64)jmp.index + 2;
+				jmp.jmp->jmp.offset = (s64)count_after_body - (s64)jmp.index + 1;
 				break;
 			case LoopControl::Continue:
 				jmp.jmp->jmp.offset = (s64)count_before_condition - (s64)jmp.index;
@@ -1688,6 +1683,9 @@ void FrameBuilder::append(AstLoopControl *LoopControl) {
 
 	// TODO: FIXME: with that way of executing defers there may be A LOT of repeating instructions in
 	// loops with a lot of breaks/continues an defers. Maybe there is a better way to do this?
+	//
+	// I think about making defer a lambda with capture stored on stack.
+
 	auto scope = LoopControl->parent_scope;
 	while (1) {
 		for (auto Defer : reverse_iterate(scope->bytecode_defers)) {
@@ -1698,8 +1696,8 @@ void FrameBuilder::append(AstLoopControl *LoopControl) {
 		}
 		scope = scope->parent;
 	}
-	auto instr = II(jmp);
 	auto index = count_of(instructions);
+	auto instr = II(jmp);
 	loop_control_stack.back().add({index, instr, LoopControl->control});
 }
 
@@ -2638,12 +2636,12 @@ void FrameBuilder::append(AstIdentifier *identifier, RegisterOrAddress destinati
 	if (definition->is_constant && definition->expression) {
 		if (auto lambda = get_lambda(definition->expression)) {
 			if (lambda->body) {
-				assert(definition->offset != -1);
+				assert(lambda->location_in_bytecode != -1);
 				if (destination.is_in_register) {
-					I(lea, destination.reg, Register::instructions + definition->offset);
+					I(lea, destination.reg, Register::instructions + lambda->location_in_bytecode);
 				} else {
 					tmpreg(r0);
-					I(lea, r0, Register::instructions + definition->offset);
+					I(lea, r0, Register::instructions + lambda->location_in_bytecode);
 					mov_mr(destination.address, r0, compiler->stack_word_size);
 				}
 			} else {
@@ -2791,6 +2789,36 @@ void FrameBuilder::append(AstCall *call, RegisterOrAddress destination) {
 				tmpreg(r0);
 				I(mov8_rm, r0, Register::rs + 0);
 				I(sqrt8_f, r0);
+				copy(destination, r0, 8, false);
+			} else if (name == "floor_F32") {
+				tmpreg(r0);
+				I(mov4_rm, r0, Register::rs + 0);
+				I(floor4_f, r0);
+				copy(destination, r0, 4, false);
+			} else if (name == "floor_F64") {
+				tmpreg(r0);
+				I(mov8_rm, r0, Register::rs + 0);
+				I(floor8_f, r0);
+				copy(destination, r0, 8, false);
+			} else if (name == "ceil_F32") {
+				tmpreg(r0);
+				I(mov4_rm, r0, Register::rs + 0);
+				I(ceil4_f, r0);
+				copy(destination, r0, 4, false);
+			} else if (name == "ceil_F64") {
+				tmpreg(r0);
+				I(mov8_rm, r0, Register::rs + 0);
+				I(ceil8_f, r0);
+				copy(destination, r0, 8, false);
+			} else if (name == "round_F32") {
+				tmpreg(r0);
+				I(mov4_rm, r0, Register::rs + 0);
+				I(round4_f, r0);
+				copy(destination, r0, 4, false);
+			} else if (name == "round_F64") {
+				tmpreg(r0);
+				I(mov8_rm, r0, Register::rs + 0);
+				I(round8_f, r0);
 				copy(destination, r0, 8, false);
 			//} else if (name == "round") {
 			//	assert(types_match(call->sorted_arguments[0]->type, compiler->builtin_f64));
@@ -3021,6 +3049,26 @@ void FrameBuilder::append(AstLiteral *literal, RegisterOrAddress destination) {
 			copy(destination, Register::constants + literal->struct_offset, get_size(literal->type), false);
 			break;
 		}
+		case pointer: {
+			auto source = [&] {
+				switch (literal->pointer.section) {
+					case SectionKind::data_readonly: return Register::constants;
+					case SectionKind::data_readwrite: return Register::rwdata;
+					case SectionKind::data_zero: return Register::zeros;
+					case SectionKind::code: return Register::instructions;
+					default: invalid_code_path();
+				}
+			}();
+
+			if (destination.is_in_register) {
+				I(lea, destination.reg, source + literal->pointer.offset);
+			} else {
+				tmpreg(r0);
+				I(lea, r0, source + literal->pointer.offset);
+				mov_mr(destination.address, r0, compiler->stack_word_size);
+			}
+			break;
+		}
 		default: invalid_code_path(literal->location);
 	}
 }
@@ -3132,21 +3180,24 @@ void FrameBuilder::append(AstUnaryOperator *unop, RegisterOrAddress destination)
 		case unwrap: {
 			auto option = append(unop->expression);
 			defer { if (option.is_in_register) free_register(option.reg); };
-			assert(!option.is_in_register);
-			assert(!destination.is_in_register);
 
 			auto value_size = get_size(unop->type);
 
-			{
+			if (option.is_in_register) {
+				tmpreg(r0);
+				I(mov_rr, r0, option.reg);
+				I(slr_rc, r0, value_size * 8);
+				I(and_rc, r0, 0xff);
+				I(jnz_cr, 2, r0);
+			} else {
 				tmpreg(r0);
 				I(mov1_rm, r0, option.address + value_size);
 				I(jnz_cr, 2, r0);
 			}
-			push_comment(format("{} didn't have a value. unwrap failed."str, unop->expression->location));
-			I(debug_break);
+			I(debug_error, format("{} didn't have a value at {}"str, unop->expression->location, where(unop->expression->location.data)));
 			I(jmp_label);
 
-			copy(destination.address, option.address, value_size, false);
+			copy(destination, option, value_size, false);
 			break;
 		}
 		case autocast: {
@@ -4468,9 +4519,6 @@ void BytecodeBuilder::append(AstLambda *lambda) {
 	assert(lambda->location_in_bytecode == -1);
 
 	lambda->location_in_bytecode = first_instruction;
-	if (lambda->definition)
-		lambda->definition->offset = first_instruction;
-
 
 	if (lambda->is_poly) {
 		for (auto hardened : lambda->cached_instantiations) {

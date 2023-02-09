@@ -12,3 +12,4 @@ bin/*
 devtest/
 *.args.json
 notes.txt
+*.vcxproj.user

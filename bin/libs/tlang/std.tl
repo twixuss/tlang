@@ -5,6 +5,18 @@ bitas :: (value: $T, type: %Type) {
     return *(&value as *type)
 }
 
+get_end :: (span: String) => span.data + span.count
+set_end :: (span: *String, new_end: *U8) {
+    span.count = new_end - span.data
+}
+
+get_begin :: (span: String) => span.data
+set_begin :: (span: *String, new_begin: *U8) {
+    new_count := span.end - new_begin
+    span.data = new_begin
+    span.count = new_count
+}
+
 CString :: *struct{}
 
 operator as implicit :: (s: CString) *U8 => @s
@@ -20,6 +32,7 @@ strlen :: (str: *U8) {
 
 min :: (a: $T, b: T) => if a < b then a else b
 max :: (a: $T, b: T) => if a < b then b else a
+clamp :: (v, _min, _max: $T) => min(_max, max(_min, v))
 
 lerp :: (a: $T, b: T, t: $U) => a + (b - a) * t
 lerp :: (a: $T, b: T, c: T, t: $U) => a + t * (2 * (b - a) + t * (a - 2 * b + c))
@@ -71,6 +84,106 @@ starts_with :: (haystack, needle: String) {
 }
 
 
+is_digit :: (c: U8) => '0' <= c && c <= '9'
+is_whitespace :: (c: U8) => c == ' ' || c == '\n' || c == '\t' || c =='\v'
+
+get_first :: (s: String) => s[0]
+set_first :: (s: String, c: U8) => s[0] = c
+
+get_last :: (s: String) => s[s.count-1]
+set_last :: (s: String, c: U8) => s[s.count-1] = c
+
+trim :: (s: *String) {
+	while s.count != 0 {
+		if !s.first.is_whitespace()
+			break
+		s.begin += 1
+	}
+
+	while s.count != 0 {
+		if !s.last.is_whitespace()
+			break
+		s.end -= 1
+	}
+}
+
+chop_s64 :: (s: *String) ?S64 {
+	if s.count == 0
+		return null
+
+	negative := false
+	if s.data[0] == '-' {
+		s.begin += 1
+		negative = true
+	}
+
+	integer_string := String(s.data, 0)
+	while s.count != 0 {
+		if !is_digit(s.data)
+			break
+		s.begin += 1
+		integer_string.count += 1
+	}
+
+	if integer_string.count == 0
+		return null
+
+	result := 0
+
+	for c in integer_string {
+		result *= 10
+		result += c - '0'
+	}
+
+	if negative
+		result = -result
+	return result
+}
+
+chop_f64 :: (s: *String) ?F64 {
+	if s.count == 0
+		return null
+
+	negative := false
+	if s.data[0] == '-' {
+		s.begin += 1
+		negative = true
+	}
+
+	integer_part := s.chop_s64()
+	if !integer_part
+		return null
+
+	result := *integer_part as F64
+
+	if s.count != 0 && s.data[0] == '.' {
+		s.begin += 1
+
+		start_count := s.count
+		fraction_part := s.chop_s64()
+		if fraction_part {
+			div := 1.0
+			for i in s.count..start_count
+				div *= 10
+
+
+			result += *fraction_part as F64 / div
+		}
+	}
+	if negative
+		result = -result
+	return result
+}
+
+chop_f32 :: (s: *String) ?F32 => chop_f64(s).map(F32)
+
+map :: (x: ?$T, t: %Type) ?t {
+	if x
+		return *x as t
+	else
+		return null
+}
+
 write_to_stdout :: (str: String) {
     GetStdHandle(STD_OUTPUT_HANDLE).WriteFile(str.data, str.count as U32, null, null)
     return str.count
@@ -85,7 +198,7 @@ set_console_color :: (color: RGB_U8, background := false) {
     if color.g >= 128 then mask |= 0x2
     if color.b >= 128 then mask |= 0x1
     if background then mask <<= 4
-    GetStdHandle(STD_OUTPUT_HANDLE).SetConsoleTextAttribute(mask as DWORD);
+    GetStdHandle(STD_OUTPUT_HANDLE).SetConsoleTextAttribute(mask as DWORD)
 }
 
 StringizeCallback :: (state: *Void, str: String) Int #type
@@ -214,133 +327,69 @@ set_sign :: (v: F32, s: F32) => ((v bitas U32 & 0x7fff_ffff) | (s bitas U32 & 0x
 get_length :: (v: F32) => absolute(v)
 set_length :: (v: F32, new_length: F32) => v.sign * new_length
 
-stringize :: (_val: F64, state: *Void, callback: StringizeCallback) {
-    bytes_written: Int
+modulo :: (a, b: F32) => set_sign(a - (a / b) as S32 as F32 * b, a)
+frac :: (a: F32) => a - floor(a)
+frac :: (a: F64) => a - floor(a)
+frac :: (a, b: F32) => frac(a / b) * b
+frac :: (a, b: F64) => frac(a / b) * b
 
+pi :: 3.1415926535897932384626433832795
+tau :: pi*2
+
+sin :: (_v: F32) {
+	v := frac(_v, tau)
+	mask := v >= pi
+	v = if mask then v - pi else v
+	return (16 * v * (pi - v)) / (5 * pi * pi - 4 * v * (pi - v)) * if mask then -1 as F32 else 1 as F32
+}
+cos :: (v: F32) => sin(v + pi*0.5)
+tan :: (v: F32) => sin(v) / cos(v)
+
+stringize :: (_val: F64, state: *Void, callback: StringizeCallback) bytes_written: Int {
     val := _val
-
-    if val.is_nan() {
-        return callback(state, "NaN")
-    }
-
     if val < 0 {
         val = -val
         bytes_written += callback(state, "-")
     }
 
-    if val.is_infinity() {
+    if val.is_nan()
+        return callback(state, "nan")
+
+    if val.is_infinity()
         return callback(state, "inf")
-    }
 
-    // CAPACITY :: 256
-    // buffer: U8[CAPACITY]
-    // begin := CAPACITY
-    // while val >= 1 {
-    //     begin -= 1
-    //     buffer[begin] = @((fraction(val/10)*10) as Int - '0')
-    //     val /= 10
-    // }
-    //callback(state, String(@&buffer[begin], @(CAPACITY - begin)))
-
-    /*
-    // BINARY EXPONENT NOTATION
-    u := *(&val as *U64)
-
-    s := u >> 63
-    e := ((u >> 52) & 2047) - 1023
-    m := u & 4503599627370495
-
-    callback(state, "1.")
-
-    precision :: 3
-    buffer: U8[precision+1]
-
-    i := 0
-    while i < buffer.count {
-        /*
-        if (m & 0x8_0000_0000_0000) == 0 callback(state, "0")
-        else                             callback(state, "1")
-
-        m *= 2
-
-        */
-             if m < 450359962737049  buffer[i] = 0
-        else if m < 900719925474099  buffer[i] = 1
-        else if m < 1351079888211148 buffer[i] = 2
-        else if m < 1801439850948198 buffer[i] = 3
-        else if m < 2251799813685248 buffer[i] = 4
-        else if m < 2702159776422297 buffer[i] = 5
-        else if m < 3152519739159347 buffer[i] = 6
-        else if m < 3602879701896396 buffer[i] = 7
-        else if m < 4053239664633446 buffer[i] = 8
-        else                         buffer[i] = 9
-
-        m *= 10
-        m &= 0xF_FFFF_FFFF_FFFF
-
-        i += 1
-    }
-
-    if buffer[buffer.count - 1] >= 5
-        buffer[buffer.count - 2] += 1
-
-    i = buffer.count - 1
-    while i >= 0 {
-        if buffer[i] >= 10 {
-            buffer[i] -= 10
-            if i-1 >= 0
-                buffer[i-1] += 1
-            else
-                e += 1
-        }
-        i -= 1
-    }
-
-    i = 0
-    while i < buffer.count {
-        buffer[i] += '0'
-        i += 1
-    }
-
-    callback(state, String(buffer.data, precision))
-    callback(state, "*2^")
-    stringize(e, state, callback)
-    */
-
-    // DECIMAL, NOT IDEAL PRECISION
-    precision :: 3
-    i := 1
-    floored := 0
-    divisor := 1.0
-
-    while divisor * 10 < val {
-        divisor *= 10
-        i += 1
-    }
-
-    val /= divisor
-
-    while i > 0 {
-        i -= 1
-        floored = val as S64
-        bytes_written += stringize(floored, state, callback)
-        val -= floored as F64
-        val *= 10
-    }
-
+    bytes_written += stringize(val as S64, state, callback)
     bytes_written += callback(state, ".")
 
-    i = 0
-    while i < precision {
-        i += 1
 
-        floored = val as S64
-        bytes_written += stringize(floored, state, callback)
-        val -= floored as F64
-        val *= 10
+    {
+        ival := (frac(val) * 1000) as S64
+        if ival == 0 {
+            return callback(state, "000")
+        }
+
+        i := ival
+
+        CAPACITY :: 3
+        buffer: [CAPACITY]U8
+        dst_index := CAPACITY
+
+        while i != 0 {
+            digit := i % 10
+
+            dst_index -= 1
+            buffer[dst_index] = @(digit + '0')
+
+            i /= 10
+        }
+
+        while dst_index != 0 {
+            dst_index -= 1
+            buffer[dst_index] = '0'
+        }
+
+        bytes_written += callback(state, String(@&buffer[dst_index], @(CAPACITY - dst_index)))
     }
-
-    return bytes_written
 }
 stringize :: (_val: F32, state: *Void, callback: StringizeCallback) => stringize(_val as F64, state, callback)
 
@@ -681,7 +730,14 @@ read :: (file: HANDLE, span_: String) Int {
 	return total_bytes_read
 }
 
-read_entire_file :: (path: *U8) using result: String {
+Buffer :: struct {
+    data: String
+    allocator: Allocator
+}
+
+read_entire_file :: (path: *U8) using result: Buffer {
+    allocator = current_allocator
+
 	file := CreateFileA(path, GENERIC_READ, 0, null, OPEN_EXISTING, 0, null)
 	if file == INVALID_HANDLE_VALUE return
 
@@ -694,13 +750,21 @@ read_entire_file :: (path: *U8) using result: String {
 	SetFilePointerEx(file, 0, null, FILE_BEGIN)
 
 
-    result.data = @current_allocator.allocate(size)
-    result.count = size
+    data.data = @allocator.allocate(size)
+    data.count = size
 
-    read(file, result)
+    read(file, data)
 
     // FIXME: redundant
     return
+}
+
+read_entire_file :: (path: String) Buffer {
+    assert path.count < 256
+    buf: [256]U8
+    memcpy(buf.data, path.data, @path.count)
+    buf[path.count] = 0
+    return read_entire_file(buf.data)
 }
 
 Vector2 :: struct(T: Type) {
@@ -723,16 +787,22 @@ vector2 :: (v: $T) => Vector2(T)(v, v)
 vector3 :: (v: $T) => Vector3(T)(v, v, v)
 vector4 :: (v: $T) => Vector4(T)(v, v, v, v)
 
+vector4 :: (xyz: Vector3($T), w: T) => Vector4(T)(xyz.x, xyz.y, xyz.z, w)
+
+get_xyz :: (v: Vector4($T)) => Vector3(T)(v.x, v.y, v.z)
+
+operator - :: (v: Vector2($T)) => Vector2(T)(-v.x, -v.y)
+operator - :: (v: Vector3($T)) => Vector3(T)(-v.x, -v.y, -v.z)
+operator - :: (v: Vector4($T)) => Vector4(T)(-v.x, -v.y, -v.z, -v.w)
+
 operator + :: (a, b: Vector2($T)) => Vector2(T)(a.x + b.x, a.y + b.y)
 operator - :: (a, b: Vector2($T)) => Vector2(T)(a.x - b.x, a.y - b.y)
 operator * :: (a, b: Vector2($T)) => Vector2(T)(a.x * b.x, a.y * b.y)
 operator / :: (a, b: Vector2($T)) => Vector2(T)(a.x / b.x, a.y / b.y)
-
 operator + :: (a: Vector2($T), b: T) => Vector2(T)(a.x + b, a.y + b)
 operator - :: (a: Vector2($T), b: T) => Vector2(T)(a.x - b, a.y - b)
 operator * :: (a: Vector2($T), b: T) => Vector2(T)(a.x * b, a.y * b)
 operator / :: (a: Vector2($T), b: T) => Vector2(T)(a.x / b, a.y / b)
-
 operator + :: (a: $T, b: Vector2(T)) => Vector2(T)(a + b.x, a + b.y)
 operator - :: (a: $T, b: Vector2(T)) => Vector2(T)(a - b.x, a - b.y)
 operator * :: (a: $T, b: Vector2(T)) => Vector2(T)(a * b.x, a * b.y)
@@ -742,11 +812,27 @@ operator + :: (a, b: Vector3($T)) => Vector3(T)(a.x + b.x, a.y + b.y, a.z + b.z)
 operator - :: (a, b: Vector3($T)) => Vector3(T)(a.x - b.x, a.y - b.y, a.z - b.z)
 operator * :: (a, b: Vector3($T)) => Vector3(T)(a.x * b.x, a.y * b.y, a.z * b.z)
 operator / :: (a, b: Vector3($T)) => Vector3(T)(a.x / b.x, a.y / b.y, a.z / b.z)
+operator + :: (a: Vector3($T), b: T) => Vector3(T)(a.x + b, a.y + b, a.z + b)
+operator - :: (a: Vector3($T), b: T) => Vector3(T)(a.x - b, a.y - b, a.z - b)
+operator * :: (a: Vector3($T), b: T) => Vector3(T)(a.x * b, a.y * b, a.z * b)
+operator / :: (a: Vector3($T), b: T) => Vector3(T)(a.x / b, a.y / b, a.z / b)
+operator + :: (a: $T, b: Vector3(T)) => Vector3(T)(a + b.x, a + b.y, a + b.z)
+operator - :: (a: $T, b: Vector3(T)) => Vector3(T)(a - b.x, a - b.y, a - b.z)
+operator * :: (a: $T, b: Vector3(T)) => Vector3(T)(a * b.x, a * b.y, a * b.z)
+operator / :: (a: $T, b: Vector3(T)) => Vector3(T)(a / b.x, a / b.y, a / b.z)
 
 operator + :: (a, b: Vector4($T)) => Vector4(T)(a.x + b.x, a.y + b.y, a.z + b.z, a.w + b.w)
 operator - :: (a, b: Vector4($T)) => Vector4(T)(a.x - b.x, a.y - b.y, a.z - b.z, a.w - b.w)
 operator * :: (a, b: Vector4($T)) => Vector4(T)(a.x * b.x, a.y * b.y, a.z * b.z, a.w * b.w)
 operator / :: (a, b: Vector4($T)) => Vector4(T)(a.x / b.x, a.y / b.y, a.z / b.z, a.w / b.w)
+operator + :: (a: Vector4($T), b: T) => Vector4(T)(a.x + b, a.y + b, a.z + b, a.w + b)
+operator - :: (a: Vector4($T), b: T) => Vector4(T)(a.x - b, a.y - b, a.z - b, a.w - b)
+operator * :: (a: Vector4($T), b: T) => Vector4(T)(a.x * b, a.y * b, a.z * b, a.w * b)
+operator / :: (a: Vector4($T), b: T) => Vector4(T)(a.x / b, a.y / b, a.z / b, a.w / b)
+operator + :: (a: $T, b: Vector4(T)) => Vector4(T)(a + b.x, a + b.y, a + b.z, a + b.w)
+operator - :: (a: $T, b: Vector4(T)) => Vector4(T)(a - b.x, a - b.y, a - b.z, a - b.w)
+operator * :: (a: $T, b: Vector4(T)) => Vector4(T)(a * b.x, a * b.y, a * b.z, a * b.w)
+operator / :: (a: $T, b: Vector4(T)) => Vector4(T)(a / b.x, a / b.y, a / b.z, a / b.w)
 
 operator as explicit :: (using from: Vector2(S32)) => Vector2(F32)(@x, @y)
 operator as explicit :: (using from: Vector2(F32)) => Vector2(S32)(@x, @y)
@@ -823,7 +909,7 @@ linked_list :: (T: %Type) using list: LinkedList(T) {
 
 add :: (using list: *LinkedList($T), value: T = T()) {
     if head == null {
-        head = allocator.new(Node(T));
+        head = allocator.new(Node(T))
         tail = head
     } else {
         tail.next = allocator.new(Node(T))
@@ -860,35 +946,35 @@ HashMap :: struct(Key: Type, Value: Type) {
 // get_or_insert :: (using map: HashMap($Key, $Value), key: Key) {
 // }
 
-/*
 is_empty :: (span: []$T) => span.count == 0
 
-operator as implicit :: (span: []$T) => span.count != 0
+// operator as implicit :: (span: []$T) => span.count != 0
 
 List :: struct (T: Type) {
     data: []T
     capacity: Int
-    allocator := current_allocator
+    allocator: Allocator
 }
 
-reserve :: (using list: List($T), new_capacity: Int) {
+list :: (T: %Type) => List(T)(allocator = current_allocator)
+
+reserve :: (using list: *List($T), new_capacity: Int) {
     if capacity >= new_capacity
         return
 
     new_data := allocator.new(T, new_capacity)
 
-    if data {
-        memcpy(new_data, data, count * #sizeof T)
-        free(data)
+    if data.count != 0 {
+        memcpy(new_data, data.data, @(data.count * #sizeof T))
+        allocator.deallocate(data.data)
     }
 
-    data = new_data
+    data.data = new_data
     capacity = new_capacity
 }
 
-add :: (using list: List, value: list.T) {
-    list.reserve(count + 1)
-    data[count] = value
-    count += 1
+add :: (using list: *List($T), value: T) {
+    list.reserve(data.count + 1)
+    data.data[data.count] = value
+    data.count += 1
 }
-*/

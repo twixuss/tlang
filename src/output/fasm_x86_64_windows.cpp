@@ -79,9 +79,10 @@ static void append_instructions(Compiler *compiler, StringBuilder &builder, List
 		"push 0\n"
 		"cld\n"
 		"call i{}\n"
+		"call i{}\n"
 		"mov rcx, [rsp]\n"
 		"call [ExitProcess]\n"
-		"ret\n", compiler->main_lambda->location_in_bytecode);
+		"ret\n", compiler->init_runtime_lambda->location_in_bytecode, compiler->main_lambda->location_in_bytecode);
 
 	s64 idx = 0;
 	for (auto i : instructions) {
@@ -321,7 +322,7 @@ _debug_error:
 	xor rcx, rcx
 	xor r8, r8
 	xor r9, r9
-	call MessageBoxA
+	call [MessageBoxA]
 
 	pop r9
 	pop r8
@@ -333,36 +334,63 @@ _debug_error:
 		append_instructions(compiler, builder, bytecode.instructions);
 
 		auto append_section = [&](auto name, auto label, auto &section) {
+			if (section.buffer.count == 0)
+				return;
+
 			auto it = section.buffer.begin();
 			umm i = 0;
-			bool last_is_byte = true;
-			append_format(builder, "section {}\n{} db  ", name, label);
+
+			enum class LastThing {
+				nothing,
+				byte,
+				relocation,
+			};
+
+			LastThing last_thing = LastThing::nothing;
+
+			append_format(builder, "section {}\n{} ", name, label);
 			while (it != section.buffer.end()) {
-				auto relocation = binary_search(section.relocations, i);
+				auto relocation = binary_search(section.relocations, i, [](Relocation r) { return r.offset; });
 				if (relocation) {
 					u64 offset = 0;
 					for (umm j = 0; j < 8; ++j)
 						offset = (offset >> 8) | ((u64)*it++ << 56);
 
-					if (last_is_byte) {
-						// pop last comma because fasm...
-						builder.pop();
-						append(builder, "\ndq ");
-						last_is_byte = false;
+					if (last_thing != LastThing::relocation) {
+						if (last_thing != LastThing::nothing) {
+							// pop last comma because fasm...
+							builder.pop();
+							append(builder, "\n");
+						}
+						last_thing = LastThing::relocation;
+
+						append(builder, "dq ");
 					}
-					append_format(builder, "{}+{},", label, offset);
+
+					switch (relocation->section) {
+						case SectionKind::data_readonly: append_format(builder, "constants+{}"s, offset); break;
+						case SectionKind::data_readwrite: append_format(builder, "rwdata+{}"s, offset); break;
+						case SectionKind::data_zero: append_format(builder, "zeros+{}"s, offset); break;
+						case SectionKind::code: append_format(builder, "i{}"s, relocation->lambda->location_in_bytecode); break;
+					}
 
 					i += 8;
 				} else {
-					if (!last_is_byte) {
-						// pop last comma because fasm...
-						builder.pop();
-						append(builder, "\ndb ");
-						last_is_byte = true;
+					if (last_thing != LastThing::byte) {
+						if (last_thing != LastThing::nothing) {
+							// pop last comma because fasm...
+							builder.pop();
+							append(builder, "\n");
+						}
+						last_thing = LastThing::byte;
+
+						append(builder, "db ");
 					}
-					append_format(builder, "{},", *it++);
+					append(builder, *it++);
 					i += 1;
 				}
+
+				append(builder, ",");
 			}
 
 			// pop last comma because fasm...
@@ -415,18 +443,19 @@ _debug_error:
 			});
 		}
 
-		append(builder, "section '.rodata' data readable\n_debug_messages: db  ");
-		debug_message_builder.for_each_block([&](StringBuilder::Block *block) {
-			for (auto c : *block) {
-				append_format(builder, "0x{},", FormatInt{.value = c, .radix = 16});
-			}
-		});
+		if (debug_message_builder.count()) {
+			append(builder, "section '.rodata' data readable\n_debug_messages: db  ");
+			debug_message_builder.for_each_block([&](StringBuilder::Block *block) {
+				for (auto c : *block) {
+					append_format(builder, "0x{},", FormatInt{.value = c, .radix = 16});
+				}
+			});
 
-		// pop last comma because fasm...
-		builder.pop();
+			// pop last comma because fasm...
+			builder.pop();
 
-		append(builder, "\n");
-
+			append(builder, "\n");
+		}
 	}
 
 	auto output_path_base = format("{}\\{}", compiler->current_directory, parse_path(compiler->source_path).name);

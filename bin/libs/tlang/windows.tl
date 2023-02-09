@@ -1255,3 +1255,10 @@ GetRawInputData :: (
 GetCursorPos :: (p: *POINT)
 
 ScreenToClient :: (window: HWND, p: *POINT)
+
+MessageBoxA :: (
+	hWnd: HWND,
+	lpText: LPCSTR,
+	lpCaption: LPCSTR,
+	uType: UINT
+) S32

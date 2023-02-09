@@ -34,26 +34,14 @@ enum class TypecheckResult {
 };
 
 u32 yield_wait_count;
-void pre_yield(TypecheckResult result) {
-	if (result == TypecheckResult::fail) {
-		int x = 5;
-	}
-	if (result == TypecheckResult::wait) {
-		++yield_wait_count;
-	}
-}
-
 
 #if USE_FIBERS
 TypecheckResult fiber_result;
 bool throwing = false;
 #define yield(x) (\
-	fiber_result = x,\
-	state->result = x,\
-	pre_yield(x),\
+	pre_yield(state, x),\
 	SWITCH_TO_FIBER(state->parent_fiber),\
-	current_typecheck_state = state, \
-	x == TypecheckResult::fail ? ((throwing = true, throw 0), 0) : 0\
+	post_yield(state, x) \
 )
 #else
 #define YIELD_STATE state->coro
@@ -785,16 +773,18 @@ struct SourceFileContext {
 // Knowing this count, we can skip unnecessary waiting in `implicitly_cast`
 u32 not_typechecked_implicit_casts_count;
 u32 not_typechecked_binary_operators_count;
+u32 not_typechecked_unary_operators_count;
 u32 not_typechecked_has_value_overloads_count;
 
 List<AstLambda *> implicit_casts;
 List<AstLambda *> typechecked_explicit_casts;
 
-struct BinaryOperatorOverload {
+struct OeratorOverload {
 	AstLambda *lambda;
 	AstOperatorDefinition *definition;
 };
-Map<BinaryOperation, List<BinaryOperatorOverload>> binary_operators;
+Map<BinaryOperation, List<OeratorOverload>> binary_operators;
+Map<UnaryOperation, List<OeratorOverload>> unary_operators;
 
 List<AstLambda *> has_value_overloads;
 
@@ -1084,7 +1074,7 @@ List<AstDefinition *> parse_one_or_more_definitions(Parser *parser) {
 			if (parser->token->kind == ':') {
 				parser->next_solid();
 
-				auto type = parse_expression(parser);
+				auto type = parse_expression_1(parser);
 				if (!type)
 					return {};
 
@@ -1106,6 +1096,7 @@ List<AstDefinition *> parse_one_or_more_definitions(Parser *parser) {
 				}
 
 				for (auto definition : definitions) {
+					// NOTE: Maybe deep copy?
 					definition->parsed_type = type;
 				}
 
@@ -1120,6 +1111,12 @@ List<AstDefinition *> parse_one_or_more_definitions(Parser *parser) {
 		parser->reporter->error(parser->token->string, "Unexpected token. Only definitions are allowed inside structs.");
 		return {};
 	}
+
+	if (parser->token->kind == '=') {
+		parser->reporter->error(parser->token->string, "Initialization of multiple definitions is not allowed.");
+		return {};
+	}
+
 	return definitions;
 }
 
@@ -1151,8 +1148,8 @@ AstStruct *parse_struct(Parser *parser, String token) {
 
 				parser->next();
 
-				for (auto &other_parameter : Struct->parameter_scope->definition_list) {
-					if (name != "_"str && name == other_parameter->name) {
+				if (name != "_"str) {
+					if (auto found = Struct->parameter_scope->definition_map.find(name)){
 						parser->reporter->error(name_location, "Can't use identical names for different parameters.");
 						return 0;
 					}
@@ -3192,20 +3189,24 @@ bool parse_scope(Parser *parser, Scope *scope, ParseBlockParams params) {
 
 	if (has_braces) {
 		parser->next_solid();
-		Token *token_right_after_statement = parser->token;
 		while (1) {
+
+			auto token_right_after_statement = parser->token;
+			skip_newlines(parser);
 			if (parser->token->kind == '}')
 				break;
-
 			parser->token = token_right_after_statement;
 
-			auto statement = parse_statement(parser);
-			if (!statement)
-				return false;
 
-			token_right_after_statement = parser->token;
-
-			skip_newlines(parser);
+			if (parser->token->kind == Token_identifier && parser->token[1].kind == ',') {
+				auto definitions = parse_one_or_more_definitions(parser);
+				if (!definitions.count)
+					return false;
+			} else {
+				auto statement = parse_statement(parser);
+				if (!statement)
+					return false;
+			}
 		}
 		parser->next();
 	} else {
@@ -3642,18 +3643,37 @@ void parse_statement(Parser *parser, AstStatement *&result) {
 
 					Operator->lambda = (AstLambda *)lambda;
 
-					if (Operator->lambda->parameters.count != 2) {
-						parser->reporter->error(Operator->lambda->location, "'{}' operator must have exactly two parameters.", Operator->location);
-						return;
-					}
-
-					not_typechecked_binary_operators_count += 1;
+					auto unop = as_unary_operation(Operator->operation);
+					auto binop = as_binary_operation(Operator->operation);
 
 					auto definition = AstDefinition::create();
 					definition->expression = lambda;
 					definition->is_constant = true;
 					definition->location = Operator->location;
-					definition->name = format("operator{}"str, as_string(as_binary_operation(Operator->operation).value()));
+
+					if (Operator->lambda->parameters.count == 1) {
+						if (!unop) {
+							parser->reporter->error(Operator->lambda->location, "'{}' is not an unary operator.", Operator->location);
+							return;
+						}
+						definition->name = format("operator{}"str, as_string(unop.value()));
+						not_typechecked_unary_operators_count += 1;
+					} else if (Operator->lambda->parameters.count == 2) {
+						if (!binop) {
+							parser->reporter->error(Operator->lambda->location, "'{}' is not a binary operator.", Operator->location);
+							return;
+						}
+						definition->name = format("operator{}"str, as_string(binop.value()));
+						not_typechecked_binary_operators_count += 1;
+					} else {
+						if (unop && binop)
+							parser->reporter->error(Operator->lambda->location, "'{}' operator must have either one or two parameters.", Operator->location);
+						else if (binop)
+							parser->reporter->error(Operator->lambda->location, "'{}' operator must have exactly two parameters.", Operator->location);
+						else if (unop)
+							parser->reporter->error(Operator->lambda->location, "'{}' operator must have exactly one parameter.", Operator->location);
+						return;
+					}
 
 					Operator->definition = definition;
 
@@ -3932,6 +3952,10 @@ String normalize_path(String path) {
 				continue;
 			}
 
+			if (dir == ".") {
+				continue;
+			}
+
 			directories.add(to_list(dir));
 		}
 	}
@@ -3975,7 +3999,7 @@ SourceFileContext *parse_file(String current_directory, String import_path, Stri
 
 	context->lexer.source_buffer = read_entire_file(full_path, {.extra_space_before=1, .extra_space_after=1});
 	if (!context->lexer.source_buffer.data) {
-		immediate_error(import_location, "Failed to read '{}'. Import path: '{}'", full_path, import_path);
+		immediate_error(import_location, "File '{}' does not exist or is not readable.", import_path);
 		context->result = ParseResult::read_error;
 		return context;
 	}
@@ -4167,8 +4191,14 @@ struct TypecheckState {
 	TypecheckState() = default;
 	TypecheckState(TypecheckState const &) = delete;
 
+	// FIXME: These may be different nodes after typechecking.
+	//        Currently changes are not propagated to the caller.
+	AstStatement *root_statement = 0;
+	AstExpression *root_expression = 0;
+
+	Scope *root_scope = 0;
+
 	AstNode *current_node = 0;
-	AstStatement *statement = 0;
 	AstLambda *lambda = 0;
 	AstDefinition *definition = 0;
 	AstExpression *waiting_for = 0;
@@ -4184,15 +4214,8 @@ struct TypecheckState {
 
 	Reporter reporter;
 
-	bool finished = false;
-
-	CoroState *coro = 0;
 	void *fiber = 0;
 	void *parent_fiber = 0;
-
-	u32 progress_counter = 0;
-
-	TypecheckState *next_state = 0;
 
 	AstWhile *current_loop = 0;
 
@@ -4244,6 +4267,8 @@ struct TypecheckState {
 
 };
 
+
+
 thread_local TypecheckState *current_typecheck_state;
 
 #undef push_scope
@@ -4251,6 +4276,91 @@ thread_local TypecheckState *current_typecheck_state;
 	auto CONCAT(old_scope, __LINE__) = state->current_scope; \
 	state->current_scope = scope; \
 	defer { state->current_scope = CONCAT(old_scope, __LINE__); };
+
+
+
+List<TypecheckState *> typecheck_states_pool;
+
+void WINAPI typecheck_pooled(void *_state);
+
+TypecheckState *get_pooled_typecheck_state(AstExpression *current_lambda_or_struct_or_enum, Scope *current_scope, void *parent_fiber) {
+	TypecheckState *state = 0;
+	if (typecheck_states_pool.count) {
+		state = typecheck_states_pool.pop().value();
+		state->currently_typechecking_definition = 0;
+		state->current_loop = 0;
+		state->current_node = 0;
+		state->definition = 0;
+		state->evaluation_parameters.clear();
+		state->lambda = 0;
+		state->lambda_currently_accepting_poly_types = 0;
+		state->replace_properties_with_getter_call = true;
+		state->reporter.reports.clear();
+		state->root_expression = 0;
+		state->root_scope = 0;
+		state->root_statement = 0;
+		state->template_call_stack.clear();
+		state->waiting_for = 0;
+		state->waiting_for_name = {};
+	} else {
+		state = default_allocator.allocate<TypecheckState>();
+		state->fiber = CreateFiber(4096, typecheck_pooled, state);
+		if (!state->fiber) {
+			invalid_code_path(state->root_statement ? state->root_statement->location : state->root_expression ? state->root_expression->location : state->root_scope->node->location, "INTERNAL COMPILER ERROR: Failed to create fiber");
+		}
+	}
+	state->parent_fiber = parent_fiber;
+	state->current_scope = current_scope;
+	state->current_lambda_or_struct_or_enum = current_lambda_or_struct_or_enum;
+	return state;
+}
+TypecheckState *get_pooled_typecheck_state(AstStatement *root_statement, AstExpression *current_lambda_or_struct_or_enum, Scope *current_scope, void *parent_fiber) {
+	auto state = get_pooled_typecheck_state(current_lambda_or_struct_or_enum, current_scope, parent_fiber);
+	state->root_statement = root_statement;
+	return state;
+}
+TypecheckState *get_pooled_typecheck_state(AstExpression *root_expression, AstExpression *current_lambda_or_struct_or_enum, Scope *current_scope, void *parent_fiber) {
+	auto state = get_pooled_typecheck_state(current_lambda_or_struct_or_enum, current_scope, parent_fiber);
+	state->root_expression = root_expression;
+	return state;
+}
+TypecheckState *get_pooled_typecheck_state(Scope *root_scope, AstExpression *current_lambda_or_struct_or_enum, Scope *current_scope, void *parent_fiber) {
+	auto state = get_pooled_typecheck_state(current_lambda_or_struct_or_enum, current_scope, parent_fiber);
+	state->root_scope = root_scope;
+	return state;
+}
+TypecheckState *get_pooled_typecheck_state(AstStatement *root_statement, TypecheckState *parent) {
+	return get_pooled_typecheck_state(root_statement, parent->current_lambda_or_struct_or_enum, parent->current_scope, parent->fiber);
+}
+TypecheckState *get_pooled_typecheck_state(AstExpression *root_expression, TypecheckState *parent) {
+	return get_pooled_typecheck_state(root_expression, parent->current_lambda_or_struct_or_enum, parent->current_scope, parent->fiber);
+}
+TypecheckState *get_pooled_typecheck_state(Scope *root_scope, TypecheckState *parent) {
+	return get_pooled_typecheck_state(root_scope, parent->current_lambda_or_struct_or_enum, parent->current_scope, parent->fiber);
+}
+
+void pre_yield(TypecheckState *state, TypecheckResult result) {
+	fiber_result = result;
+
+	if (result != TypecheckResult::wait) {
+		typecheck_states_pool.add(state);
+	}
+
+	if (result == TypecheckResult::fail) {
+		int x = 5;
+	}
+	if (result == TypecheckResult::wait) {
+		++yield_wait_count;
+	}
+}
+
+void post_yield(TypecheckState *state, TypecheckResult result) {
+	current_typecheck_state = state;
+	if (result == TypecheckResult::fail) {
+		throwing = true;
+		throw 0;
+	}
+}
 
 struct IntegerInfo {
 	AstStruct *type;
@@ -4369,9 +4479,12 @@ void ensure_definition_is_resolved(TypecheckState *state, AstIdentifier *identif
 	}
 }
 
-u32 put_in_section(AstLiteral *, Section &, AstExpression * = 0);
+s64 get_size(TypecheckState *state, AstExpression *type);
+s64 get_align(TypecheckState *state, AstExpression *type);
 
-void put_arrays_in_section(AstLiteral *literal, Section &section) {
+u32 put_in_section(TypecheckState *state, AstLiteral *, Section &, AstExpression * = 0);
+
+void put_arrays_in_section(TypecheckState *state, AstLiteral *literal, Section &section) {
 	switch (literal->literal_kind) {
 		using enum LiteralKind;
 		case null:
@@ -4384,27 +4497,27 @@ void put_arrays_in_section(AstLiteral *literal, Section &section) {
 			break;
 		case array: {
 			for (auto val : literal->array_elements)
-				put_arrays_in_section(val, section);
+				put_arrays_in_section(state, val, section);
 
 			literal->array_offset = section.buffer.count;
 			for (auto val : literal->array_elements)
-				put_in_section(val, section);
+				put_in_section(state, val, section);
 
 			break;
 		}
 		case Struct: {
 			for (auto val : literal->struct_values)
-				put_arrays_in_section(val, section);
+				put_arrays_in_section(state, val, section);
 
 			for (auto val : literal->struct_values)
-				put_arrays_in_section(val, section);
+				put_arrays_in_section(state, val, section);
 			break;
 		}
 		default:
 			invalid_code_path();
 	}
 }
-u32 put_in_section(AstLiteral *literal, Section &section, AstExpression *target_type) {
+u32 put_in_section(TypecheckState *state, AstLiteral *literal, Section &section, AstExpression *target_type) {
 	if (!target_type)
 		target_type = literal->type;
 
@@ -4424,9 +4537,48 @@ u32 put_in_section(AstLiteral *literal, Section &section, AstExpression *target_
 			}
 			return result;
 		}
-		case integer:
-			section.align(8);
-			return section.w8((u64)literal->integer);
+		case integer: {
+			auto size = get_size(literal->type);
+			assert(size > 0);
+			section.align(size);
+
+			if (::is_integer_internally(literal->type)) {
+				switch (size) {
+					case 1: return section.w1((u64)literal->integer);
+					case 2: return section.w2((u64)literal->integer);
+					case 4: return section.w4((u64)literal->integer);
+					case 8: return section.w8((u64)literal->integer);
+					default:invalid_code_path();
+				}
+			} else if (::is_float(literal->type)) {
+				switch (size) {
+					case 4: return section.w4(std::bit_cast<u32>((f32)literal->integer));
+					case 8: return section.w8(std::bit_cast<u64>((f64)literal->integer));
+					default:invalid_code_path();
+				}
+			} else {
+				invalid_code_path();
+			}
+			break;
+		}
+		case Float: {
+			auto size = get_size(literal->type);
+			assert(size > 0);
+			section.align(size);
+
+			if (::is_integer_internally(literal->type)) {
+				invalid_code_path();
+			} else if (::is_float(literal->type)) {
+				switch (size) {
+					case 4: return section.w4(std::bit_cast<u32>((f32)literal->Float));
+					case 8: return section.w8(std::bit_cast<u64>((f64)literal->Float));
+					default:invalid_code_path();
+				}
+			} else {
+				invalid_code_path();
+			}
+			break;
+		}
 		case boolean:
 			return section.w1(literal->Bool);
 		case string: {
@@ -4434,25 +4586,28 @@ u32 put_in_section(AstLiteral *literal, Section &section, AstExpression *target_
 			auto result =
 			section.w8((u64)literal->string.offset);
 			section.w8((u64)literal->string.count);
-			section.relocations.add(result);
+			section.relocations.add(Relocation{
+				.section = compiler->kind_of(section),
+				.offset = result,
+			});
 			return result;
 		}
 		case character:
 			return section.w1((u64)literal->character);
 		case noinit:
 			break;
-		case Float:
-			section.align(8);
-			return section.w8(*(u64 *)&literal->Float);
 		case pointer: {
 			section.align(8);
 			auto result =
 			section.w8((u64)literal->pointer.offset);
-			section.relocations.add(result);
+			section.relocations.add(Relocation{
+				.section = literal->pointer.section,
+				.offset = result,
+			});
 			return result;
 		}
 		case Struct: {
-			auto alignment = get_align(literal->type);
+			auto alignment = get_align(state, literal->type);
 			assert(alignment);
 			section.align(alignment);
 
@@ -4463,7 +4618,7 @@ u32 put_in_section(AstLiteral *literal, Section &section, AstExpression *target_
 			for (umm i = 0; i < literal->struct_values.count; ++i) {
 				auto member = literal->struct_values[i];
 				auto target_member_type = direct_as<AstStruct>(literal->type)->data_members[i]->type;
-				put_in_section(member, section, target_member_type);
+				put_in_section(state, member, section, target_member_type);
 			}
 
 			return result;
@@ -4479,7 +4634,10 @@ u32 put_in_section(AstLiteral *literal, Section &section, AstExpression *target_
 				auto result =
 				section.w8((u64)literal->array_offset);
 				section.w8((u64)literal->array_elements.count);
-				section.relocations.add(result);
+				section.relocations.add(Relocation{
+					.section = compiler->kind_of(section),
+					.offset = result,
+				});
 				return result;
 			}
 		}
@@ -4677,13 +4835,24 @@ void evaluate(TypecheckState *state, AstExpression *expression, AstLiteral *&res
 				case address_of: {
 					auto l = AstLiteral::create();
 					l->literal_kind = LiteralKind::pointer;
-					l->pointer.section = SectionKind::constant;
 
 					auto identifier = as<AstIdentifier>(unop->expression);
 					assert(identifier);
 
 					auto definition = identifier->definition();
 					assert(definition);
+
+					if (definition->is_constant) {
+						l->pointer.section = SectionKind::data_readonly;
+					} else {
+						if (definition->expression) {
+							l->pointer.section = SectionKind::data_readwrite;
+						} else if (auto Struct = direct_as<AstStruct>(definition->type); Struct && Struct->default_value_offset != -1) {
+							l->pointer.section = SectionKind::data_readwrite;
+						} else {
+							l->pointer.section = SectionKind::data_zero;
+						}
+					}
 
 					l->pointer.offset = definition->offset;
 					result = l;
@@ -4981,6 +5150,7 @@ bool wait_for(TypecheckState *state, String location, auto message, auto &&predi
 		if (compiler->print_yields) {
 			immediate_info(location, "Waiting for {}", message);
 		}
+
 		yield(TypecheckResult::wait);
 
 		if (prev_shared_progress == shared_progress) {
@@ -5027,8 +5197,8 @@ auto evaluate_and_put_in_section(TypecheckState *state, AstExpression *expressio
 	} result;
 
 	result.evaluated = evaluate(state, expression);
-	put_arrays_in_section(result.evaluated, section);
-	result.offset = put_in_section(result.evaluated, section, target_type);
+	put_arrays_in_section(state, result.evaluated, section);
+	result.offset = put_in_section(state, result.evaluated, section, target_type);
 	return result;
 }
 
@@ -5159,9 +5329,12 @@ AstUnaryOperator *get_typeinfo(TypecheckState *state, AstExpression *type, Strin
 			auto member = find_if(members, [&](auto member){ return member->name == name; });
 			assert(member);
 
+			if (auto literal = as<AstLiteral>(expression))
+				literal->type = (*member)->type;
+
 			auto member_index = index_of(members, member);
 			if (expression == 0)
-				expression = state->make_null(members[member_index]->type, call->location);
+				expression = state->make_null((*member)->type, call->location);
 			call->sorted_arguments[member_index] = expression;
 
 			//if (auto ArrayInitializer = as<AstArrayInitializer>(expression)) {
@@ -5516,10 +5689,10 @@ bool implicitly_cast(TypecheckState *state, Reporter *reporter, CExpression auto
 			}
 		}
 	}
-	if (auto option = as_option(type)) {
-		if (types_match(expression->type, option->expression)) {
+	if (auto dst_option = as_option(type)) {
+		if (types_match(expression->type, dst_option->expression)) {
 			if (apply)
-				expression = make_cast(expression, option);
+				expression = make_cast(expression, dst_option);
 			return true;
 		}
 		if (expression->kind == Ast_Literal) {
@@ -5527,6 +5700,24 @@ bool implicitly_cast(TypecheckState *state, Reporter *reporter, CExpression auto
 			if (literal->literal_kind == LiteralKind::null) {
 				if (apply)
 					expression->type = type;
+				return true;
+			}
+		}
+
+		if (auto src_option = as_option(expression->type)) {
+
+			// FIXME: does not work with user types
+			//
+			// x: ?S32 => ?F32
+			// { x := expr; if x then (*x as F32) as ?F32 else null }
+
+			CastType request = {direct_as<AstStruct>(src_option->expression), direct_as<AstStruct>(dst_option->expression)};
+			auto found_built_in = find(built_in_casts, request);
+
+			if (found_built_in && found_built_in->implicit) {
+				if (apply) {
+					not_implemented();
+				}
 				return true;
 			}
 		}
@@ -5648,8 +5839,13 @@ bool implicitly_cast(TypecheckState *state, Reporter *reporter, CExpression auto
 		}
 
 		if (types_match(type, compiler->builtin_f32) || types_match(type, compiler->builtin_f64)) {
-			if (apply)
+			if (apply) {
 				expression->type = type;
+				if (auto literal = as<AstLiteral>(expression)) {
+					literal->literal_kind = LiteralKind::Float;
+					literal->Float = (s64)literal->integer;
+				}
+			}
 			return true;
 		}
 	} else if (types_match(expression->type, compiler->builtin_unsized_float)) {
@@ -5768,9 +5964,9 @@ AstExpression *get_concrete_type(AstExpression *type) {
 	return type;
 }
 
-void make_concrete(TypecheckState *state, AstExpression **_expression);
+void make_concrete(TypecheckState *state, AstExpression **_expression, AstExpression *target_type = 0);
 
-void make_concrete(TypecheckState *state, AstBlock *block) {
+void make_concrete(TypecheckState *state, AstBlock *block, AstExpression *target_type = 0) {
 	if (block->scope->statement_list.count == 0)
 		return;
 
@@ -5778,29 +5974,50 @@ void make_concrete(TypecheckState *state, AstBlock *block) {
 	if (!es)
 		return;
 
-	make_concrete(state, &es->expression);
+	make_concrete(state, &es->expression, target_type);
 	block->type = es->expression->type;
 }
-void make_concrete(TypecheckState *state, AstExpression **_expression) {
+void make_concrete(TypecheckState *state, AstExpression **_expression, AstExpression *target_type) {
 	auto &expression = *_expression;
 
-	if (is_concrete_type(expression->type))
+	if (is_concrete_type(expression->type)) {
 		return;
+	}
 
 	switch (expression->kind) {
 		case Ast_Literal: {
 			auto Literal = (AstLiteral *)expression;
-			switch (Literal->literal_kind) {
-				case LiteralKind::integer: {
-					Literal->type = compiler->type_int;
-					break;
+
+			if (target_type) {
+
+				if (::is_integer(target_type)) {
+					assert(Literal->literal_kind == LiteralKind::integer);
+				} else if (::is_float(target_type)) {
+					if (Literal->literal_kind != LiteralKind::Float) {
+						switch (Literal->literal_kind) {
+							case LiteralKind::integer: Literal->Float = (s64)Literal->integer; break;
+							default: invalid_code_path();
+						}
+						Literal->literal_kind = LiteralKind::Float;
+					}
+				} else {
+					invalid_code_path();
 				}
-				case LiteralKind::Float: {
-					Literal->type = compiler->type_float;
-					break;
+
+				Literal->type = target_type;
+			} else {
+				switch (Literal->literal_kind) {
+					case LiteralKind::integer: {
+						Literal->type = compiler->type_int;
+						break;
+					}
+					case LiteralKind::Float: {
+						Literal->type = compiler->type_float;
+						break;
+					}
+					default:
+						break;
 				}
-				default:
-					break;
 			}
 			break;
 		}
@@ -5811,8 +6028,8 @@ void make_concrete(TypecheckState *state, AstExpression **_expression) {
 			auto fc = is_concrete_type(If->false_block->type);
 
 			if (!tc && !fc) {
-				make_concrete(state, If->true_block);
-				make_concrete(state, If->false_block);
+				make_concrete(state, If->true_block, target_type);
+				make_concrete(state, If->false_block, target_type);
 			}
 
 			if (types_match(If->true_block->type, If->false_block->type)) {
@@ -5865,9 +6082,21 @@ void make_concrete(TypecheckState *state, AstExpression **_expression) {
 			If->type = If->true_block->type;
 			break;
 		}
+		case Ast_UnaryOperator: {
+			auto UnaryOperator = (AstUnaryOperator *)expression;
+			switch (UnaryOperator->operation) {
+				case UnaryOperation::plus:
+				case UnaryOperation::minus: {
+					make_concrete(state, &UnaryOperator->expression, target_type);
+					UnaryOperator->type = UnaryOperator->expression->type;
+					break;
+				}
+			}
+			break;
+		}
 		case Ast_Block: {
 			auto Block = (AstBlock *)expression;
-			make_concrete(state, Block);
+			make_concrete(state, Block, target_type);
 			break;
 		}
 		default:
@@ -5907,6 +6136,10 @@ bool ensure_assignable(Reporter *reporter, AstExpression *expression) {
 		case Ast_Subscript: {
 			auto subscript = (AstSubscript *)expression;
 			if (is_pointer(subscript->expression->type))
+				return true;
+			if (get_span_subtype(subscript->expression->type))
+				return true;
+			if (types_match(subscript->expression->type, compiler->builtin_string))
 				return true;
 			return ensure_assignable(reporter, subscript->expression);
 		}
@@ -6240,10 +6473,14 @@ AstLiteral *deep_copy(AstLiteral *s) {
 		case string:	d->string.set(s->string.get()); break;
 		case Struct:
 			d->struct_values = map(s->struct_values, [&] (auto m) { return deep_copy(m); });
-			put_in_section(d, compiler->constant_section);
+
+			// FIXME: i don't like this
+			if (current_typecheck_state)
+				put_in_section(current_typecheck_state, d, compiler->constant_section);
 			break;
 		case null: break;
 		case lambda_name: break;
+		case pointer: d->pointer = s->pointer; break;
 		default:invalid_code_path();
 	}
 	return d;
@@ -6363,56 +6600,6 @@ void typecheck(TypecheckState *state, Scope *scope) {
 	}
 }
 
-bool try_typecheck(TypecheckState *state, AstExpression *expression) {
-	TypecheckState new_state;
-	new_state.parent_fiber = state->fiber;
-	new_state.current_scope = state->current_scope;
-	new_state.current_lambda_or_struct_or_enum = state->current_lambda_or_struct_or_enum;
-
-	struct Params {
-		TypecheckState *new_state;
-		AstExpression **expression;
-	};
-
-	auto typechecker = [](LPVOID param) -> void {
-		auto params = (Params *)param;
-		auto state = params->new_state;
-		current_typecheck_state = state;
-		typecheck(state, *params->expression);
-		yield(TypecheckResult::success);
-	};
-
-	Params params = {
-		.new_state = &new_state,
-		.expression = &expression,
-	};
-
-	// TODO: Implement fiber pooling
-	new_state.fiber = CreateFiber(4096, typechecker, &params);
-	if (!new_state.fiber) {
-		invalid_code_path(expression->location, "INTERNAL COMPILER ERROR: Failed to create fiber");
-	}
-
-	while (1) {
-		SWITCH_TO_FIBER(new_state.fiber);
-		current_typecheck_state = state;
-
-		switch (fiber_result) {
-			case TypecheckResult::success: {
-				return true;
-			}
-			case TypecheckResult::fail: {
-				state->reporter.reports.add(new_state.reporter.reports);
-				return false;
-			}
-			case TypecheckResult::wait: {
-				yield(TypecheckResult::wait);
-				break;
-			}
-		}
-	}
-}
-
 struct TypeWithArticle {
 	AstExpression *type;
 };
@@ -6430,6 +6617,17 @@ String get_binop_ident_name(BinaryOperation op) {
 		using enum BinaryOperation;
 #define e(name, token) case name: return #token ## str;
 		ENUMERATE_BINARY_OPERATIONS
+#undef e
+	}
+	invalid_code_path();
+	return ""str;
+}
+
+String get_unop_ident_name(UnaryOperation op) {
+	switch (op) {
+		using enum UnaryOperation;
+#define e(name, token) case name: return #token ## str;
+		ENUMERATE_UNARY_OPERATIONS
 #undef e
 	}
 	invalid_code_path();
@@ -6699,7 +6897,7 @@ void typecheck_definition(TypecheckState *state, AstDefinition *definition, Type
 	if (definition->is_constant) {
 		if (state->current_lambda_or_struct_or_enum == 0 || state->current_lambda_or_struct_or_enum->kind != Ast_Enum) {
 			if (definition->expression) {
-				if (!is_type(definition->expression) && definition->expression->kind != Ast_Lambda) {
+				if (!is_type(definition->expression) && definition->expression->kind != Ast_Lambda && is_concrete_type(definition->type)) {
 					evaluate_and_put_definition_in_section(state, definition, compiler->constant_section);
 				}
 			}
@@ -6707,12 +6905,25 @@ void typecheck_definition(TypecheckState *state, AstDefinition *definition, Type
 	} else {
 		switch (location) {
 			case Global: {
+				if (definition->expression) {
+					if (auto lambda = as<AstLambda>(definition->expression)) {
+						auto offset = compiler->data_section.w8(0);
+						definition->offset = offset;
+						compiler->data_section.relocations.add(Relocation{
+							.section = SectionKind::code,
+							.offset = offset,
+							.lambda = lambda,
+						});
+						break;
+					}
+				}
+
 				auto Struct = direct_as<AstStruct>(definition->type);
 				if (definition->expression && !is_type(definition->expression) && definition->expression->kind != Ast_Lambda) {
-					evaluate_and_put_definition_in_section(state, definition, definition->is_constant ? compiler->constant_section : compiler->data_section);
+					evaluate_and_put_definition_in_section(state, definition, compiler->data_section);
 				} else if (Struct && Struct->default_value) {
 					definition->expression = deep_copy(raw(Struct->default_value));
-					evaluate_and_put_definition_in_section(state, definition, definition->is_constant ? compiler->constant_section : compiler->data_section);
+					evaluate_and_put_definition_in_section(state, definition, compiler->data_section);
 				} else {
 					// NOTE: get_align and get_size may yield, so they should happen before modifying compiler->zero_section_size
 					auto align = get_align(state, definition->type);
@@ -6832,7 +7043,7 @@ AstStatement *typecheck(TypecheckState *state, AstFor *For) {
 
 			typecheck(state, replacement_block);
 			return make_statement(replacement_block);
-		} else if (auto subtype = get_span_subtype(For->range->type)) {
+		} else if (auto subtype = get_span_subtype(For->range->type); subtype || types_match(For->range->type, compiler->builtin_string)) {
 			auto replacement_block = AstBlock::create();
 			replacement_block->scope->parent = state->current_scope;
 
@@ -6934,9 +7145,6 @@ AstStatement *typecheck(TypecheckState *state, AstFor *For) {
 
 			typecheck(state, replacement_block);
 			return make_statement(replacement_block);
-		} else {
-			state->reporter.error(For->range->location, "This expression is not iterable. Right now you can iterate over ranges (e.g. 0..5), spans and arrays");
-			yield(TypecheckResult::fail);
 		}
 	} else {
 		if (implicitly_cast(state, &reporter, &For->range, compiler->builtin_range.ident)) {
@@ -6978,7 +7186,7 @@ AstStatement *typecheck(TypecheckState *state, AstFor *For) {
 
 			typecheck(state, replacement_block);
 			return make_statement(replacement_block);
-		} else if (auto subtype = get_span_subtype(For->range->type)) {
+		} else if (auto subtype = get_span_subtype(For->range->type); subtype || types_match(For->range->type, compiler->builtin_string)) {
 			auto replacement_block = AstBlock::create();
 			replacement_block->scope->parent = state->current_scope;
 
@@ -7079,11 +7287,11 @@ AstStatement *typecheck(TypecheckState *state, AstFor *For) {
 
 			typecheck(state, replacement_block);
 			return make_statement(replacement_block);
-		} else {
-			state->reporter.error(For->range->location, "This expression is not iterable. Right now you can iterate over ranges (e.g. 0..5), spans and arrays");
-			yield(TypecheckResult::fail);
 		}
 	}
+	state->reporter.error(For->range->location, "Expressions of type {} are not iterable. Right now you can iterate over ranges (e.g. 0..5), spans, strings and arrays", type_to_string(For->range->type));
+	yield(TypecheckResult::fail);
+	return 0;
 }
 AstStatement *typecheck(TypecheckState *state, AstExpressionStatement *ExpressionStatement) {
 	typecheck(state, ExpressionStatement->expression);
@@ -7178,8 +7386,14 @@ AstStatement *typecheck(TypecheckState *state, AstOperatorDefinition *OperatorDe
 		case '<=':
 		case '>=': {
 			typecheck(state, (Expression<> &)OperatorDefinition->lambda);
-			binary_operators.get_or_insert(as_binary_operation(OperatorDefinition->operation).value()).add({OperatorDefinition->lambda, OperatorDefinition});
-			not_typechecked_binary_operators_count -= 1;
+
+			if (OperatorDefinition->lambda->parameters.count == 1) {
+				unary_operators.get_or_insert(as_unary_operation(OperatorDefinition->operation).value()).add({OperatorDefinition->lambda, OperatorDefinition});
+				not_typechecked_unary_operators_count -= 1;
+			} else {
+				binary_operators.get_or_insert(as_binary_operation(OperatorDefinition->operation).value()).add({OperatorDefinition->lambda, OperatorDefinition});
+				not_typechecked_binary_operators_count -= 1;
+			}
 			break;
 		}
 		case '?': {
@@ -7404,7 +7618,35 @@ void typecheck_body(TypecheckState *state, AstLambda *lambda) {
 		make_concrete(state, &lambda->body);
 	}
 
-	if (!lambda->return_parameter) {
+	if (lambda->return_parameter) {
+		for (auto ret : lambda->return_statements) {
+			if (ret->expression) {
+				if (!implicitly_cast(state, &state->reporter, &ret->expression, lambda->return_parameter->type)) {
+					yield(TypecheckResult::fail);
+				}
+			}
+		}
+
+		if (lambda->body) {
+			if (auto block = as<AstBlock>(lambda->body)) {
+				if (block->scope->statement_list.count) {
+					auto last = block->scope->statement_list.back();
+					if (auto est = as<AstExpressionStatement>(last)) {
+						if (!types_match(est->expression->type, compiler->builtin_void) && !types_match(lambda->return_parameter->type, compiler->builtin_void)) {
+							if (!implicitly_cast(state, &state->reporter, &est->expression, lambda->return_parameter->type)) {
+								yield(TypecheckResult::fail);
+							}
+							block->type = est->expression->type;
+						}
+					}
+				}
+			} else {
+				if (!implicitly_cast(state, &state->reporter, &lambda->body, lambda->return_parameter->type)) {
+					yield(TypecheckResult::fail);
+				}
+			}
+		}
+	} else {
 		List<AstExpression **> return_expressions;
 		return_expressions.allocator = temporary_allocator;
 
@@ -7437,73 +7679,16 @@ void typecheck_body(TypecheckState *state, AstLambda *lambda) {
 			fd->string.set(type_name);
 		}
 	}
-
-	return;
-
-
-
-
-	if (!lambda->return_parameter) {
-		for (auto ret : lambda->return_statements) {
-			if (ret->expression) {
-				make_concrete(state, &ret->expression);
-				lambda->return_parameter = state->make_retparam(ret->expression->type, lambda);
-				lambda->return_statement_type_deduced_from = ret->expression;
-				break;
-			}
-		}
-
-		if (!lambda->return_parameter) {
-			if (lambda->body && !types_match(lambda->body->type, compiler->builtin_unreachable) && !types_match(lambda->body->type, compiler->builtin_void)) {
-				make_concrete(state, &lambda->body);
-				lambda->return_parameter = state->make_retparam(lambda->body->type, lambda);
-				lambda->return_statement_type_deduced_from = lambda->body;
-			}
-		}
-
-		if (!lambda->return_parameter) {
-			lambda->return_parameter = state->make_retparam(compiler->builtin_void.ident, lambda);
-		}
-	}
-
-	if (lambda->body && !types_match(lambda->body->type, compiler->builtin_unreachable) && !types_match(lambda->body->type, compiler->builtin_void)) {
-		implicitly_cast(state, 0, &lambda->body, lambda->return_parameter->type);
-	}
-
-	ensure_return_types_match(state, lambda);
-
-
-
-	if (lambda->body) {
-		if (lambda->return_parameter->name.count == 0) {
-			if (!do_all_paths_explicitly_return(lambda)) {
-				state->reporter.warning(lambda->location, "Not all execution paths explicitly return a value.");
-			}
-		}
-	}
-
-	if (lambda->body) {
-		compiler->lambdas_with_body.add(lambda);
-	} else {
-		compiler->lambdas_without_body.add(lambda);
-	}
-
-	// NOTE: if this string is used in compile time expressions before lambda's type is determined,
-	// it will evaluate to a default string, which may be unexpected.
-	if (deferred_function_name) {
-		auto type_name = type_to_string(lambda->type);
-		for (auto fd : lambda->function_directives) {
-			fd->string.set(type_name);
-		}
-	}
 }
 
-struct MatchedTemplate {
-	AstExpression *poly = 0;
-	AstExpression *matching = 0;
+struct MatchTemplatesResult {
+	bool implicit_address_of = false;
+	bool implicit_dereference = false;
+	AstExpression *mismatch_poly = 0;
+	AstExpression *mismatch_matching = 0;
 };
 
-bool match_templates(TypecheckState *state, Reporter *reporter, AstLambda *hardened_lambda, AstDefinition *matching_parameter, AstExpression *template_expression, AstExpression *matching_expression, MatchedTemplate *mismatch) {
+bool match_templates(TypecheckState *state, Reporter *reporter, AstLambda *hardened_lambda, AstDefinition *matching_parameter, AstExpression *template_expression, AstExpression *matching_expression, MatchTemplatesResult *result) {
 	switch (template_expression->kind) {
 		case Ast_Identifier: {
 			auto p = (AstIdentifier *)template_expression;
@@ -7568,7 +7753,7 @@ bool match_templates(TypecheckState *state, Reporter *reporter, AstLambda *harde
 
 			if (auto e = as<AstUnaryOperator>(matching_expression)) {
 				if (p->operation == e->operation) {
-					if (match_templates(state, reporter, hardened_lambda, matching_parameter, p->expression, e->expression, mismatch))
+					if (match_templates(state, reporter, hardened_lambda, matching_parameter, p->expression, e->expression, result))
 						return true;
 				}
 			}
@@ -7584,7 +7769,7 @@ bool match_templates(TypecheckState *state, Reporter *reporter, AstLambda *harde
 
 						if (call->unsorted_arguments.count == poly_struct->parameter_scope->definition_list.count) {
 							for (umm i = 0; i < call->unsorted_arguments.count; ++i) {
-								if (!match_templates(state, reporter, hardened_lambda, matching_parameter, call->unsorted_arguments[i].expression, matching_struct->parameter_scope->definition_list[i]->expression, mismatch)) {
+								if (!match_templates(state, reporter, hardened_lambda, matching_parameter, call->unsorted_arguments[i].expression, matching_struct->parameter_scope->definition_list[i]->expression, result)) {
 									return false;
 								}
 							}
@@ -7616,18 +7801,28 @@ bool match_templates(TypecheckState *state, Reporter *reporter, AstLambda *harde
 
 	// Allow implicit dereferencing
 	if (auto e = as<AstUnaryOperator>(matching_expression); e && e->operation == UnaryOperation::pointer) {
-		if (match_templates(state, reporter, hardened_lambda, matching_parameter, template_expression, e->expression, mismatch))
+		if (match_templates(state, reporter, hardened_lambda, matching_parameter, template_expression, e->expression, result)) {
+			if (result) {
+				result->implicit_dereference = true;
+			}
 			return true;
+		}
 	}
 
 	// Allow implicit address of
 	if (auto e = as<AstUnaryOperator>(template_expression); e && e->operation == UnaryOperation::pointer) {
-		if (match_templates(state, reporter, hardened_lambda, matching_parameter, e->expression, matching_expression, mismatch))
+		if (match_templates(state, reporter, hardened_lambda, matching_parameter, e->expression, matching_expression, result)) {
+			if (result) {
+				result->implicit_address_of = true;
+			}
 			return true;
+		}
 	}
 
-	if (mismatch)
-		*mismatch = {template_expression, matching_expression};
+	if (result) {
+		result->mismatch_poly = template_expression;
+		result->mismatch_matching = matching_expression;
+	}
 	return false;
 }
 
@@ -7641,7 +7836,7 @@ umm append(StringBuilder &builder, StringizePolyTypes s) {
 	for (auto statement : s.lambda->constant_scope->statement_list) {
 		assert(statement->kind == Ast_Definition);
 		auto definition = (AstDefinition *)statement;
-		result += append_format(builder, "\n                                {} = {}", definition->name, definition->expression->location);
+		result += append_format(builder, "\n                                {} = {}", definition->name, direct(definition->expression));
 	}
 	return result;
 }
@@ -7726,14 +7921,19 @@ AstLambda *instantiate_head(TypecheckState *state, Reporter *reporter, Overload 
 	auto &sorted_arguments = overload.sorted_arguments_lambda;
 
 	auto match_poly_param = [&](AstDefinition *parameter, AstExpression *argument) {
-		MatchedTemplate mismatch;
-		if (!match_templates(state, reporter, hardened_lambda, parameter, parameter->parsed_type, argument->type, &mismatch)) {
+		MatchTemplatesResult result;
+		if (!match_templates(state, reporter, hardened_lambda, parameter, parameter->parsed_type, argument->type, &result)) {
 			reporter->error(argument->location, "Could not match the type {} to {}", type_to_string(argument->type), type_to_string(parameter->parsed_type));
-			reporter->info(parameter->location, "Because {} doesn't match {}", mismatch.matching, mismatch.poly);
+			reporter->info(parameter->location, "Because {} doesn't match {}", result.mismatch_matching, result.mismatch_poly);
 			return false;
 		}
 
 		parameter->type = get_concrete_type(argument->type);
+
+		if (result.implicit_address_of)
+			parameter->type = make_pointer_type(parameter->type);
+		else if (result.implicit_dereference)
+			parameter->type = as_pointer(parameter->type)->expression;
 
 		parameter->is_poly = false;
 
@@ -8533,10 +8733,6 @@ AstIdentifier *instantiate_span(AstExpression *subtype, String location) {
 	return ident;
 }
 
-bool has_member(AstStruct *Struct, String name) {
-	return find_if(Struct->member_scope->definition_list, [&](AstDefinition *member) { return member->name == name; });
-}
-
 void get_overloads(TypecheckState *state, AstCall *call, List<Overload> &overloads) {
 	switch (call->callable->kind) {
 		case Ast_Identifier: {
@@ -8578,7 +8774,7 @@ void get_overloads(TypecheckState *state, AstCall *call, List<Overload> &overloa
 
 					typecheck(state, binop->left);
 
-					if (auto Struct = direct_as<AstStruct>(binop->left->type); Struct && has_member(Struct, ident->name)) {
+					if (auto Struct = direct_as<AstStruct>(binop->left->type); Struct && Struct->member_scope->definition_map.find(ident->name)) {
 						should_typecheck_binop = true;
 					} else {
 						should_typecheck_binop = false;
@@ -9164,8 +9360,8 @@ AstExpression *typecheck(TypecheckState *state, AstIdentifier *identifier) {
 					yield(TypecheckResult::fail);
 				}
 
-				for (auto member : Struct->member_scope->definition_list) {
-					if (member->name == identifier->name) {
+				if (auto found = Struct->member_scope->definition_map.find(identifier->name)) {
+					for (auto member : found->value) {
 						suitable_members.add({
 							.Using = Using.Using,
 							.definition = Using.definition,
@@ -9934,9 +10130,24 @@ AstExpression *typecheck(TypecheckState *state, AstLambdaType *lambda_type) {
 AstExpression *typecheck(TypecheckState *state, AstBinaryOperator *bin) {
 	using enum BinaryOperation;
 
-
 	{
-		scoped_replace(state->replace_properties_with_getter_call, bin->operation != ass);
+		scoped_replace(state->replace_properties_with_getter_call, [&] {
+			switch (bin->operation) {
+				case ass:
+				case addass:
+				case subass:
+				case mulass:
+				case divass:
+				case modass:
+				case bxorass:
+				case bandass:
+				case borass:
+				case bslass:
+				case bsrass:
+					return false;
+			}
+			return true;
+		}());
 
 		typecheck(state, bin->left);
 	}
@@ -10342,6 +10553,57 @@ AstExpression *typecheck(TypecheckState *state, AstBinaryOperator *bin) {
 			return make_struct_initializer(compiler->builtin_range.ident, {bin->left, bin->right}, bin->location);
 		}
 		default: {
+
+			auto remove_assignment = [](BinaryOperation op) -> Optional<BinaryOperation> {
+				switch (op) {
+					case addass: return add;
+					case subass: return sub;
+					case mulass: return mul;
+					case divass: return div;
+					case modass: return mod;
+					case bxorass: return bxor;
+					case bandass: return band;
+					case borass: return bor;
+					case bslass: return bsl;
+					case bsrass: return bsr;
+				}
+				return {};
+			};
+
+			if (auto unass = remove_assignment(bin->operation)) {
+				// v.length += 10
+				//      vvv
+				// set_length(&v, get_length(v) + 10)
+				if (auto property = ::as<AstBinaryOperator>(bin->left); property && property->is_property) {
+					auto property_name = ::as<AstIdentifier>(property->right)->name;
+
+					auto get_ident = AstIdentifier::create();
+					get_ident->name = format("get_{}"str, property_name);
+					get_ident->location = bin->right->location;
+
+					auto get_call = AstCall::create();
+					get_call->callable = get_ident;
+					get_call->unsorted_arguments.set({{ .expression = property->left }});
+					get_call->location = bin->location;
+
+					bin->left = get_call;
+					bin->operation = unass.value();
+
+					auto set_ident = AstIdentifier::create();
+					set_ident->name = format("set_{}"str, property_name);
+					set_ident->location = bin->right->location;
+
+					auto set_call = AstCall::create();
+					set_call->callable = set_ident;
+					set_call->unsorted_arguments.set({{ .expression = make_address_of(0, property->left)}, {.expression = bin }});
+					set_call->location = bin->location;
+
+					typecheck(state, set_call);
+
+					return set_call;
+				}
+			}
+
 			typecheck(state, bin->right);
 
 #define DEDUCE_ENUM(left, right) \
@@ -10443,20 +10705,27 @@ AstExpression *typecheck(TypecheckState *state, AstBinaryOperator *bin) {
 						case bxorass:
 						case bslass:
 						case bsrass: {
-							if (types_match(l, compiler->builtin_unsized_integer) && types_match(r, compiler->builtin_unsized_integer) ) {
+							auto lui = types_match(l, compiler->builtin_unsized_integer);
+							auto rui = types_match(r, compiler->builtin_unsized_integer);
+							auto luf = types_match(l, compiler->builtin_unsized_float);
+							auto ruf = types_match(r, compiler->builtin_unsized_float);
+
+							if (lui && rui) {
 								bin->type = compiler->builtin_unsized_integer.ident;
 								return bin;
 							}
-							if (types_match(l, compiler->builtin_unsized_integer) && ri) {
-								bin->type = bin->left->type = bin->right->type;
+							if (luf && ruf) {
+								bin->type = compiler->builtin_unsized_float.ident;
 								return bin;
 							}
-							if (li && types_match(r, compiler->builtin_unsized_integer) ) {
-								bin->type = bin->right->type = bin->left->type;
+							if ((lui || luf) && (ri || rf)) {
+								make_concrete(state, &bin->left, bin->right->type);
+								bin->type = bin->right->type;
 								return bin;
 							}
-							if (lf && types_match(r, compiler->builtin_unsized_integer) ) {
-								bin->type = bin->right->type = bin->left->type;
+							if ((li || lf) && (rui || ruf)) {
+								make_concrete(state, &bin->right, bin->left->type);
+								bin->type = bin->left->type;
 								return bin;
 							}
 							break;
@@ -10471,10 +10740,10 @@ AstExpression *typecheck(TypecheckState *state, AstBinaryOperator *bin) {
 							if (types_match(l, compiler->builtin_unsized_integer) && types_match(r, compiler->builtin_unsized_integer) ) {
 								return bin;
 							} else if (types_match(l, compiler->builtin_unsized_integer) && ri) {
-								bin->left->type = bin->right->type;
+								make_concrete(state, &bin->left, bin->right->type);
 								return bin;
 							} else if (types_match(r, compiler->builtin_unsized_integer) && li) {
-								bin->right->type = bin->left->type;
+								make_concrete(state, &bin->right, bin->left->type);
 								return bin;
 							}
 
@@ -10671,36 +10940,7 @@ AstExpression *typecheck(TypecheckState *state, AstBinaryOperator *bin) {
 						call->unsorted_arguments.add({{}, bin->left});
 						call->unsorted_arguments.add({{}, bin->right});
 
-						struct TypecheckStateAndCall {
-							TypecheckState *state;
-							AstCall *call;
-						};
-
-						TypecheckState new_state;
-
-						new_state.parent_fiber = state->fiber;
-						new_state.current_scope = state->current_scope;
-						new_state.current_lambda_or_struct_or_enum = state->current_lambda_or_struct_or_enum;
-
-						auto typechecker = [](LPVOID param_) -> void {
-							auto param = (TypecheckStateAndCall *)param_;
-
-							current_typecheck_state = param->state;
-
-							typecheck(param->state, param->call);
-
-							auto state = param->state;
-							yield(TypecheckResult::success);
-						};
-
-						// TODO: Implement fiber pooling
-
-						TypecheckStateAndCall param {.state = &new_state, .call = call};
-						new_state.fiber = CreateFiber(4096, typechecker, &param);
-						if (!new_state.fiber) {
-							invalid_code_path(call->location, "INTERNAL COMPILER ERROR: Failed to create fiber");
-						}
-
+						auto new_state = get_pooled_typecheck_state(call, state);
 
 						auto get_comparer_ident = [&](AstStruct *comparee) {
 
@@ -10771,7 +11011,7 @@ AstExpression *typecheck(TypecheckState *state, AstBinaryOperator *bin) {
 
 
 					retry:
-						SWITCH_TO_FIBER(new_state.fiber);
+						SWITCH_TO_FIBER(new_state->fiber);
 						current_typecheck_state = state;
 						switch (fiber_result) {
 							case TypecheckResult::wait: {
@@ -10780,7 +11020,7 @@ AstExpression *typecheck(TypecheckState *state, AstBinaryOperator *bin) {
 							}
 							case TypecheckResult::fail: {
 								// HACK: this is cringe
-								if (find(new_state.reporter.reports[0].message, "was not declared"str)) {
+								if (find(new_state->reporter.reports[0].message, "was not declared"str)) {
 									if (auto ls = ::as<AstStruct>(l)) {
 										// Create default implementation for == or !=
 										if (types_match(l, r) && !struct_is_built_in(ls)) {
@@ -10801,9 +11041,9 @@ AstExpression *typecheck(TypecheckState *state, AstBinaryOperator *bin) {
 										}
 									}
 
-									state->reporter.error(bin->location, "No operator {} defined for {} and {}", bin->operation, type_to_string(l), type_to_string(r));
+									state->reporter.error(bin->location, "No binary operator {} defined for {} and {}", bin->operation, type_to_string(l), type_to_string(r));
 								} else {
-									state->reporter.reports.add(new_state.reporter.reports);
+									state->reporter.reports.add(new_state->reporter.reports);
 								}
 								yield(TypecheckResult::fail);
 								break;
@@ -10834,44 +11074,11 @@ AstExpression *typecheck(TypecheckState *state, AstBinaryOperator *bin) {
 
 
 
-						struct TypecheckStateAndCall {
-							TypecheckState *state;
-							AstCall *call;
-							AstExpressionStatement *es;
-						};
-
-						TypecheckState new_state;
-
-						new_state.parent_fiber = state->fiber;
-						new_state.current_scope = state->current_scope;
-						new_state.current_lambda_or_struct_or_enum = state->current_lambda_or_struct_or_enum;
-
-						auto typechecker = [](LPVOID param_) -> void {
-							auto param = (TypecheckStateAndCall *)param_;
-
-							current_typecheck_state = param->state;
-
-							try {
-								typecheck(param->state, param->call);
-							} catch (...) {
-								typecheck(param->state, param->es);
-							}
-
-							auto state = param->state;
-							yield(TypecheckResult::success);
-						};
-
-						// TODO: Implement fiber pooling
-
-						TypecheckStateAndCall param {.state = &new_state, .call = call};
-						new_state.fiber = CreateFiber(4096, typechecker, &param);
-						if (!new_state.fiber) {
-							invalid_code_path(call->location, "INTERNAL COMPILER ERROR: Failed to create fiber");
-						}
+						auto new_state = get_pooled_typecheck_state(call, state);
 
 
 					retry2:
-						SWITCH_TO_FIBER(new_state.fiber);
+						SWITCH_TO_FIBER(new_state->fiber);
 						current_typecheck_state = state;
 						switch (fiber_result) {
 							case TypecheckResult::wait: {
@@ -10883,19 +11090,14 @@ AstExpression *typecheck(TypecheckState *state, AstBinaryOperator *bin) {
 								op = op.subspan(0, op.count - 1); // strip =
 
 								// FIXME: ugly hack
-								if (new_state.reporter.reports.count == 1 && find(new_state.reporter.reports[0].message, tformat("{}= was not declared"str, op))) {
+								if (new_state->reporter.reports.count == 1 && find(new_state->reporter.reports[0].message, tformat("{}= was not declared"str, op))) {
 									op_ident->name = op;
 
 									auto ass = make_binop(BinaryOperation::ass, bin->left, call);
-
-									auto es = make_statement(ass);
-
-									param.es = es;
-
-									new_state.reporter.reports.clear();
+									new_state = get_pooled_typecheck_state(ass, state);
 
 								retry3:
-									SWITCH_TO_FIBER(new_state.fiber);
+									SWITCH_TO_FIBER(new_state->fiber);
 									current_typecheck_state = state;
 									switch (fiber_result) {
 										case TypecheckResult::wait: {
@@ -10904,17 +11106,19 @@ AstExpression *typecheck(TypecheckState *state, AstBinaryOperator *bin) {
 										}
 										case TypecheckResult::fail: {
 											// HACK: this is cringe
-											if (find(new_state.reporter.reports[0].message, "was not declared"str)) {
+											if (find(new_state->reporter.reports[0].message, "was not declared"str)) {
 												state->reporter.error(bin->location, "No operator {} nor {}= defined for {} and {}", op, op, type_to_string(l), type_to_string(r));
 											} else {
-												state->reporter.reports.add(new_state.reporter.reports);
+												state->reporter.reports.add(new_state->reporter.reports);
 											}
 											yield(TypecheckResult::fail);
 											break;
 										}
 									}
+
+									return ass;
 								} else {
-									state->reporter.reports.add(new_state.reporter.reports);
+									state->reporter.reports.add(new_state->reporter.reports);
 									yield(TypecheckResult::fail);
 								}
 								break;
@@ -10930,7 +11134,7 @@ AstExpression *typecheck(TypecheckState *state, AstBinaryOperator *bin) {
 			}
 
 			struct Candidate {
-				BinaryOperatorOverload overload;
+				OeratorOverload overload;
 				bool ass;
 			};
 			List<Candidate> candidates;
@@ -11055,6 +11259,8 @@ AstExpression *typecheck(TypecheckState *state, AstBinaryOperator *bin) {
 AstExpression *typecheck(TypecheckState *state, AstUnaryOperator *unop) {
 	using enum UnaryOperation;
 
+	// NOTE: if following switch does not set the type, overloads will be searched
+
 	switch (unop->operation) {
 		case plus: {
 			typecheck(state, unop->expression);
@@ -11069,9 +11275,6 @@ AstExpression *typecheck(TypecheckState *state, AstUnaryOperator *unop) {
 				unop->type = unop->expression->type;
 			} else if (::is_float(unop->expression->type)) {
 				unop->type = unop->expression->type;
-			} else {
-				state->reporter.error(unop->location, "Unary minus can not be applied to expression of type {}", type_to_string(unop->expression->type));
-				yield(TypecheckResult::fail);
 			}
 			break;
 		}
@@ -11086,12 +11289,18 @@ AstExpression *typecheck(TypecheckState *state, AstUnaryOperator *unop) {
 		}
 		case star: {
 			typecheck(state, unop->expression);
-			unop->operation = is_type(unop->expression) ? pointer : as_option(unop->expression->type) ? unwrap : dereference;
-			switch (unop->operation) {
-				case pointer: goto _pointer;
-				case dereference: goto _dereference;
-				case unwrap: goto _unwrap;
+
+			if (is_type(unop->expression)) {
+				unop->operation = pointer;
+				goto _pointer;
+			} else if (as_option(unop->expression->type)) {
+				unop->operation = unwrap;
+				goto _unwrap;
+			} else if (is_pointer(unop->expression->type)) {
+				unop->operation = dereference;
+				goto _dereference;
 			}
+
 			break;
 		}
 		case pointer: {
@@ -11137,18 +11346,17 @@ AstExpression *typecheck(TypecheckState *state, AstUnaryOperator *unop) {
 		}
 		case bnot: {
 			typecheck(state, unop->expression);
-			unop->type = unop->expression->type;
 
 			if (types_match(unop->expression->type, compiler->builtin_bool)) {
+				unop->type = unop->expression->type;
 				break;
 			}
 
 			if (::is_integer(unop->expression->type)) {
+				unop->type = unop->expression->type;
 				break;
 			}
 
-			state->reporter.error(unop->location, "Can not apply bitwise not to {}", type_to_string(unop->expression->type));
-			yield(TypecheckResult::fail);
 			break;
 		}
 		case Sizeof: {
@@ -11257,6 +11465,37 @@ AstExpression *typecheck(TypecheckState *state, AstUnaryOperator *unop) {
 			yield(TypecheckResult::fail);
 		}
 	}
+
+	if (!unop->type) {
+		auto op_ident = AstIdentifier::create();
+		op_ident->name = get_unop_ident_name(unop->operation);
+		op_ident->location = unop->location;
+
+		auto call = AstCall::create();
+		call->location = unop->location;
+		call->callable = op_ident;
+		call->unsorted_arguments.add({{}, unop->expression});
+
+		auto new_state = get_pooled_typecheck_state(call, state);
+
+	retry:
+		SWITCH_TO_FIBER(new_state->fiber);
+		current_typecheck_state = state;
+		switch (fiber_result) {
+			case TypecheckResult::wait: {
+				yield(TypecheckResult::wait);
+				goto retry;
+			}
+			case TypecheckResult::fail: {
+				state->reporter.error(unop->location, "No unary operator {} defined for {}", unop->operation, type_to_string(unop->expression->type));
+				yield(TypecheckResult::fail);
+				break;
+			}
+		}
+
+		return call;
+	}
+
 	return unop;
 }
 AstExpression *typecheck(TypecheckState *state, AstStruct *Struct) {
@@ -11297,50 +11536,38 @@ AstExpression *typecheck(TypecheckState *state, AstStruct *Struct) {
 				Struct->data_members.add(definition);
 		}
 
+		if (Struct->data_members.count == 0) {
+			Struct->size = 1;
+			Struct->alignment = 1;
+		}
 
 		// NOTE: Struct->member_scope may change in following loops, because
 		//       unnamed structs inside them may insert their definitions into this scope.
 
 		auto member_statements = copy(Struct->member_scope->statement_list);
 
-		List<TypecheckState> new_states;
+		List<TypecheckState *> new_states;
 		new_states.resize(Struct->member_scope->statement_list.count);
 
 		for (umm i = 0; i < member_statements.count; ++i) {
 			auto &new_state = new_states[i];
 			auto &statement = member_statements[i];
 
-			new_state.statement = statement;
-			new_state.parent_fiber = state->fiber;
-			new_state.current_scope = state->current_scope;
-			new_state.current_lambda_or_struct_or_enum = Struct;
-
-			auto typechecker = [](LPVOID param) -> void {
-				auto state = (TypecheckState *)param;
-				current_typecheck_state = state;
-				typecheck(state, state->statement);
-				yield(TypecheckResult::success);
-			};
-
-			// TODO: Implement fiber pooling
-			new_state.fiber = CreateFiber(4096, typechecker, &new_state);
-			if (!new_state.fiber) {
-				invalid_code_path(statement->location, "INTERNAL COMPILER ERROR: Failed to create fiber");
-			}
+			new_state = get_pooled_typecheck_state(statement, state);
 		}
 
 		while (1) {
 			bool all_finished = true;
 			for (umm i = 0; i < member_statements.count; ++i) {
 				auto &new_state = new_states[i];
-				if (new_state.result != TypecheckResult::wait)
+				if (new_state->result != TypecheckResult::wait)
 					continue;
 
-				SWITCH_TO_FIBER(new_state.fiber);
+				SWITCH_TO_FIBER(new_state->fiber);
 				current_typecheck_state = state;
 				switch ((TypecheckResult)fiber_result) {
 					case TypecheckResult::fail: {
-						state->reporter.reports.add(new_state.reporter.reports);
+						state->reporter.reports.add(new_state->reporter.reports);
 						yield(TypecheckResult::fail);
 						break;
 					}
@@ -11349,118 +11576,132 @@ AstExpression *typecheck(TypecheckState *state, AstStruct *Struct) {
 						yield(TypecheckResult::wait);
 						break;
 					}
+
+					case TypecheckResult::success: {
+						auto all = [](auto x, auto predicate) {
+							for (auto v : x) {
+								if (!predicate(v))
+									return false;
+							}
+							return true;
+						};
+
+						if (Struct->size == -1 && all(Struct->data_members, [](auto d){ return d->type; })) {
+
+							bool has_default_initialized_members = false;
+
+							for (auto &member : Struct->data_members) {
+								if (types_match(member->type, compiler->builtin_void)) {
+									state->reporter.error(member->location, "Can't use member of type Void in a struct.");
+									yield(TypecheckResult::fail);
+								}
+							}
+
+							for (auto member : Struct->data_members) {
+								if (member->expression) {
+									has_default_initialized_members = true;
+								}
+
+								if (auto member_struct = direct_as<AstStruct>(member->type)) {
+									if (member_struct->default_value) {
+										has_default_initialized_members = true;
+									}
+								}
+							}
+
+							if (Struct->is_union) {
+								for (auto &member : Struct->data_members) {
+									switch (Struct->layout) {
+										case StructLayout::tlang:
+										case StructLayout::c: {
+											auto member_size  = get_size (state, member->type);
+											auto member_align = get_align(state, member->type);
+
+											struct_alignment = max(struct_alignment, member_align);
+
+											member->offset = 0;
+											struct_size = max(struct_size, member_size);
+											break;
+										}
+										default:
+											invalid_code_path();
+									}
+								}
+							} else {
+								for (auto &member : Struct->data_members) {
+									switch (Struct->layout) {
+										case StructLayout::tlang:
+										case StructLayout::c: {
+											auto member_size  = get_size (state, member->type);
+											auto member_align = get_align(state, member->type);
+
+											if (member->placed_at.is_empty()) {
+												member_offset_cursor = ceil(member_offset_cursor, member_align);
+												member->offset = member_offset_cursor;
+											} else {
+												auto found_destination = find_if(Struct->data_members, [&](AstDefinition *other) {return other->name == member->placed_at; });
+												if (!found_destination) {
+													state->reporter.error(member->location, "Can't place member at '{}', it was not defined.", member->placed_at);
+													yield(TypecheckResult::fail);
+												}
+
+												auto destination = *found_destination;
+
+												if (destination->offset == -1) {
+													state->reporter.error(member->location, "Can't place member at '{}', it's offset is not computed yet. You can place this definition after '{}' to solve this issue.", member->placed_at, member->placed_at);
+													yield(TypecheckResult::fail);
+												}
+												member->offset = destination->offset;
+
+												if (member->offset % member_align != 0) {
+													state->reporter.warning(member->location, "This is placed at offset {}, which is not divisible by it's alignment {}.", member->offset, member_align);
+												}
+
+												member_offset_cursor = destination->offset;
+											}
+
+											member_offset_cursor += member_size;
+
+											struct_alignment = max(struct_alignment, member_align);
+											struct_size = max(struct_size, member_offset_cursor);
+
+											break;
+										}
+										default:
+											invalid_code_path();
+									}
+								}
+							}
+							Struct->alignment = struct_alignment;
+							Struct->size = max(1, ceil(struct_size, struct_alignment));
+
+							if (has_default_initialized_members) {
+								List<AstExpression *> values;
+								for (auto member : Struct->data_members) {
+									if (member->expression) {
+										values.add(member->expression);
+									} else {
+										if (auto member_struct = direct_as<AstStruct>(member->type); member_struct && member_struct->default_value)
+											values.add(deep_copy(raw(member_struct->default_value)));
+										else
+											values.add(state->make_null(member->type, {}));
+									}
+								}
+
+								auto initializer = make_struct_initializer(Struct, values, Struct->location);
+								Struct->default_value = evaluate(state, initializer);
+								if (!Struct->default_value) {
+									yield(TypecheckResult::fail);
+								}
+								Struct->default_value_offset = put_in_section(state, Struct->default_value, compiler->constant_section);
+							}
+						}
+						break;
+					}
 				}
 			}
 			if (all_finished)
 				break;
-		}
-
-		bool has_default_initialized_members = false;
-
-		for (auto &member : Struct->data_members) {
-			if (types_match(member->type, compiler->builtin_void)) {
-				state->reporter.error(member->location, "Can't use member of type Void in a struct.");
-				yield(TypecheckResult::fail);
-			}
-		}
-
-		for (auto member : Struct->data_members) {
-			if (member->expression) {
-				has_default_initialized_members = true;
-			}
-
-			if (auto member_struct = direct_as<AstStruct>(member->type)) {
-				if (member_struct->default_value) {
-					has_default_initialized_members = true;
-				}
-			}
-		}
-
-		if (Struct->is_union) {
-			for (auto &member : Struct->data_members) {
-				switch (Struct->layout) {
-					case StructLayout::tlang:
-					case StructLayout::c: {
-						auto member_size  = get_size (state, member->type);
-						auto member_align = get_align(state, member->type);
-
-						struct_alignment = max(struct_alignment, member_align);
-
-						member->offset = 0;
-						struct_size = max(struct_size, member_size);
-						break;
-					}
-					default:
-						invalid_code_path();
-				}
-			}
-		} else {
-			for (auto &member : Struct->data_members) {
-				switch (Struct->layout) {
-					case StructLayout::tlang:
-					case StructLayout::c: {
-						auto member_size  = get_size (state, member->type);
-						auto member_align = get_align(state, member->type);
-
-						if (member->placed_at.is_empty()) {
-							member_offset_cursor = ceil(member_offset_cursor, member_align);
-							member->offset = member_offset_cursor;
-						} else {
-							auto found_destination = find_if(Struct->data_members, [&](AstDefinition *other) {return other->name == member->placed_at; });
-							if (!found_destination) {
-								state->reporter.error(member->location, "Can't place member at '{}', it was not defined.", member->placed_at);
-								yield(TypecheckResult::fail);
-							}
-
-							auto destination = *found_destination;
-
-							if (destination->offset == -1) {
-								state->reporter.error(member->location, "Can't place member at '{}', it's offset is not computed yet. You can place this definition after '{}' to solve this issue.", member->placed_at, member->placed_at);
-								yield(TypecheckResult::fail);
-							}
-							member->offset = destination->offset;
-
-							if (member->offset % member_align != 0) {
-								state->reporter.warning(member->location, "This is placed at offset {}, which is not divisible by it's alignment {}.", member->offset, member_align);
-							}
-
-							member_offset_cursor = destination->offset;
-						}
-
-						member_offset_cursor += member_size;
-
-						struct_alignment = max(struct_alignment, member_align);
-						struct_size = max(struct_size, member_offset_cursor);
-
-						break;
-					}
-					default:
-						invalid_code_path();
-				}
-			}
-		}
-		Struct->alignment = struct_alignment;
-		Struct->size = max(1, ceil(struct_size, struct_alignment));
-
-		if (has_default_initialized_members) {
-			List<AstExpression *> values;
-			for (auto member : Struct->data_members) {
-				if (member->expression) {
-					values.add(member->expression);
-				} else {
-					if (auto member_struct = direct_as<AstStruct>(member->type); member_struct && member_struct->default_value)
-						values.add(deep_copy(raw(member_struct->default_value)));
-					else
-						values.add(state->make_null(member->type, {}));
-				}
-			}
-
-			auto initializer = make_struct_initializer(Struct, values, Struct->location);
-			Struct->default_value = evaluate(state, initializer);
-			if (!Struct->default_value) {
-				yield(TypecheckResult::fail);
-			}
-			Struct->default_value_offset = put_in_section(Struct->default_value, compiler->constant_section);
 		}
 	}
 
@@ -11623,45 +11864,14 @@ AstExpression *typecheck(TypecheckState *state, AstIf *If) {
 	return If;
 }
 AstExpression *typecheck(TypecheckState *state, AstTest *test) {
-	struct TestParams {
-		TypecheckState *state;
-		AstTest *test;
-	} test_params;
-	test_params.state = state;
-	test_params.test = test;
-
-#if USE_FIBERS
-	auto typechecker = [](LPVOID param) -> void {
-		auto test_params = (TestParams *)param;
-		auto state = test_params->state;
-		typecheck(state, test_params->test->scope);
-		yield(TypecheckResult::success);
-	};
-
-	auto fiberstate = CreateFiber(4096, typechecker, &test_params);
-	if (!fiberstate) {
-		invalid_code_path(test->location, "INTERNAL COMPILER ERROR: Failed to create fiber");
-	}
-	defer { DeleteFiber(fiberstate); };
-
-	auto original_parent_fiber = state->parent_fiber;
-	state->parent_fiber = state->fiber;
-	defer { state->parent_fiber = original_parent_fiber; };
-
-	auto original_fiber = state->fiber;
-	state->fiber = fiberstate;
-	defer { state->fiber = original_fiber; };
-
-	auto original_reporter = state->reporter;
-	state->reporter = {};
-	defer { test->reports = state->reporter.reports; state->reporter = original_reporter; };
+	auto new_state = get_pooled_typecheck_state(test->scope, state);
 
 	bool did_compile = false;
 
 	while (1) {
-		SWITCH_TO_FIBER(fiberstate);
+		SWITCH_TO_FIBER(new_state->fiber);
 		current_typecheck_state = state;
-		switch ((TypecheckResult)fiber_result) {
+		switch (fiber_result) {
 			case TypecheckResult::success: {
 				did_compile = true;
 				goto _break;
@@ -11671,10 +11881,7 @@ AstExpression *typecheck(TypecheckState *state, AstTest *test) {
 				goto _break;
 			}
 			case TypecheckResult::wait: {
-				scoped_replace(state->fiber, original_fiber);
-				fiber_result = TypecheckResult::wait;
-				SWITCH_TO_FIBER(original_parent_fiber);
-				current_typecheck_state = state;
+				yield(TypecheckResult::wait);
 				break;
 			}
 			default: {
@@ -11683,60 +11890,6 @@ AstExpression *typecheck(TypecheckState *state, AstTest *test) {
 		}
 	}
 _break:
-#else
-	auto typechecker = [](CoroState *, size_t param) -> size_t {
-		auto test_params = (TestParams *)param;
-		auto state = test_params->state;
-		typecheck(state, &test_params->test->scope);
-		return (size_t)TypecheckResult::success;
-	};
-
-	CoroState *corostate;
-	auto init_result = coro_init(&corostate, typechecker, 1024*1024);
-	if (init_result.is_error) {
-		state->reporter.error(test->location, init_result.error.message);
-		yield(TypecheckResult::fail);
-	}
-	defer { coro_free(&corostate); };
-
-	auto original_coro = state->coro;
-	state->coro = corostate;
-	defer { state->coro = original_coro; };
-
-	auto original_reporter = state->reporter;
-	state->reporter = {};
-	defer { state->reporter = original_reporter; };
-
-	while (1) {
-		switch ((TypecheckResult)coro_yield(corostate, (size_t)&test_params)) {
-			case TypecheckResult::success: {
-				if (!test->should_compile) {
-					original_reporter.error(test->location, "Test compiled, but it should not!");
-				}
-				goto _break;
-			}
-			case TypecheckResult::fail: {
-				if (test->should_compile) {
-					original_reporter.error(test->location, "Test did not compile, but it should!");
-					original_reporter.info("Here are reports:");
-					original_reporter.reports.add(state->reporter.reports);
-				}
-				state->no_progress_counter = 0;
-				goto _break;
-			}
-			case TypecheckResult::wait: {
-				auto old_coro = state->coro;
-				state->coro = original_coro;
-				defer { state->coro = old_coro; };
-				break;
-			}
-			default: {
-				invalid_code_path("something wrong with coroutines");
-			}
-		}
-	}
-_break:
-#endif
 
 	auto result = state->make_bool(did_compile);
 	result->location = test->location;
@@ -11872,11 +12025,18 @@ AstExpression *typecheck(TypecheckState *state, AstMatch *Match) {
 				state->reporter.error(Case.expression->location, "Could not evaluate this value.");
 				yield(TypecheckResult::fail);
 			}
-			if (case_value->literal_kind != LiteralKind::integer) {
-				state->reporter.error(Case.expression->location, "Currently only integers are supported in match cases.");
-				yield(TypecheckResult::fail);
+
+			switch (case_value->literal_kind) {
+				case LiteralKind::integer:
+					Case.value = (u64)case_value->integer;
+					break;
+				case LiteralKind::character:
+					Case.value = (u64)case_value->character;
+					break;
+				default:
+					state->reporter.error(Case.expression->location, "Currently only integers and characters are supported in match cases.");
+					yield(TypecheckResult::fail);
 			}
-			Case.value = (u64)case_value->integer;
 
 			n_cases_handled += 1;
 		} else {
@@ -12046,22 +12206,24 @@ void typecheck(TypecheckState *state, CExpression auto &expression) {
 
 void WINAPI typecheck_pooled(void *_state) {
 	auto state = (TypecheckState *)_state;
-	// Keep using pooled fibers
 	while (1) {
 		throwing = false;
-		defer { state = state->next_state; };
-		current_typecheck_state = state;
+		assert(state->current_scope);
+
 		try {
-			push_scope(&compiler->global_scope);
-			typecheck(state, state->statement);
+			if (state->root_statement)
+				typecheck(state, state->root_statement);
+			else if (state->root_expression)
+				typecheck(state, state->root_expression);
+			else
+				typecheck(state, state->root_scope);
 		} catch (int x) {
 			continue;
 		}
 		yield(TypecheckResult::success);
+		current_typecheck_state = state;
 	}
 }
-
-bool typecheck_finished;
 
 void add_member(AstStruct *destination, AstExpression *type, String name, AstLiteral *value, bool constant, s32 offset) {
 	auto d = AstDefinition::create();
@@ -13353,11 +13515,15 @@ restart_main:
 	construct(implicit_casts);
 	construct(typechecked_explicit_casts);
 	construct(binary_operators);
+	construct(unary_operators);
+
 	construct(has_value_overloads);
 
 	construct(typeinfo_definitinos);
 
 	construct(generated_comparers);
+
+	construct(typecheck_states_pool);
 
 #if SMALL_AST
 	Pool32<AstExpression>::init();
@@ -13609,138 +13775,76 @@ restart_main:
 
 		auto main_fiber = ConvertThreadToFiber(0);
 
-		Span<TypecheckState> typecheck_states;
-		typecheck_states.count = count(compiler->global_scope.statement_list, [&](AstStatement *statement) { return !(statement->kind == Ast_Definition && ((AstDefinition *)statement)->type); });
-		if (typecheck_states.count) {
-			typecheck_states.data = default_allocator.allocate<TypecheckState>(typecheck_states.count);
+		struct StatementToTypecheck {
+			AstStatement *statement = 0;
+			TypecheckState *state = 0;
+		};
 
-			u32 typechecks_finished = 0;
-			bool fail = false;
-			u32 state_index = 0;
+		List<StatementToTypecheck> current_statements_to_typecheck;
+		List<StatementToTypecheck> next_statements_to_typecheck;
+		bool fail = false;
 
-#if !USE_FIBERS
-			u64 coro_mem = 0;
-			u64 peak_coro_mem = 0;
-			defer {
-				if (compiler->do_profile) {
-					print("Peak coroutine memory: {}\n", format_bytes(peak_coro_mem));
+		u64 const coro_size = 1*MiB;
+
+		for (auto &statement : compiler->global_scope.statement_list)  {
+			if (statement->kind == Ast_Definition && ((AstDefinition *)statement)->type)
+				continue;
+
+			auto &state = current_statements_to_typecheck.add();
+			state.statement = statement;
+		}
+
+		get_current_node = []{ return current_typecheck_state ? current_typecheck_state->current_node : 0; };
+
+		while (1) {
+			next_statements_to_typecheck.clear();
+			for (auto &statement : current_statements_to_typecheck) {
+				if (!statement.state) {
+					statement.state = get_pooled_typecheck_state(statement.statement, 0, &compiler->global_scope, main_fiber);
 				}
-			};
-#endif
 
-			u64 const coro_size = 1*MiB;
+				SWITCH_TO_FIBER(statement.state->fiber);
+				current_typecheck_state = 0;
+				auto result = fiber_result;
 
-			for (auto statement : compiler->global_scope.statement_list)  {
-				if (statement->kind == Ast_Definition && ((AstDefinition *)statement)->type)
-					continue;
-
-				auto &state = typecheck_states[state_index];
-				state.statement = statement;
-				++state_index;
-			}
-
-			struct FiberPoolEntry {
-				TypecheckState *state;
-				void *fiber;
-			};
-
-			List<FiberPoolEntry> fiber_pool;
-
-			get_current_node = []{ return current_typecheck_state ? current_typecheck_state->current_node : 0; };
-
-			while (1) {
-				for (u32 i = 0; i < typecheck_states.count; ++i) {
-					if (typechecks_finished == typecheck_states.count) {
-						goto typecheck_break;
-					}
-
-					auto &state = typecheck_states[i];
-
-#if USE_FIBERS
-					if (!state.fiber) {
-						state.parent_fiber = main_fiber;
-						if (fiber_pool.count) {
-							auto pooled = fiber_pool.pop().value();
-							state.fiber = pooled.fiber;
-							pooled.state->next_state = &state;
-						} else {
-							state.fiber = CreateFiber(4096, typecheck_pooled, &state);
-							if (!state.fiber) {
-								immediate_error(state.statement->location, "INTERNAL COMPILER ERROR: Failed to create fiber");
-								return -1;
-							}
-						}
-					}
-#else
-					if (!state.coro) {
-						coro_mem += coro_size;
-						if (peak_coro_mem < coro_mem)
-							peak_coro_mem = coro_mem;
-						auto init_result = coro_init(&state.coro, typecheck_coroutine, coro_size);
-						if (init_result.is_error) {
-							immediate_error(state.statement->location, "INTERNAL COMPILER ERROR: {}", init_result.error.message);
-							return -1;
-						}
-					}
-#endif
-
-					if (state.finished)
-						continue;
-#if USE_FIBERS
-					SWITCH_TO_FIBER(state.fiber);
-					current_typecheck_state = 0;
-					auto result = fiber_result;
-#else
-#undef YIELD_STATE
-#define YIELD_STATE state.coro
-					auto result = (TypecheckResult)(int)yield(&state);
-#endif
-
-					switch (result) {
-						case TypecheckResult::success:
-						case TypecheckResult::fail:
-							state.finished = true;
-							typechecks_finished++;
-							if (result == TypecheckResult::fail) {
-								fail = true;
-								for (auto entry : reverse_iterate(state.template_call_stack)) {
-									if (entry.hardened_lambda) {
-										StringBuilder builder;
-										builder.allocator = temporary_allocator;
-										for (auto definition : entry.hardened_lambda->constant_scope->definition_list) {
-											append_format(builder, "{} = ", definition->name);
-											append_type(builder, definition->expression, true);
-											append(builder, ", ");
-										}
-										state.reporter.info(entry.call->location, "While resolving {}", entry.call->callable->location);
-										state.reporter.info(entry.template_lambda->location, "With {}", to_string(builder));
+				switch (result) {
+					case TypecheckResult::success:
+					case TypecheckResult::fail:
+						if (result == TypecheckResult::fail) {
+							fail = true;
+							for (auto entry : reverse_iterate(statement.state->template_call_stack)) {
+								if (entry.hardened_lambda) {
+									StringBuilder builder;
+									builder.allocator = temporary_allocator;
+									for (auto definition : entry.hardened_lambda->constant_scope->definition_list) {
+										append_format(builder, "{} = ", definition->name);
+										append(builder, direct(definition->expression));
+										append(builder, ", ");
 									}
+									statement.state->reporter.info(entry.call->location, "While resolving {}", entry.call->callable->location);
+									statement.state->reporter.info(entry.template_lambda->location, "With {}", to_string(builder));
 								}
 							}
-							state.reporter.print_all();
-#if USE_FIBERS
-							fiber_pool.add({&state, state.fiber});
-							state.next_state = 0;
-							// DeleteFiber(state.fiber);
-#else
-							coro_mem -= coro_size;
-							coro_free(&state.coro);
-#endif
-							break;
-						case TypecheckResult::wait:
-							break;
-					}
+						}
+						statement.state->reporter.print_all();
+						break;
+					case TypecheckResult::wait:
+						next_statements_to_typecheck.add(statement);
+						break;
 				}
 			}
-		typecheck_break:;
-			if (fail) {
-				with(ConsoleColor::red, print("Typechecking failed.\n"));
-				return 1;
-			}
+
+			if (next_statements_to_typecheck.count == 0)
+				break;
+
+			swap(next_statements_to_typecheck, current_statements_to_typecheck);
+		}
+
+		if (fail) {
+			with(ConsoleColor::red, print("Typechecking failed.\n"));
+			return 1;
 		}
 	}
-
-	typecheck_finished = true;
 
 	if (args.no_typecheck) {
 		return 1;

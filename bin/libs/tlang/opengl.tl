@@ -5301,6 +5301,7 @@ wglGetProcAddress :: (name: *U8) *Void
 wglDeleteContext  :: (_: HGLRC) BOOL
 
 glClearColor :: (r: F32, g: F32, b: F32, a: F32)
+glClearDepth :: (depth: GLclampd)
 glClear :: (flags: U32)
 glVertex2f :: (x: F32, y: F32)
 glColor3f :: (r: F32, g: F32, b: F32)
@@ -5375,6 +5376,15 @@ glUniform1uiv             : (location: GLint, count: GLsizei, value: *GLuint) #t
 glUniform2uiv             : (location: GLint, count: GLsizei, value: *GLuint) #type
 glUniform3uiv             : (location: GLint, count: GLsizei, value: *GLuint) #type
 glUniform4uiv             : (location: GLint, count: GLsizei, value: *GLuint) #type
+glUniformMatrix2fv        : (location: GLint, count: GLsizei, transpose: GLboolean,	value: *GLfloat) #type
+glUniformMatrix3fv        : (location: GLint, count: GLsizei, transpose: GLboolean,	value: *GLfloat) #type
+glUniformMatrix4fv        : (location: GLint, count: GLsizei, transpose: GLboolean,	value: *GLfloat) #type
+glUniformMatrix2x3fv      : (location: GLint, count: GLsizei, transpose: GLboolean,	value: *GLfloat) #type
+glUniformMatrix3x2fv      : (location: GLint, count: GLsizei, transpose: GLboolean,	value: *GLfloat) #type
+glUniformMatrix2x4fv      : (location: GLint, count: GLsizei, transpose: GLboolean,	value: *GLfloat) #type
+glUniformMatrix4x2fv      : (location: GLint, count: GLsizei, transpose: GLboolean,	value: *GLfloat) #type
+glUniformMatrix3x4fv      : (location: GLint, count: GLsizei, transpose: GLboolean,	value: *GLfloat) #type
+glUniformMatrix4x3fv      : (location: GLint, count: GLsizei, transpose: GLboolean,	value: *GLfloat) #type
 glGetUniformLocation      : (program: GLuint, name: *GLchar) GLint #type
 glGenTextures             : (n: GLsizei, textures: *GLuint) #type
 glBindTexture             : (target: GLenum, texture: GLuint) #type
@@ -5433,6 +5443,15 @@ load_opengl_functions :: () {
 	glUniform2uiv             = @wglGetProcAddress("glUniform2uiv"            .data)
 	glUniform3uiv             = @wglGetProcAddress("glUniform3uiv"            .data)
 	glUniform4uiv             = @wglGetProcAddress("glUniform4uiv"            .data)
+	glUniformMatrix2fv        = @wglGetProcAddress("glUniformMatrix2fv"       .data)
+	glUniformMatrix3fv        = @wglGetProcAddress("glUniformMatrix3fv"       .data)
+	glUniformMatrix4fv        = @wglGetProcAddress("glUniformMatrix4fv"       .data)
+	glUniformMatrix2x3fv      = @wglGetProcAddress("glUniformMatrix2x3fv"     .data)
+	glUniformMatrix3x2fv      = @wglGetProcAddress("glUniformMatrix3x2fv"     .data)
+	glUniformMatrix2x4fv      = @wglGetProcAddress("glUniformMatrix2x4fv"     .data)
+	glUniformMatrix4x2fv      = @wglGetProcAddress("glUniformMatrix4x2fv"     .data)
+	glUniformMatrix3x4fv      = @wglGetProcAddress("glUniformMatrix3x4fv"     .data)
+	glUniformMatrix4x3fv      = @wglGetProcAddress("glUniformMatrix4x3fv"     .data)
 	glGetUniformLocation      = @wglGetProcAddress("glGetUniformLocation"     .data)
 	glGenTextures             = @wglGetProcAddress("glGenTextures"            .data)
 	glBindTexture             = @wglGetProcAddress("glBindTexture"            .data)

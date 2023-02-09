@@ -1,17 +1,42 @@
 import "tlang/std.tl"
 
 main :: () {
-    Vec3 :: Vector3(Float)
+    Vec3 :: Vector3(Int)
 
-    a := Vector3(Float)(1, 2, 3)
-    b := Vector3(Float)(6, 5, 4)
+    a := Vec3(1, 2, 3)
+    b := Vec3(6, 5, 4)
+	c: Vec3
 
-    println(a + b)
-    println(a - b)
-    println(a * b)
+	c = a + b
+	assert c.x == 7
+	assert c.y == 7
+	assert c.z == 7
 
-    a += b; println(a)
-    a -= b; println(a)
-    a *= b; println(a)
-	0
+	c = a - b
+	assert c.x == -5
+	assert c.y == -3
+	assert c.z == -1
+
+	c = a * b
+	assert c.x == 6
+	assert c.y == 10
+	assert c.z == 12
+
+	c = a
+	c += b
+	assert c.x == 7
+	assert c.y == 7
+	assert c.z == 7
+
+	c = a
+	c -= b
+	assert c.x == -5
+	assert c.y == -3
+	assert c.z == -1
+
+	c = a
+	c *= b
+	assert c.x == 6
+	assert c.y == 10
+	assert c.z == 12
 }

@@ -52,9 +52,21 @@ mul128 :: (a: Int, b: Int) [2]Int #intrinsic
 mul128 :: (a: UInt, b: UInt) [2]UInt #intrinsic
 sqrt_F32 :: (a: F32) F32 #intrinsic
 sqrt_F64 :: (a: F64) F64 #intrinsic
+floor_F32 :: (a: F32) F32 #intrinsic
+floor_F64 :: (a: F64) F64 #intrinsic
+ceil_F32 :: (a: F32) F32 #intrinsic
+ceil_F64 :: (a: F64) F64 #intrinsic
+round_F32 :: (a: F32) F32 #intrinsic
+round_F64 :: (a: F64) F64 #intrinsic
 
 sqrt :: (a: F32) => sqrt_F32(a)
 sqrt :: (a: F64) => sqrt_F64(a)
+floor :: (a: F32) => floor_F32(a)
+floor :: (a: F64) => floor_F64(a)
+ceil :: (a: F32) => ceil_F32(a)
+ceil :: (a: F64) => ceil_F64(a)
+round :: (a: F32) => round_F32(a)
+round :: (a: F64) => round_F64(a)
 
 // RoundingMode :: enum {
 // 	to_negative_infinity
@@ -99,5 +111,5 @@ init_allocator :: () {
 allocate :: (this: Allocator, size: Int) => this.func(.allocate, null, size, this.state)
 deallocate :: (this: Allocator, data: *Void) => this.func(.deallocate, data, 0, this.state)
 
-new :: (this: Allocator, T: %Type) *T => @this.allocate(#sizeof T)
-new :: (T: %Type) *T => @current_allocator.allocate(#sizeof T)
+new :: (this: Allocator, T: %Type, count: Int = 1) *T => @this.allocate(#sizeof T * count)
+new :: (T: %Type, count: Int = 1) *T => @current_allocator.allocate(#sizeof T * count)

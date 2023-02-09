@@ -87,8 +87,11 @@ inline void run_bytecode(Compiler *compiler, Span<Instruction> _instructions_, A
 		bool last_is_byte = true;
 
 		while (it != section.buffer.end()) {
-			auto relocation = binary_search(section.relocations, i);
+			auto relocation = binary_search(section.relocations, i, [](Relocation r) { return r.offset; });
 			if (relocation) {
+
+				assert(relocation->section == compiler->kind_of(section), "Relocations to different section is not implemented");
+
 				u64 offset = 0;
 				for (umm j = 0; j < 8; ++j)
 					offset = (offset >> 8) | ((u64)*it++ << 56);
@@ -893,30 +896,30 @@ got_breaker_name:;
 					case mul8_ff: { REDECLARE_REF(i, i.mul8_ff); RF8(i.d) *= RF8(i.s); break; }
 					case div8_ff: { REDECLARE_REF(i, i.div8_ff); RF8(i.d) /= RF8(i.s); break; }
 
-					case round4_f: {
-						REDECLARE_REF(i, i.round4_f);
-						switch (i.mode) {
-							using enum RoundingMode;
-							case to_negative_infinity: RF4(i.d) = ::floorf(RF4(i.d)); break;
-							case to_positive_infinity: RF4(i.d) = ::ceilf (RF4(i.d)); break;
-							case to_closest_integer:   RF4(i.d) = ::roundf(RF4(i.d)); break;
-							case to_zero:              RF4(i.d) = ::truncf(RF4(i.d)); break;
-							default: invalid_code_path();
-						}
-						break;
-					}
-					case round8_f: {
-						REDECLARE_REF(i, i.round8_f);
-						switch (i.mode) {
-							using enum RoundingMode;
-							case to_negative_infinity: RF8(i.d) = ::floor(RF8(i.d)); break;
-							case to_positive_infinity: RF8(i.d) = ::ceil (RF8(i.d)); break;
-							case to_closest_integer:   RF8(i.d) = ::round(RF8(i.d)); break;
-							case to_zero:              RF8(i.d) = ::trunc(RF8(i.d)); break;
-							default: invalid_code_path();
-						}
-						break;
-					}
+					//case round4_f: {
+					//	REDECLARE_REF(i, i.round4_f);
+					//	switch (i.mode) {
+					//		using enum RoundingMode;
+					//		case to_negative_infinity: RF4(i.d) = ::floorf(RF4(i.d)); break;
+					//		case to_positive_infinity: RF4(i.d) = ::ceilf (RF4(i.d)); break;
+					//		case to_closest_integer:   RF4(i.d) = ::roundf(RF4(i.d)); break;
+					//		case to_zero:              RF4(i.d) = ::truncf(RF4(i.d)); break;
+					//		default: invalid_code_path();
+					//	}
+					//	break;
+					//}
+					//case round8_f: {
+					//	REDECLARE_REF(i, i.round8_f);
+					//	switch (i.mode) {
+					//		using enum RoundingMode;
+					//		case to_negative_infinity: RF8(i.d) = ::floor(RF8(i.d)); break;
+					//		case to_positive_infinity: RF8(i.d) = ::ceil (RF8(i.d)); break;
+					//		case to_closest_integer:   RF8(i.d) = ::round(RF8(i.d)); break;
+					//		case to_zero:              RF8(i.d) = ::trunc(RF8(i.d)); break;
+					//		default: invalid_code_path();
+					//	}
+					//	break;
+					//}
 
 					default:
 						invalid_code_path();

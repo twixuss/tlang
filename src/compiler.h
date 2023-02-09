@@ -227,6 +227,7 @@ struct AstBlock : AstExpression, ExpressionPool<AstBlock> {
 	e(lambda_name) \
 	e(Struct) \
 	e(array) \
+	e(span) \
 	e(pointer) \
 
 enum class LiteralKind : u8 {
@@ -250,10 +251,6 @@ inline umm append(StringBuilder &builder, LiteralKind kind) {
 
 // FIXME: use custom allocator
 using BigInteger = tl::impl::BigInt<List<u64, Allocator, u32>>;
-
-enum SectionKind : u8 {
-	constant,
-};
 
 struct AstLiteral : AstExpression, ExpressionPool<AstLiteral> {
 	union {
@@ -547,7 +544,7 @@ struct AstStruct : AstExpression, ExpressionPool<AstStruct> {
 	BlockList<Instantiation> instantiations;
 
 	Expression<AstLiteral> default_value = {};
-	u32 default_value_offset = 0;
+	s64 default_value_offset = -1;
 
 	s64 size = -1;
 	s64 alignment = -1;
@@ -786,8 +783,8 @@ inline umm append(StringBuilder &builder, UnaryOperation unop) {
 	return append(builder, as_string(unop));
 }
 
-inline Optional<UnaryOperation> as_unary_operation(Token token) {
-	switch (token.kind) {
+inline Optional<UnaryOperation> as_unary_operation(TokenKind kind) {
+	switch (kind) {
 		using enum UnaryOperation;
 		case '+': return plus;
 		case '-': return minus;
@@ -800,14 +797,18 @@ inline Optional<UnaryOperation> as_unary_operation(Token token) {
 		case '$': return poly;
 		case '.': return dot;
 		case '..': return pack;
-		case Token_directive:
-			if (token.string == "#sizeof")   return Sizeof;
-			if (token.string == "#typeof")   return typeof;
-			if (token.string == "#typeinfo") return typeinfo;
-			if (token.string == "#insert") return insert;
-			break;
 	}
 	return {};
+}
+inline Optional<UnaryOperation> as_unary_operation(Token token) {
+	using enum UnaryOperation;
+	if (token.kind == Token_directive) {
+		if (token.string == "#sizeof")   return Sizeof;
+		if (token.string == "#typeof")   return typeof;
+		if (token.string == "#typeinfo") return typeinfo;
+		if (token.string == "#insert") return insert;
+	}
+	return as_unary_operation(token.kind);
 }
 
 struct AstUnaryOperator : AstExpression, ExpressionPool<AstUnaryOperator> {
@@ -1264,6 +1265,15 @@ struct Compiler {
 	Scope global_scope;
 
 	Mutex global_scope_mutex;
+
+	SectionKind kind_of(Section& section) {
+		if (&section == &data_section)
+			return SectionKind::data_readwrite;
+		if (&section == &constant_section)
+			return SectionKind::data_readonly;
+
+		invalid_code_path("kind_of(section): Invalid section");
+	}
 
 	SourceFileInfo *get_source_info(utf8 *location) {
 		for (auto &source : sources) {

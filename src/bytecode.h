@@ -249,12 +249,16 @@ e(add8, ff            , m(Register, d) m(Register, s)) \
 e(mul8, ff            , m(Register, d) m(Register, s)) \
 e(sub8, ff            , m(Register, d) m(Register, s)) \
 e(div8, ff            , m(Register, d) m(Register, s)) \
-e(round4, f           , m(Register, d) m(RoundingMode, mode)) \
-e(round8, f           , m(Register, d) m(RoundingMode, mode)) \
 e(tobool, r           , m(Register, d)) \
 e(toboolnot, r        , m(Register, d)) \
 e(sqrt4, f            , m(Register, d)) \
 e(sqrt8, f            , m(Register, d)) \
+e(floor4, f           , m(Register, d)) \
+e(floor8, f           , m(Register, d)) \
+e(ceil4, f            , m(Register, d)) \
+e(ceil8, f            , m(Register, d)) \
+e(round4, f           , m(Register, d)) \
+e(round8, f           , m(Register, d)) \
 w(jmp_label           , ) \
 w(noop                , ) \
 w(prepare_stack       , m(s64, byte_count)) \

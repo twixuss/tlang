@@ -358,7 +358,7 @@ DECLARE_OUTPUT_BUILDER {
 			bool last_is_byte = true;
 			append_format(builder, "section {}\n{}:db ", name, label);
 			while (it != section.buffer.end()) {
-				auto relocation = binary_search(section.relocations, i);
+				auto relocation = binary_search(section.relocations, i, [](Relocation r) { return r.offset; });
 				if (relocation) {
 					u64 offset = 0;
 					for (umm j = 0; j < 8; ++j)
@@ -368,7 +368,13 @@ DECLARE_OUTPUT_BUILDER {
 						append(builder, "\ndq ");
 						last_is_byte = false;
 					}
-					append_format(builder, "{}+{},", label, offset);
+
+					switch (relocation->section) {
+						case SectionKind::data_readonly: append_format(builder, "constants+{}"s, offset); break;
+						case SectionKind::data_readwrite: append_format(builder, "rwdata+{}"s, offset); break;
+						case SectionKind::data_zero: append_format(builder, "zeros+{}"s, offset); break;
+						case SectionKind::code: append_format(builder, "i{}"s, relocation->lambda->location_in_bytecode); break;
+					}
 
 					i += 8;
 				} else {
@@ -376,9 +382,10 @@ DECLARE_OUTPUT_BUILDER {
 						append(builder, "\ndb ");
 						last_is_byte = true;
 					}
-					append_format(builder, "{},", *it++);
+					append(builder, *it++);
 					i += 1;
 				}
+				append(builder, ",");
 			}
 			append(builder, '\n');
 		};

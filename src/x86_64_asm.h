@@ -656,6 +656,15 @@ inline umm append_instruction(StringBuilder &builder, s64 idx, Instruction i) {
 		case sqrt4_f: return append_format(builder, "movd xmm7, {}\nsqrtss xmm7,xmm7\nmovd {}, xmm7", part4b(i.sqrt4_f.d), part4b(i.sqrt4_f.d));
 		case sqrt8_f: return append_format(builder, "movq xmm7, {}\nsqrtsd xmm7,xmm7\nmovq {}, xmm7", i.sqrt8_f.d, i.sqrt8_f.d);
 
+		case round4_f: return append_format(builder, "movd xmm7, {}\nroundss xmm7,xmm7,0\nmovd {}, xmm7", part4b(i.round4_f.d), part4b(i.round4_f.d));
+		case round8_f: return append_format(builder, "movq xmm7, {}\nroundsd xmm7,xmm7,0\nmovq {}, xmm7", i.round8_f.d, i.round8_f.d);
+
+		case floor4_f: return append_format(builder, "movd xmm7, {}\nroundss xmm7,xmm7,1\nmovd {}, xmm7", part4b(i.floor4_f.d), part4b(i.floor4_f.d));
+		case floor8_f: return append_format(builder, "movq xmm7, {}\nroundsd xmm7,xmm7,1\nmovq {}, xmm7", i.floor8_f.d, i.floor8_f.d);
+
+		case ceil4_f: return append_format(builder, "movd xmm7, {}\nroundss xmm7,xmm7,2\nmovd {}, xmm7", part4b(i.ceil4_f.d), part4b(i.ceil4_f.d));
+		case ceil8_f: return append_format(builder, "movq xmm7, {}\nroundsd xmm7,xmm7,2\nmovq {}, xmm7", i.ceil8_f.d, i.ceil8_f.d);
+
 		case tobool_r:    { auto d = i.tobool_r.d;    return append_format(builder, "test {}, {}\nsetnz {}", d, d, part1b(d)); }
 		case toboolnot_r: { auto d = i.toboolnot_r.d; return append_format(builder, "test {}, {}\nsetz {}" , d, d, part1b(d)); }
 		case jmp_label:
