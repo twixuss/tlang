@@ -230,6 +230,7 @@ struct AstBlock : AstExpression, ExpressionPool<AstBlock> {
 	e(array) \
 	e(span) \
 	e(pointer) \
+	e(container_string) \
 
 enum class LiteralKind : u8 {
 #define e(name) name,

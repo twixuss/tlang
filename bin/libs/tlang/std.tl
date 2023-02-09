@@ -83,6 +83,15 @@ starts_with :: (haystack, needle: String) {
     return true
 }
 
+ends_with :: (haystack, needle: String) {
+	if needle.count > haystack.count
+        return false
+    for i in 0..needle.count
+        if haystack.data[i + haystack.count - needle.count] != needle.data[i]
+            return false
+    return true
+}
+
 
 is_digit :: (c: U8) => '0' <= c && c <= '9'
 is_whitespace :: (c: U8) => c == ' ' || c == '\n' || c == '\t' || c =='\v'
