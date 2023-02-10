@@ -7413,9 +7413,8 @@ AstStatement *typecheck(TypecheckState *state, AstOperatorDefinition *OperatorDe
 	switch (OperatorDefinition->operation) {
 		using enum BinaryOperation;
 		case 'as': {
-			auto old_lambda = OperatorDefinition->lambda;
-			typecheck(state, (Expression<> &)OperatorDefinition->lambda);
-			assert(OperatorDefinition->lambda == old_lambda);
+			auto expression = (Expression<>)OperatorDefinition->lambda;
+			typecheck(state, expression);
 
 			if (OperatorDefinition->is_implicit) {
 				implicit_casts.add(OperatorDefinition->lambda);
@@ -9406,7 +9405,14 @@ AstExpression *typecheck(TypecheckState *state, AstIdentifier *identifier) {
 		return identifier;
 	}
 
-	DefinitionList definitions, inaccessible_definitions;
+	// NOTE: definitions will escape the scope on success
+	DefinitionList definitions;
+	defer { if (throwing) {
+		free(definitions);
+	}};
+
+	DefinitionList inaccessible_definitions;
+	inaccessible_definitions.allocator = temporary_allocator;
 
 	while (1) {
 		definitions.clear();
@@ -9772,12 +9778,13 @@ AstExpression *typecheck(TypecheckState *state, AstLiteral *literal) {
 	return literal;
 }
 AstExpression *typecheck(TypecheckState *state, AstLambda *lambda) {
-	scoped_replace(state->container_node, lambda);
-	scoped_replace(state->current_loop, 0);
-	push_scope(lambda->parameter_scope);
 
 	lambda->type = create_lambda_type(lambda);
 	lambda->type->type = compiler->builtin_type.ident;
+
+	scoped_replace(state->container_node, lambda);
+	scoped_replace(state->current_loop, 0);
+	push_scope(lambda->parameter_scope);
 
 	if (lambda->is_poly) {
 		return lambda;
@@ -9805,9 +9812,8 @@ AstExpression *typecheck(TypecheckState *state, AstLambda *lambda) {
 	calculate_parameters_size(lambda);
 
 	// lambda->definition can be null in case the lambda is a type pointer to lambda
-	if (lambda->definition) {
+	if (lambda->definition)
 		lambda->definition->type = lambda->type;
-	}
 
 	lambda->finished_typechecking_head = true;
 
@@ -12219,9 +12225,8 @@ void mark_referenced_definitions(Scope *scope) {
 void mark_referenced_definitions(AstDefinition *Definition) {
 	if (Definition->is_referenced)
 		return;
+
 	Definition->is_referenced = true;
-	if (Definition->container_node)
-		mark_referenced_definitions(Definition->container_node);
 
 	if (Definition->expression)
 		mark_referenced_definitions(Definition->expression);
@@ -12239,11 +12244,16 @@ void mark_referenced_definitions(AstIdentifier *Identifier) {
 	mark_referenced_definitions(Identifier->possible_definitions[0]);
 }
 void mark_referenced_definitions(AstLambda *Lambda) {
-	if (Lambda->definition) {
-		Lambda->definition->is_referenced = true;
-	}
-	//mark_referenced_definitions(Lambda->body_scope);
-	mark_referenced_definitions(Lambda->body);
+	if (Lambda->is_poly)
+		return;
+
+	if (Lambda->is_referenced)
+		return;
+
+	Lambda->is_referenced = true;
+
+	if (Lambda->body)
+		mark_referenced_definitions(Lambda->body);
 }
 void mark_referenced_definitions(AstBinaryOperator *BinaryOperator) {
 	mark_referenced_definitions(BinaryOperator->left);
@@ -12253,12 +12263,12 @@ void mark_referenced_definitions(AstUnaryOperator *UnaryOperator) {
 	mark_referenced_definitions(UnaryOperator->expression);
 }
 void mark_referenced_definitions(AstStruct *Struct) {
-	mark_referenced_definitions(Struct->member_scope);
 }
 void mark_referenced_definitions(AstCall *Call) {
 	mark_referenced_definitions(Call->callable);
 	for (auto argument : Call->sorted_arguments)
-		mark_referenced_definitions(argument);
+		if (argument)
+			mark_referenced_definitions(argument);
 }
 void mark_referenced_definitions(AstIf *If) {
 	mark_referenced_definitions(If->condition);
@@ -12401,8 +12411,8 @@ ParsedArguments parse_arguments(Span<Span<utf8>> arguments) {
 			compiler->optimize = true;
 		} else if (arguments[i] == "--yield"str) {
 			compiler->print_yields = true;
-		} else if (arguments[i] == "--dce"str) {
-			compiler->enable_dce = true;
+		} else if (arguments[i] == "--no_dce"str) {
+			compiler->enable_dce = false;
 		} else if (arguments[i] == "--passes"str) {
 			++i;
 			if (i >= arguments.count) {
@@ -13076,6 +13086,9 @@ BINOP(operation, unsized_integer, unsized_float) = unsized_float_and_unsized_int
 }
 
 s32 tl_main(Span<Span<utf8>> arguments) {
+	Mutex mutex;
+	withs(mutex) {};
+
 	Compiler _compiler = {};
 	compiler = &_compiler;
 

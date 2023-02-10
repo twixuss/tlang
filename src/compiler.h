@@ -450,6 +450,7 @@ struct AstLambda : AstExpression, ExpressionPool<AstLambda> {
 	bool is_evaluated_at_compile_time : 1 = false;
 	bool was_instantiated             : 1 = false;
 	bool is_macro                     : 1 = false;
+	bool is_referenced                : 1 = false;
 
 	ExternLanguage extern_language = {};
 	String extern_library;
@@ -1210,7 +1211,7 @@ struct Compiler {
 	bool print_lowered = false;
 	bool optimize = false;
 	bool print_yields = false;
-	bool enable_dce = false;
+	bool enable_dce = true;
 
 	String print_lowered_filter = {};
 
@@ -2029,4 +2030,4 @@ inline AstExpression *get_container_node(Scope *scope) {
 
 inline AstExpression *get_container_node(AstStatement *statement) { return get_container_node(statement->parent_scope); }
 
-inline String dumb_get_location(struct AstNode *node) { return node->location; }
+inline String dumb_get_location(AstNode *node) { return node->location; }

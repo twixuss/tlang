@@ -1153,6 +1153,9 @@ void FrameBuilder::load_address_of(AstDefinition *definition, RegisterOrAddress 
 
 	assert(definition->offset != -1);
 
+	if (compiler->enable_dce)
+		assert(definition->is_referenced);
+
 	auto addr = get_known_address_of(definition);
 
 	switch (get_definition_origin(definition)) {
@@ -1201,6 +1204,9 @@ void FrameBuilder::load_address_of(AstExpression *expression, RegisterOrAddress 
 					instr = II(lea, tmp, Address(Register::instructions));
 					mov_mr(destination.address, tmp, compiler->stack_word_size);
 				}
+
+				if (compiler->enable_dce && lambda->definition)
+					assert(lambda->definition->is_referenced);
 
 				instructions_that_reference_lambdas.add({.instruction=instr, .lambda=lambda});
 			} else {
@@ -1646,7 +1652,9 @@ void FrameBuilder::append(AstWhile *While) {
 
 	jz->offset = (s64)count_after_body - (s64)count_after_condition + 2;
 
-	for (auto &jmp : loop_control_stack.pop().value()) {
+	auto controls = loop_control_stack.pop().value();
+	defer { tl::free(controls); };
+	for (auto jmp : controls) {
 		switch (jmp.control) {
 			case LoopControl::Break:
 				jmp.jmp->jmp.offset = (s64)count_after_body - (s64)jmp.index + 1;
@@ -2873,6 +2881,9 @@ void FrameBuilder::append(AstCall *call, RegisterOrAddress destination) {
 
 			switch (lambda->convention) {
 				case CallingConvention::tlang: {
+					if (compiler->enable_dce)
+						assert(lambda->is_referenced);
+
 					instructions_that_reference_lambdas.add({
 						.instruction = II(call_c, -1, lambda),
 						.lambda = lambda,
@@ -4582,11 +4593,12 @@ Bytecode build_bytecode() {
 	auto &builder = *_builder;
 
 	for (auto lambda : compiler->lambdas_with_body) {
-		if (compiler->enable_dce && lambda->definition && !lambda->definition->is_referenced) {
-			// immediate_info(lambda->location, "K.O.");
+		if (compiler->enable_dce && !lambda->is_referenced) {
+			//immediate_info(lambda->location, "K.O.");
 			continue;
 		}
 		builder.append(lambda);
+		int dumb_debugger = 5;
 	}
 
 	// for_each(global_scope.statements, [&](auto statement) {
