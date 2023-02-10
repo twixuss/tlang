@@ -164,7 +164,8 @@ struct Scope : DefaultAllocatable<Scope> {
 		children.add(that.children);
 		statement_list.add(that.statement_list);
 		definition_list.add(that.definition_list);
-		for_each(that.definition_map, [&](auto &name, auto &list) {
+		for_each(that.definition_map, [&](auto &kv) {
+			auto &[name, list] = kv;
 			for (auto definition : list) {
 				definition_map.get_or_insert(name).add(definition);
 			}
@@ -556,8 +557,6 @@ struct AstStruct : AstExpression, ExpressionPool<AstStruct> {
 
 	bool is_union    : 1 = false;
 	bool is_template : 1 = false;
-	// :span hack:
-	bool is_span     : 1 = false;
 };
 
 struct AstIf : AstExpression, ExpressionPool<AstIf> {
@@ -1114,6 +1113,17 @@ T *direct_as(AstExpression *expression) {
 	return 0;
 }
 
+template <class T>
+T *direct_through_distinct_as(AstExpression *expression) {
+	auto directed = direct_through_distinct(expression);
+	if (!directed)
+		return 0;
+	if (directed->kind == kind_of<T>) {
+		return (T *)directed;
+	}
+	return 0;
+}
+
 inline bool is_struct     (AstExpression *type) { return direct_as<AstStruct    >(type) != 0; }
 inline bool is_lambda_type(AstExpression *type) { return direct_as<AstLambdaType>(type) != 0; }
 inline bool is_lambda     (AstExpression *expression) { return direct_as<AstLambda>(expression) != 0; }
@@ -1255,7 +1265,6 @@ struct Compiler {
 	BuiltinStruct builtin_enum_member;
 	BuiltinStruct builtin_typeinfo;
 	BuiltinStruct builtin_any;
-	BuiltinStruct builtin_range;
 
 	BuiltinEnum builtin_type_kind;
 
@@ -1271,6 +1280,7 @@ struct Compiler {
 	BuiltinStruct builtin_template;    // assigned to $T
 
 	HashMap<AstExpression *, AstStruct *> span_instantiations;
+	HashMap<AstExpression *, AstStruct *> range_instantiations;
 
 	BuiltinStruct *builtin_default_signed_integer;
 	BuiltinStruct *builtin_default_unsigned_integer;
@@ -1819,9 +1829,16 @@ inline bool is_pointer(AstExpression *type) {
 	return false;
 }
 
+inline bool is_span(AstStruct *Struct) {
+	return find_if(compiler->span_instantiations, [&] (auto kv) { return kv.value == Struct; });
+}
+inline bool is_range(AstStruct *Struct) {
+	return find_if(compiler->range_instantiations, [&] (auto kv) { return kv.value == Struct; });
+}
+
 inline AstExpression *get_span_subtype(AstExpression *span) {
 	if (auto Struct = direct_as<AstStruct>(span)) {
-		if (!Struct->is_span)
+		if (!::is_span(Struct))
 			return 0;
 
 		auto def = (AstDefinition *)Struct->member_scope->statement_list[0];

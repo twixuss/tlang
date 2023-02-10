@@ -237,7 +237,8 @@ inline void run_bytecode(Compiler *compiler, Span<Instruction> _instructions_, A
 	HashMap<String, HMODULE> modules;
 	HashMap<String, HMODULE *> fn_to_lib;
 
-	for_each(extern_libraries, [&](String lib, LinearSet<String> funcs) {
+	for_each(extern_libraries, [&](auto &kv) {
+		auto &[lib, funcs] = kv;
 		for (auto func : funcs) {
 			auto &module = modules.get_or_insert(lib);
 			if (!module) {

@@ -732,24 +732,6 @@ struct Parser {
 			return false;
 		return true;
 	}
-	//bool expect_next(TokenKind expected_kind) {
-	//	if (!expect(expected_kind))
-	//		return false;
-	//	if (!next()) {
-	//		reporter->error(token->string, "Unexpected end of file.");
-	//		return false;
-	//	}
-	//	return true;
-	//}
-
-	// NOTE:
-	// After parsing this:    []Int
-	// We get:                AstSpan { expression = AstIdentifier{"Int"} }
-	//
-	// AstSpan is replaced with instantiations of builtin "Span" struct after typechecking. There is no reason to not do this.
-	//
-	// AstSpan must not be used after that. That's why this function is defined here and not available at typechecking time.
-	// For that case use instantiate_span instead.
 };
 
 enum class ParseResult {
@@ -5274,7 +5256,7 @@ TypeKind get_type_kind(AstExpression *type) {
 	if (types_match(type, compiler->builtin_f32))  return F32;
 	if (types_match(type, compiler->builtin_f64))  return F64;
 	if (auto Struct = direct_as<AstStruct>(type)) {
-		if (Struct->is_span)
+		if (::is_span(Struct))
 			return Span;
 		return TypeKind::Struct;
 	}
@@ -6574,7 +6556,6 @@ AstStruct *deep_copy(AstStruct *s) {
 	d->alignment = s->alignment;
 	d->size = s->size;
 	d->default_value_offset = s->default_value_offset;
-	d->is_span = s->is_span;
 	d->is_template = s->is_template;
 	d->is_union = s->is_union;
 	d->layout = s->layout;
@@ -7052,6 +7033,7 @@ AstStatement *typecheck(TypecheckState *state, AstFor *For) {
 	// FIXME: Copypasted 6 times? Not bad.
 
 	typecheck(state, For->range);
+	auto directed_struct = direct_through_distinct_as<AstStruct>(For->range->type);
 
 	Reporter reporter;
 
@@ -7059,47 +7041,10 @@ AstStatement *typecheck(TypecheckState *state, AstFor *For) {
 	auto lambda = (AstLambda *)state->container_node;
 
 	if (For->by_pointer) {
-		if (implicitly_cast(state, &reporter, &For->range, compiler->builtin_range.ident)) {
-			not_implemented();
-			auto replacement_block = AstBlock::create();
-			replacement_block->scope->parent = state->current_scope;
-
-			auto range_definition = AstDefinition::create();
-			range_definition->name = "_range"str;
-			range_definition->container_node = state->container_node;
-			range_definition->expression = For->range;
-			range_definition->type = range_definition->expression->type;
-			set_local_offset(state, range_definition, lambda);
-			replacement_block->scope->add(raw(range_definition));
-
-			auto it1 = AstDefinition::create();
-			it1->name = "_it"str;
-			it1->container_node = state->container_node;
-			it1->expression = make_binop(BinaryOperation::dot, make_identifier(range_definition->name), make_identifier("min"str));
-			replacement_block->scope->add(raw(it1));
-
-			auto While = AstWhile::create();
-			While->condition = make_binop(BinaryOperation::lt, make_identifier(it1->name), make_binop(BinaryOperation::dot, make_identifier(range_definition->name), make_identifier("max"str)));
-			While->scope->parent = replacement_block->scope;
-			replacement_block->scope->add(While);
-
-			auto it2 = AstDefinition::create();
-			it2->name = For->iterator_name;
-			it2->container_node = state->container_node;
-			it2->expression = make_identifier(it1->name);
-			While->scope->add(raw(it2));
-
-			auto inner = AstBlock::create();
-			inner->scope = For->scope;
-			inner->scope->parent = While->scope;
-			While->scope->add(make_statement(inner));
-
-			auto inc = make_binop(BinaryOperation::addass, make_identifier(it1->name), make_integer(1ll));
-			While->scope->add(make_statement(inc));
-
-			typecheck(state, replacement_block);
-			return make_statement(replacement_block);
-		} else if (auto subtype = get_span_subtype(For->range->type); subtype || types_match(For->range->type, compiler->builtin_string)) {
+		if (directed_struct && is_range(directed_struct)) {
+			state->reporter.error(For->range->location, "Ranges are not iterable by pointer, only by value.");
+			yield(TypecheckResult::fail);
+		} else if ((directed_struct && ::is_span(directed_struct)) || types_match(For->range->type, compiler->builtin_string)) {
 			auto replacement_block = AstBlock::create();
 			replacement_block->scope->parent = state->current_scope;
 
@@ -7203,7 +7148,7 @@ AstStatement *typecheck(TypecheckState *state, AstFor *For) {
 			return make_statement(replacement_block);
 		}
 	} else {
-		if (implicitly_cast(state, &reporter, &For->range, compiler->builtin_range.ident)) {
+		if (directed_struct && is_range(directed_struct)) {
 			auto replacement_block = AstBlock::create();
 			replacement_block->scope->parent = state->current_scope;
 
@@ -7215,21 +7160,15 @@ AstStatement *typecheck(TypecheckState *state, AstFor *For) {
 			set_local_offset(state, range_definition, lambda);
 			replacement_block->scope->add(raw(range_definition));
 
-			auto it1 = AstDefinition::create();
-			it1->name = "_it"str;
-			it1->container_node = state->container_node;
-			it1->expression = make_binop(BinaryOperation::dot, make_identifier(range_definition->name), make_identifier("min"str));
-			replacement_block->scope->add(raw(it1));
-
 			auto While = AstWhile::create();
-			While->condition = make_binop(BinaryOperation::lt, make_identifier(it1->name), make_binop(BinaryOperation::dot, make_identifier(range_definition->name), make_identifier("max"str)));
+			While->condition = make_binop(BinaryOperation::lt, make_binop(BinaryOperation::dot, make_identifier(range_definition->name), make_identifier("min"str)), make_binop(BinaryOperation::dot, make_identifier(range_definition->name), make_identifier("max"str)));
 			While->scope->parent = replacement_block->scope;
 			replacement_block->scope->add(While);
 
 			auto it2 = AstDefinition::create();
 			it2->name = For->iterator_name;
 			it2->container_node = state->container_node;
-			it2->expression = make_identifier(it1->name);
+			it2->expression = make_binop(BinaryOperation::dot, make_identifier(range_definition->name), make_identifier("min"str));
 			While->scope->add(raw(it2));
 
 			auto inner = AstBlock::create();
@@ -7237,12 +7176,12 @@ AstStatement *typecheck(TypecheckState *state, AstFor *For) {
 			inner->scope->parent = While->scope;
 			While->scope->add(make_statement(inner));
 
-			auto inc = make_binop(BinaryOperation::addass, make_identifier(it1->name), make_integer(1ll));
+			auto inc = make_binop(BinaryOperation::addass, make_binop(BinaryOperation::dot, make_identifier(range_definition->name), make_identifier("min"str)), make_integer(1ll));
 			While->scope->add(make_statement(inc));
 
 			typecheck(state, replacement_block);
 			return make_statement(replacement_block);
-		} else if (auto subtype = get_span_subtype(For->range->type); subtype || types_match(For->range->type, compiler->builtin_string)) {
+		} else if ((directed_struct && ::is_span(directed_struct)) || types_match(For->range->type, compiler->builtin_string)) {
 			auto replacement_block = AstBlock::create();
 			replacement_block->scope->parent = state->current_scope;
 
@@ -8347,23 +8286,21 @@ inline umm append(StringBuilder &builder, BinaryTypecheckerKey k) {
 
 Map<BinaryTypecheckerKey, AstExpression *(*)(TypecheckState *, AstBinaryOperator *)> binary_typecheckers;
 
-// :span hack:
-// FIXME: this is just hardcoded template.
 AstIdentifier *instantiate_span(AstExpression *subtype, String location) {
-	auto &instantiation = compiler->span_instantiations.get_or_insert(subtype);
+	auto direct_subtype = direct(subtype);
+	auto &instantiation = compiler->span_instantiations.get_or_insert(direct_subtype);
 	if (!instantiation) {
 		auto instantiation_definition = AstDefinition::create();
 		instantiation = AstStruct::create();
 
 		instantiation_definition->expression = instantiation;
-		instantiation_definition->name = format("Span({})"str, type_to_string(subtype));
+		instantiation_definition->name = format("Span({})"str, direct_subtype);
 		instantiation_definition->parent_scope = &compiler->global_scope;
 		instantiation_definition->is_constant = true;
 		instantiation_definition->type = compiler->builtin_type.ident;
 
 		instantiation->layout = StructLayout::tlang;
 		instantiation->definition = instantiation_definition;
-		instantiation->is_span = true;
 		instantiation->alignment = compiler->stack_word_size;
 		instantiation->size = compiler->stack_word_size * 2;
 		instantiation->type = compiler->builtin_type.ident;
@@ -8383,6 +8320,54 @@ AstIdentifier *instantiate_span(AstExpression *subtype, String location) {
 		count->container_node = instantiation;
 		instantiation->member_scope->add(raw(count));
 		instantiation->data_members.add(count);
+	}
+
+	auto ident = AstIdentifier::create();
+	ident->possible_definitions.set(instantiation->definition);
+	ident->location = location;
+	ident->type = instantiation->definition->type;
+	ident->name = instantiation->definition->name;
+	ident->directed = instantiation;
+	return ident;
+}
+
+AstIdentifier *instantiate_range(AstExpression *subtype, String location) {
+	auto direct_subtype = direct(subtype);
+	auto &instantiation = compiler->range_instantiations.get_or_insert(direct_subtype);
+	if (!instantiation) {
+		auto instantiation_definition = AstDefinition::create();
+		instantiation = AstStruct::create();
+
+		instantiation_definition->expression = instantiation;
+		instantiation_definition->name = format("Range({})"str, direct_subtype);
+		instantiation_definition->parent_scope = &compiler->global_scope;
+		instantiation_definition->is_constant = true;
+		instantiation_definition->type = compiler->builtin_type.ident;
+
+		auto subtype_size = get_size(direct_subtype);
+		auto subtype_align = get_size(direct_subtype);
+
+		instantiation->layout = StructLayout::tlang;
+		instantiation->definition = instantiation_definition;
+		instantiation->alignment = subtype_align;
+		instantiation->size = subtype_size * 2;
+		instantiation->type = compiler->builtin_type.ident;
+
+		auto min = AstDefinition::create();
+		min->name = "min"str;
+		min->type = subtype;
+		min->offset = 0;
+		min->container_node = instantiation;
+		instantiation->member_scope->add(raw(min));
+		instantiation->data_members.add(min);
+
+		auto max = AstDefinition::create();
+		max->name = "max"str;
+		max->type = subtype;
+		max->offset = subtype_size;
+		max->container_node = instantiation;
+		instantiation->member_scope->add(raw(max));
+		instantiation->data_members.add(max);
 	}
 
 	auto ident = AstIdentifier::create();
@@ -10244,16 +10229,35 @@ AstExpression *typecheck(TypecheckState *state, AstBinaryOperator *bin) {
 		}
 		case range: {
 			typecheck(state, bin->left);
-			if (!implicitly_cast(state, &state->reporter, &bin->left, compiler->type_int)) {
-				yield(TypecheckResult::fail);
-			}
-
 			typecheck(state, bin->right);
-			if (!implicitly_cast(state, &state->reporter, &bin->right, compiler->type_int)) {
-				yield(TypecheckResult::fail);
+
+			if (!is_concrete_type(bin->left->type) && !is_concrete_type(bin->right->type)) {
+				make_concrete(state, &bin->left);
+				make_concrete(state, &bin->right);
 			}
 
-			return make_struct_initializer(compiler->builtin_range.ident, {bin->left, bin->right}, bin->location);
+			if (!types_match(bin->left->type, bin->right->type)) {
+				auto l2r = implicitly_cast(state, 0, &bin->left, bin->right->type, 0, false);
+				auto r2l = implicitly_cast(state, 0, &bin->right, bin->left->type, 0, false);
+
+				if (!l2r && !r2l) {
+					state->reporter.error(bin->location, "Cannot create range: types {} and {} are not compatible.", type_to_string(bin->left->type), type_to_string(bin->right->type));
+					yield(TypecheckResult::fail);
+				}
+				if (l2r && r2l) {
+					state->reporter.error(bin->location, "Cannot create range: ambiguous types {} and {}.", type_to_string(bin->left->type), type_to_string(bin->right->type));
+					yield(TypecheckResult::fail);
+				}
+				if (l2r) {
+					assert(implicitly_cast(state, &state->reporter, &bin->left, bin->right->type));
+				} else {
+					assert(implicitly_cast(state, &state->reporter, &bin->right, bin->left->type));
+				}
+			}
+
+			auto range = instantiate_range(bin->left->type, bin->location);
+
+			return make_struct_initializer(range, {bin->left, bin->right}, bin->location);
 		}
 		default: {
 
@@ -11139,7 +11143,7 @@ AstExpression *typecheck(TypecheckState *state, AstUnaryOperator *unop) {
 				unop->type = compiler->builtin_type.ident;
 			} else {
 				if (auto Struct = direct_as<AstStruct>(unop->expression->type)) {
-					if (Struct->is_span) {
+					if (::is_span(Struct)) {
 						unop->type = unop->expression->type;
 						break;
 					}
@@ -12589,7 +12593,6 @@ void init_compiler_builtin_types() {
 	create_struct(compiler->builtin_enum_member);
 	create_struct(compiler->builtin_typeinfo);
 	create_struct(compiler->builtin_any);
-	create_struct(compiler->builtin_range);
 
 	// Enums:
 	create_enum(compiler->builtin_type_kind);
@@ -12706,7 +12709,6 @@ void init_compiler_builtin_types() {
 	init_struct(compiler->builtin_enum_member,   "EnumMember"str, 0, 0);
 	init_struct(compiler->builtin_typeinfo,      "TypeInfo"str, 0, 0);
 	init_struct(compiler->builtin_any,           "Any"str, 0, 0);
-	init_struct(compiler->builtin_range,         "Range"str, 0, 0);
 
 	// Enums:
 	init_enum(compiler->builtin_type_kind, "TypeKind"str);
@@ -12876,11 +12878,6 @@ void init_compiler_builtin_types() {
 	// any
 	append_member(compiler->builtin_any, "pointer"str, compiler->builtin_u8      .pointer);
 	append_member(compiler->builtin_any, "type"str,    compiler->builtin_typeinfo.pointer);
-
-	// range
-	// TODO: make this a template. might be useful for aabb
-	append_member(compiler->builtin_range, "min"str, compiler->type_int);
-	append_member(compiler->builtin_range, "max"str, compiler->type_int);
 }
 
 void init_binary_typecheckers() {

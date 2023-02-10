@@ -419,7 +419,8 @@ _debug_error:
 
 			u32 library_index = 0;
 			append(builder, "library ");
-			for_each(compiler->extern_libraries, [&](auto library, auto functions) {
+			for_each(compiler->extern_libraries, [&](auto &kv) {
+				auto &[library, functions] = kv;
 				if (library_index != 0)
 					append(builder, ",\\\n\t");
 				append_format(builder, "{},'{}.dll'", library, library);
@@ -428,7 +429,8 @@ _debug_error:
 
 			append(builder, '\n');
 
-			for_each(compiler->extern_libraries, [&](auto library, auto functions) {
+			for_each(compiler->extern_libraries, [&](auto &kv) {
+				auto &[library, functions] = kv;
 				append_format(builder, "import {}", library);
 				for (auto function : functions) {
 					append_format(builder, ",\\\n\t{},'{}'", function, function);

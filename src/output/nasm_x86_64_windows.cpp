@@ -346,7 +346,8 @@ DECLARE_OUTPUT_BUILDER {
 
 		append(builder, "bits 64\nextern ExitProcess\nextern MessageBoxA\n");
 
-		for_each(compiler->extern_libraries, [&](auto lib, auto fns) {
+		for_each(compiler->extern_libraries, [&](auto &kv) {
+			auto &[lib, fns] = kv;
 			for (auto f : fns) {
 				append_format(builder, "extern {}\n", f);
 			}
@@ -429,8 +430,8 @@ DECLARE_OUTPUT_BUILDER {
 			compiler->compiler_directory,
 			msvc_directory
 		);
-		for_each(compiler->extern_libraries, [&](auto library, auto) {
-			append_format(bat_builder, " {}.lib", library);
+		for_each(compiler->extern_libraries, [&](auto &kv) {
+			append_format(bat_builder, " {}.lib", kv.key);
 		});
 
 		auto bat_path = format(u8"{}.build.bat"s, output_path_base);

@@ -1,8 +1,8 @@
 
 # tlang
-tlang is a compiled language, intended to be simple, expressive and easy to use.
+tlang is a programming language, intended to be consistent, simple and controllable.
 
-Inspired by jai, odin, zig, nim and other languages.
+It is compiled, interpretation is not fully supported yet.
 # Hello world!
 ```java
 import "std.tl"
@@ -83,22 +83,24 @@ value: Int = 42 // This is a variable
 ```
 To make this a constant, use ':' instead of '='
 ```java
-value: Int : 42 // This is a contant
+value: Int : 42 // This is a constant
 ```
-Note that unlike in other languages, constant means constant and not read-only, meaning it is always the same, therefore it must be known at compile time.
+Constants can not be initialized at runtime, only at compile time.
 
 You don't have to always put the type after the name:
 ```java
 value :: 42 // Compiler infers that the type is Int from the expression
 ```
+Global definitions do not have to have particular ordering.
 # Blocks
-Block is a statement that contains a list of other statements.
-It is the same thing as in many other languages.
+Block is an expression that contains a list of statements. It's value is determined
+by its last expression
 ```java
-a := 1
-{
+a := {
   b := 2
+  b * b
 }
+// a = 4
 ```
 # Lambdas
 ## Basics
@@ -376,7 +378,7 @@ for it in expression {
 // iterable types are:
 // spans  - []Int
 // arrays - [5]Int
-// ranges - 0..10
+// ranges - T..T, T must be orderable and incrementable
 ```
 Iterate by pointer:
 ```java
@@ -384,6 +386,35 @@ for * it in expression {
   println("address: {}, value: {}", it, *it)
 }
 ```
+When compiler sees a for loop, it just replaces it with equivalent while loop:
+```java
+for i in 0..10 {
+  println(i)
+}
+// Gets replaced with
+{
+  _range := 0..10
+  while _range.min < _range.max {
+    i := _range.min
+    {
+      println(i)
+    }
+    i += 1
+  }
+}
+```
+## Macros
+Macros are like regular functions, except they are literally copy pasted when you call them:
+```java
+foo :: (x: Int) #macro {
+  x * 2
+}
+
+y := foo(21)
+// Equivalent to
+y := { x := 21; x * 2 }
+```
+Note: currently arguments to macros are executed only once. This may change in the future.
 ## Match statement
 ```java
 x := 1
@@ -715,11 +746,14 @@ Any :: struct {
   pointer: *U8
   type: *TypeInfo
 }
-Range :: struct {
-  min, max: Int
+Span :: struct(T: Type) {
+  data: *T
+  count: Int
+}
+Range :: struct(T: Type) {
+  min, max: T
 }
 ```
-#### TODO: Make Range a template
 ### Enums
 ```java
 TypeKind :: enum {
@@ -1024,23 +1058,4 @@ X :: 1337
 a :: 999999999999999999999999999 * 123456789
 ```
 * Lossy conversions are always explicit.
-# TODO
-* [ ] Builtin types
-  * [ ] variant
-* [ ] SIMD
-* [ ] Multiple return parameters
-* [ ] Optimization
-* [ ] Context
-* [ ] Specify build options in the source code
-* [ ] Default arguments
-* [ ] AST inspection.
-* [ ] Caller argument expression string
-```java
-func :: (a: String) {
-  print(#exprof a)
-}
 
-func(get_the_string(12, 34))
-
-// this should print "get_the_string(12, 34)"
-```

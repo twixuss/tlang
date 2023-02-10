@@ -8,7 +8,7 @@
   <ItemDefinitionGroup>
     <ClCompile>
       <RuntimeLibrary>MultiThreadedDebug</RuntimeLibrary>
-      <PreprocessorDefinitions>TL_DEBUG=0;assert(...);bounds_check(...)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>TL_DEBUG=0;assert;bounds_check(...)</PreprocessorDefinitions>
       <Optimization>MaxSpeed</Optimization>
       <FavorSizeOrSpeed>Speed</FavorSizeOrSpeed>
       <WholeProgramOptimization>true</WholeProgramOptimization>
