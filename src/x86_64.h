@@ -58,7 +58,11 @@ inline static Register64 to_x86_register(Register r) {
 		case rs: return rsp;
 		case rb: return rbp;
 	}
+#if BYTECODE_DEBUG
 	invalid_code_path(current_instruction.node ? current_instruction.node->location : String{}, "Register {} does not map to x86_64 one.", (u32)r);
+#else
+	invalid_code_path("Register {} does not map to x86_64 one.", (u32)r);
+#endif
 }
 
 inline static constexpr Register64 part8b(Register64 r) { return r; }

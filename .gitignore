@@ -1,6 +1,7 @@
 .vs/
 temp/
 *.pdb
+*.idb
 tests/*.exe
 tests/*.obj
 tests/*.asm
@@ -13,3 +14,4 @@ devtest/
 *.args.json
 notes.txt
 *.vcxproj.user
+*compile_log.txt

@@ -22,15 +22,6 @@
 #pragma warning(disable: 4820) // struct was padded with n bytes
 
 
-#if BUILD_CONFIG==0 // Debug
-	#define TL_DEBUG 1
-#elif BUILD_CONFIG==1 // Release
-	#define TL_DEBUG 0
-#elif BUILD_CONFIG==2 // UltraSpeed
-	#define TL_DEBUG 0
-	#define assert(...)
-	#define bounds_check(...)
-#endif
 #define TL_ENABLE_PROFILER 0
 
 #pragma warning(push, 0)

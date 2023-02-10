@@ -226,19 +226,19 @@ s32 tl_main(Span<String> arguments) {
 //		default: goto retry;
 //	}
 
-	for (auto item : get_items_in_directory(u8"."s)) {
-		if (item.kind == FileItem_file) {
-			if (ends_with(item.name, u8".pdb"s) ||
-				ends_with(item.name, u8".ilk"s) ||
-				ends_with(item.name, u8".obj"s) ||
-				ends_with(item.name, u8".asm"s) ||
-				ends_with(item.name, u8".exe"s) ||
-				item.name == u8"compile_log.txt"s
-			) {
-				delete_file(item.name);
-			}
-		}
-	}
+	//for (auto item : get_items_in_directory(u8"."s)) {
+	//	if (item.kind == FileItem_file) {
+	//		if (ends_with(item.name, u8".pdb"s) ||
+	//			ends_with(item.name, u8".ilk"s) ||
+	//			ends_with(item.name, u8".obj"s) ||
+	//			ends_with(item.name, u8".asm"s) ||
+	//			ends_with(item.name, u8".exe"s) ||
+	//			item.name == u8"compile_log.txt"s
+	//		) {
+	//			delete_file(item.name);
+	//		}
+	//	}
+	//}
 
 	return 0;
 }
