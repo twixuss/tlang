@@ -116,28 +116,26 @@ A body of a lambda is defined with curly braces. You can put other statements be
 ```java
 () {
 }
-// This is still a lambda that accepts zero arguments and returns nothing.
 ```
-To make the lambda accept an argument, just put the argument definition inside the brackets.
-Multiple arguments are separated with a comma. To specify the return type of a lambda write a colon after closing bracket and then the type.
+To make the lambda accept an argument, just put the argument definition inside the parentheses.
+Multiple arguments are separated with a comma (trailing is allowed). Return type of a lambda is specified between closing parenthesis and opening curly bracket.
 ```java
 (a: Int, b: Int) Int {
   // Now we can do something with "a" and "b"
   return a + b
 }
 ```
-Note that return type is actually a part of a definition that can be given a name:
+Note that return type is a part of a definition that can be given a name:
 ```java
 (a: Int, b: Int) result: Int {
   result = a + b
 }
 ```
-With named return parameters we don't have to use `return` statement, the result will be implicitly returned for us.
+With named return parameters we don't have to use `return` statement, the result will be automatically returned in the end.
 
-What happens if we don't assign to it you may ask? In that case the function will return the default value of the return type. For `Int` it is `0`.
+If you don't provide a value, the function will return the default value of the return type.
 
-Another question is what if we don't use named return parameter and don't return from a function?
-The same thing happens: the default value is returned.
+Return parameters are always initialized to a default value before your code runs.
 
 Because the return value is stored in a return parameter, you don't have to provide an expression for the return statement:
 ```java
@@ -147,9 +145,9 @@ Because the return value is stored in a return parameter, you don't have to prov
 }
 ```
 
-Let's move on to ways of simplifying this lambda.
+There is a few ways to simplify this lambda.
 
-There are three ways how we can do that. First we can use parameter type only once:
+First we can use parameter type only once:
 ```java
 (a, b: Int): Int {
   return a + b
@@ -163,13 +161,6 @@ And finally we can get rid of ": Int" because the compiler can infer the type fr
 ```java
 (a, b: Int) => a + b
 ```
-Now we can assign this lambda to a name for calling it later:
-```java
-add :: (a, b: Int) => a + b // Here `add` is a regular function
-
-add := (a, b: Int) => a + b // Here `add` is a function pointer, that can later be reassigned.
-```
-
 ### Using lambdas
 To call a function `add` which we wrote in the previous chapter, we can use the following syntax:
 ```java

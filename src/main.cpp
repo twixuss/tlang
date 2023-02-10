@@ -1358,14 +1358,17 @@ AstExpression *parse_lambda(Parser *parser) {
 
 				skip_newlines(parser);
 
-				if (parser->token->kind == ')') {
+				if (parser->token->kind == ')')
 					break;
-				}
 
 				if (!parser->expect(','))
 					return 0;
 
 				parser->next_solid();
+
+				// NOTE: This allows for trailing comma
+				if (parser->token->kind == ')')
+					break;
 			}
 		}
 		parser->next();
