@@ -139,10 +139,10 @@ What happens if we don't assign to it you may ask? In that case the function wil
 Another question is what if we don't use named return parameter and don't return from a function?
 The same thing happens: the default value is returned.
 
-The last thing about return parameters is that you don't have to provide an expression for the return statement:
+Because the return value is stored in a return parameter, you don't have to provide an expression for the return statement:
 ```java
-() result: Int {
-  result = 42
+(a: Int, b: Int) result: Int {
+  result = a + b
   return
 }
 ```
