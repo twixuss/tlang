@@ -11571,37 +11571,29 @@ AstExpression *typecheck(TypecheckState *state, AstStruct *Struct) {
 
 		auto member_statements = copy(Struct->member_scope->statement_list);
 
-		List<TypecheckState *> new_states;
-		new_states.resize(Struct->member_scope->statement_list.count);
+		List<TypecheckState *> current_states;
+		List<TypecheckState *> next_states;
+		current_states.reserve(Struct->member_scope->statement_list.count);
 
-		for (umm i = 0; i < member_statements.count; ++i) {
-			auto &new_state = new_states[i];
-			auto &statement = member_statements[i];
-
-			new_state = get_pooled_typecheck_state(statement, state);
+		for (auto statement : member_statements) {
+			current_states.add(get_pooled_typecheck_state(statement, state));
 		}
 
-		while (1) {
-			bool all_finished = true;
-			for (umm i = 0; i < member_statements.count; ++i) {
-				auto &new_state = new_states[i];
-				if (new_state->result != TypecheckResult::wait)
-					continue;
-
-				SWITCH_TO_FIBER(new_state->fiber);
+		while (current_states.count) {
+			for (auto member_state : current_states) {
+				SWITCH_TO_FIBER(member_state->fiber);
 				current_typecheck_state = state;
-				switch (new_state->result) {
+				switch (member_state->result) {
 					case TypecheckResult::fail: {
-						state->reporter.reports.add(new_state->reporter.reports);
+						state->reporter.reports.add(member_state->reporter.reports);
 						yield(TypecheckResult::fail);
 						break;
 					}
 					case TypecheckResult::wait: {
-						all_finished = false;
 						yield(TypecheckResult::wait);
+						next_states.add(member_state);
 						break;
 					}
-
 					case TypecheckResult::success: {
 						if (Struct->size == -1 && all(Struct->data_members, [](auto d){ return d->type; })) {
 
@@ -11719,8 +11711,8 @@ AstExpression *typecheck(TypecheckState *state, AstStruct *Struct) {
 					default: invalid_code_path();
 				}
 			}
-			if (all_finished)
-				break;
+
+			swap(current_states, next_states);
 		}
 	}
 
