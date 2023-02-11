@@ -3,6 +3,8 @@
 #include "interpret.h"
 // #include "x86_64.h"
 
+#include <algorithm>
+
 // I don't know how optimizations will work with loading lambda parameters' addresses...
 // TODO: Figure this out.
 #define OPTIMIZE_BYTECODE 0
@@ -557,8 +559,28 @@ void FrameBuilder::copy(RegisterOrAddress dst, RegisterOrAddress src, s64 size, 
 
 thread_local AstNode *current_node;
 
+#if BYTECODE_DEBUG
+template <class Ast>
+u32 instructions_per_kind;
+
+template <class Ast>
+u32 node_count_per_kind;
+
+u32 *current_instruction_counter;
+
+#define COLLECT_STATS(T) \
+	scoped_replace(current_instruction_counter, &instructions_per_kind<T>);  \
+	++node_count_per_kind<T>;
+#else
+#define COLLECT_STATS(T)
+#endif
+
 Instruction *FrameBuilder::add_instruction(Instruction next) {
 #if BYTECODE_DEBUG
+	if (compiler->should_print_stats) {
+		*current_instruction_counter += 1;
+	}
+
 	assert(current_node);
 	next.node = current_node;
 	next.comment = comment;
@@ -1602,6 +1624,8 @@ void FrameBuilder::append(AstStatement *statement) {
 	}
 }
 void FrameBuilder::append(AstDefinition *definition) {
+	COLLECT_STATS(AstDefinition);
+
 	assert(definition->type);
 
 	switch (get_definition_origin(definition)) {
@@ -1625,10 +1649,13 @@ void FrameBuilder::append(AstDefinition *definition) {
 	}
 }
 void FrameBuilder::append(AstReturn *ret) {
+	COLLECT_STATS(AstReturn);
 	push_comment(u8"return"s);
 	append_return(ret->lambda, ret->expression);
 }
 void FrameBuilder::append(AstWhile *While) {
+	COLLECT_STATS(AstWhile);
+
 	auto count_before_condition = count_of(instructions);
 	I(jmp_label);
 
@@ -1669,6 +1696,8 @@ void FrameBuilder::append(AstWhile *While) {
 
 }
 void FrameBuilder::append(AstExpressionStatement *es) {
+	COLLECT_STATS(AstExpressionStatement);
+
 	// TODO: FIXME: this may allocate temporary space.
 	// Figure a way to not produce the result.
 	auto value = append(es->expression);
@@ -1676,6 +1705,8 @@ void FrameBuilder::append(AstExpressionStatement *es) {
 		free_register(value.reg);
 }
 void FrameBuilder::append(AstAssert *Assert) {
+	COLLECT_STATS(AstAssert);
+
 	if (Assert->is_constant)
 		return;
 	push_comment(format(u8"assert {}", Assert->location));
@@ -1688,6 +1719,7 @@ void FrameBuilder::append(AstAssert *Assert) {
 	I(jmp_label);
 }
 void FrameBuilder::append(AstLoopControl *LoopControl) {
+	COLLECT_STATS(AstLoopControl);
 
 	// TODO: FIXME: with that way of executing defers there may be A LOT of repeating instructions in
 	// loops with a lot of breaks/continues an defers. Maybe there is a better way to do this?
@@ -2040,9 +2072,13 @@ void FrameBuilder::append(AstExpression *expression, RegisterOrAddress destinati
 	}
 }
 void FrameBuilder::append(AstBlock *block, RegisterOrAddress destination) {
+	COLLECT_STATS(AstBlock);
+
 	append(block->scope, destination);
 }
 void FrameBuilder::append(AstIf *If, RegisterOrAddress destination) {
+	COLLECT_STATS(AstIf);
+
 #if 0
 	if (If->is_constant) {
 		// constant if's statements were brought outside already by the typechecker. No need to append it.
@@ -2088,8 +2124,7 @@ void FrameBuilder::append(AstIf *If, RegisterOrAddress destination) {
 	jmp->offset = false_end - false_branch_first_instruction_index + 2;
 }
 void FrameBuilder::append(AstMatch *Match, RegisterOrAddress destination) {
-	auto matchable = allocate_temporary_space(get_size(Match->expression->type));
-	append(Match->expression, matchable);
+	COLLECT_STATS(AstMatch);
 
 	struct Jump {
 		Instruction *instruction;
@@ -2103,8 +2138,7 @@ void FrameBuilder::append(AstMatch *Match, RegisterOrAddress destination) {
 	bool has_default_case = false;
 
 	{
-		tmpreg(matchable_reg);
-		mov_rm(matchable_reg, matchable, compiler->stack_word_size);
+		APPEND_INTO_REGISTER(matchable_reg, Match->expression);
 		for (auto &Case : Match->cases) {
 			if (Case.expression) {
 				tmpreg(case_reg);
@@ -2150,6 +2184,8 @@ void FrameBuilder::append(AstMatch *Match, RegisterOrAddress destination) {
 	}
 }
 void FrameBuilder::append(AstBinaryOperator *bin, RegisterOrAddress destination) {
+	COLLECT_STATS(AstBinaryOperator);
+
 	push_comment(format(u8"binary {}"s, bin->location));
 
 	auto left = bin->left;
@@ -2648,6 +2684,8 @@ void FrameBuilder::append(AstBinaryOperator *bin, RegisterOrAddress destination)
 	return;
 }
 void FrameBuilder::append(AstIdentifier *identifier, RegisterOrAddress destination) {
+	COLLECT_STATS(AstIdentifier);
+
 	auto definition = identifier->definition();
 
 	if (definition->is_constant && definition->expression) {
@@ -2695,6 +2733,8 @@ void FrameBuilder::append(AstIdentifier *identifier, RegisterOrAddress destinati
 	}
 }
 void FrameBuilder::append(AstCall *call, RegisterOrAddress destination) {
+	COLLECT_STATS(AstCall);
+
 	/*
 	tlang calling convetion
 
@@ -2911,6 +2951,8 @@ void FrameBuilder::append(AstCall *call, RegisterOrAddress destination) {
 	}
 }
 void FrameBuilder::append(AstLiteral *literal, RegisterOrAddress destination) {
+	COLLECT_STATS(AstLiteral);
+
 	if (literal->literal_kind == LiteralKind::string)
 		push_comment(format(u8"literal \"{}\"", escape_string(literal->string.get())));
 	else
@@ -3033,6 +3075,8 @@ void FrameBuilder::append(AstLiteral *literal, RegisterOrAddress destination) {
 	}
 }
 void FrameBuilder::append(AstUnaryOperator *unop, RegisterOrAddress destination) {
+	COLLECT_STATS(AstUnaryOperator);
+
 	push_comment(format(u8"unary {}", unop->location));
 	switch (unop->operation) {
 		using enum UnaryOperation;
@@ -3189,6 +3233,8 @@ void FrameBuilder::append(AstUnaryOperator *unop, RegisterOrAddress destination)
 	}
 }
 void FrameBuilder::append(AstSubscript *subscript, RegisterOrAddress destination) {
+	COLLECT_STATS(AstSubscript);
+
 	auto subscriptable_type = subscript->expression->type;
 
 	if (as<AstArray>(subscriptable_type) ||
@@ -3319,9 +3365,13 @@ void FrameBuilder::append(AstSubscript *subscript, RegisterOrAddress destination
 #endif
 }
 void FrameBuilder::append(AstLambda *lambda, RegisterOrAddress destination) {
+	COLLECT_STATS(AstLambda);
+
 	load_address_of(lambda, destination);
 }
 void FrameBuilder::append(AstArrayInitializer *ArrayInitializer, RegisterOrAddress destination) {
+	COLLECT_STATS(AstArrayInitializer);
+
 	push_comment(format("ArrayInitializer {}"str, ArrayInitializer->location));
 
 	auto array_type = as<AstArray>(ArrayInitializer->type);
@@ -4464,6 +4514,8 @@ void BytecodeBuilder::propagate_known_values(InstructionList &instructions) {
 #endif
 
 void BytecodeBuilder::append(AstLambda *lambda) {
+	COLLECT_STATS(AstLambdaType);
+
 	assert(!lambda->is_macro);
 
 	FrameBuilder frame;
@@ -4640,5 +4692,39 @@ Bytecode build_bytecode() {
 	//	run_bytecode(compiler, result.instructions, lambda, result.extern_libraries);
 	//}
 
+#if BYTECODE_DEBUG
+	if (compiler->should_print_stats) {
+		println("Bytecode stats:");
+
+		struct Result {
+			char const *name;
+			u32 n, i;
+			f32 ipn;
+		};
+		List<Result> results;
+
+#define e(name) \
+	if (node_count_per_kind<Ast##name>) \
+		results.add({#name, node_count_per_kind<Ast##name>, instructions_per_kind<Ast##name>, (f32)instructions_per_kind<Ast##name> / node_count_per_kind<Ast##name>});
+ENUMERATE_AST_KIND
+#undef e
+
+		std::sort(results.begin(), results.end(), [&](auto a, auto b) { return a.ipn > b.ipn; });
+
+		auto a = align_right(19, ' ');
+		auto b = align_left(5, ' ');
+		auto c = align_left(12, ' ');
+
+		println("{} | {} | {} | I/N", Format("Kind", a), Format("Nodes", b), Format("Instructions", c));
+		for (auto r : results) {
+			println("{} | {} | {} | {}",
+				Format(r.name, a),
+				Format(r.n, b),
+				Format(r.i, c),
+				r.ipn
+			);
+		}
+	}
+#endif
 	return result;
 }

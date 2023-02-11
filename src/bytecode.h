@@ -332,12 +332,14 @@ ENUMERATE_INSTRUCTIONS
 
 #pragma pack(pop)
 
-inline auto get_instruction_variant() {
-
+namespace {
+static auto $() {
+	sizeof Register;
+	sizeof Address;
+	sizeof Instruction;
+}
 }
 
-inline static constexpr auto QWERTY1 = sizeof RegisterOrAddress;
-inline static constexpr auto QWERTY2 = sizeof Instruction;
 
 using InstructionList = BlockList<Instruction>;
 

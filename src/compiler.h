@@ -1245,6 +1245,7 @@ struct Compiler {
 	bool optimize = false;
 	bool print_yields = false;
 	bool enable_dce = true;
+	bool should_print_stats = false;
 
 	String print_lowered_filter = {};
 

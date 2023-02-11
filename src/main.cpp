@@ -12684,7 +12684,6 @@ struct ParsedArguments {
 	bool no_typecheck = false;
 	bool debug_paths = false;
 	bool track_allocations = false;
-	bool should_print_stats = false;
 	bool success = false;
 };
 
@@ -12741,7 +12740,7 @@ ParsedArguments parse_arguments(Span<Span<utf8>> arguments) {
 		} else if (arguments[i] == "--profile"str) {
 			compiler->do_profile = true;
 		} else if (arguments[i] == "--stats"str) {
-			result.should_print_stats = true;
+			compiler->should_print_stats = true;
 		} else if (arguments[i] == "--keep-temp"str) {
 			compiler->keep_temp = true;
 		} else if (arguments[i] == "--debug-template"str) {
@@ -13919,7 +13918,7 @@ restart_main:
 			swap(next_statements_to_typecheck, current_statements_to_typecheck);
 		}
 
-		if (args.should_print_stats) {
+		if (compiler->should_print_stats) {
 			println("Peak typecheck state count: {}", typecheck_states_pool.count);
 		}
 
@@ -14051,7 +14050,7 @@ restart_main:
 			break;
 	}
 
-	if (args.should_print_stats) {
+	if (compiler->should_print_stats) {
 		print("Total token count: {}\nYield count: {}\n", total_tokens_parsed, yield_wait_count);
 	}
 
