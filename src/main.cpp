@@ -28,6 +28,7 @@
 extern "C" void t_SwitchToFiber(void *);
 
 enum class TypecheckResult {
+	unknown,
 	wait,
 	fail,
 	success,
@@ -36,7 +37,6 @@ enum class TypecheckResult {
 u32 yield_wait_count;
 
 #if USE_FIBERS
-TypecheckResult fiber_result;
 bool throwing = false;
 #define yield(x) (\
 	pre_yield(state, x),\
@@ -4323,7 +4323,9 @@ struct TypecheckState {
 
 	bool replace_properties_with_getter_call = true;
 
-	TypecheckResult result;
+	bool if_is_statement = false;
+
+	TypecheckResult result = {};
 
 	// msvc crashed when i used `auto value`
 	template <class T>
@@ -4389,6 +4391,7 @@ TypecheckState *get_pooled_typecheck_state(AstExpression *container_node, Scope 
 		state->template_call_stack.clear();
 		state->waiting_for = 0;
 		state->waiting_for_name = {};
+		state->result = {};
 	} else {
 		state = default_allocator.allocate<TypecheckState>();
 		state->fiber = CreateFiber(4096, typecheck_pooled, state);
@@ -4427,9 +4430,11 @@ TypecheckState *get_pooled_typecheck_state(Scope *root_scope, TypecheckState *pa
 }
 
 void pre_yield(TypecheckState *state, TypecheckResult result) {
-	fiber_result = result;
+	assert(result != TypecheckResult::unknown);
+	state->result = result;
 
 	if (result != TypecheckResult::wait) {
+		assert(!find(typecheck_states_pool, state));
 		typecheck_states_pool.add(state);
 	}
 
@@ -4442,6 +4447,7 @@ void pre_yield(TypecheckState *state, TypecheckResult result) {
 }
 
 void post_yield(TypecheckState *state, TypecheckResult result) {
+	assert(result != TypecheckResult::unknown);
 	current_typecheck_state = state;
 	if (result == TypecheckResult::fail) {
 		throwing = true;
@@ -11003,7 +11009,7 @@ AstExpression *typecheck(TypecheckState *state, AstBinaryOperator *bin) {
 					retry:
 						SWITCH_TO_FIBER(new_state->fiber);
 						current_typecheck_state = state;
-						switch (fiber_result) {
+						switch (new_state->result) {
 							case TypecheckResult::wait: {
 								yield(TypecheckResult::wait);
 								goto retry;
@@ -11038,6 +11044,9 @@ AstExpression *typecheck(TypecheckState *state, AstBinaryOperator *bin) {
 								yield(TypecheckResult::fail);
 								break;
 							}
+							case TypecheckResult::success:
+								break;
+							default: invalid_code_path();
 						}
 
 						return call;
@@ -11070,7 +11079,7 @@ AstExpression *typecheck(TypecheckState *state, AstBinaryOperator *bin) {
 					retry2:
 						SWITCH_TO_FIBER(new_state->fiber);
 						current_typecheck_state = state;
-						switch (fiber_result) {
+						switch (new_state->result) {
 							case TypecheckResult::wait: {
 								yield(TypecheckResult::wait);
 								goto retry2;
@@ -11089,7 +11098,7 @@ AstExpression *typecheck(TypecheckState *state, AstBinaryOperator *bin) {
 								retry3:
 									SWITCH_TO_FIBER(new_state->fiber);
 									current_typecheck_state = state;
-									switch (fiber_result) {
+									switch (new_state->result) {
 										case TypecheckResult::wait: {
 											yield(TypecheckResult::wait);
 											goto retry3;
@@ -11113,6 +11122,9 @@ AstExpression *typecheck(TypecheckState *state, AstBinaryOperator *bin) {
 								}
 								break;
 							}
+							case TypecheckResult::success:
+								break;
+							default: invalid_code_path();
 						}
 
 						return call;
@@ -11471,7 +11483,7 @@ AstExpression *typecheck(TypecheckState *state, AstUnaryOperator *unop) {
 	retry:
 		SWITCH_TO_FIBER(new_state->fiber);
 		current_typecheck_state = state;
-		switch (fiber_result) {
+		switch (new_state->result) {
 			case TypecheckResult::wait: {
 				yield(TypecheckResult::wait);
 				goto retry;
@@ -11481,6 +11493,9 @@ AstExpression *typecheck(TypecheckState *state, AstUnaryOperator *unop) {
 				yield(TypecheckResult::fail);
 				break;
 			}
+			case TypecheckResult::success:
+				break;
+			default: invalid_code_path();
 		}
 
 		return call;
@@ -11536,37 +11551,29 @@ AstExpression *typecheck(TypecheckState *state, AstStruct *Struct) {
 
 		auto member_statements = copy(Struct->member_scope->statement_list);
 
-		List<TypecheckState *> new_states;
-		new_states.resize(Struct->member_scope->statement_list.count);
+		List<TypecheckState *> current_states;
+		List<TypecheckState *> next_states;
+		current_states.reserve(Struct->member_scope->statement_list.count);
 
-		for (umm i = 0; i < member_statements.count; ++i) {
-			auto &new_state = new_states[i];
-			auto &statement = member_statements[i];
-
-			new_state = get_pooled_typecheck_state(statement, state);
+		for (auto statement : member_statements) {
+			current_states.add(get_pooled_typecheck_state(statement, state));
 		}
 
-		while (1) {
-			bool all_finished = true;
-			for (umm i = 0; i < member_statements.count; ++i) {
-				auto &new_state = new_states[i];
-				if (new_state->result != TypecheckResult::wait)
-					continue;
-
-				SWITCH_TO_FIBER(new_state->fiber);
+		while (current_states.count) {
+			for (auto member_state : current_states) {
+				SWITCH_TO_FIBER(member_state->fiber);
 				current_typecheck_state = state;
-				switch ((TypecheckResult)fiber_result) {
+				switch (member_state->result) {
 					case TypecheckResult::fail: {
-						state->reporter.reports.add(new_state->reporter.reports);
+						state->reporter.reports.add(member_state->reporter.reports);
 						yield(TypecheckResult::fail);
 						break;
 					}
 					case TypecheckResult::wait: {
-						all_finished = false;
 						yield(TypecheckResult::wait);
+						next_states.add(member_state);
 						break;
 					}
-
 					case TypecheckResult::success: {
 						if (Struct->size == -1 && all(Struct->data_members, [](auto d){ return d->type; })) {
 
@@ -11680,10 +11687,12 @@ AstExpression *typecheck(TypecheckState *state, AstStruct *Struct) {
 						}
 						break;
 					}
+
+					default: invalid_code_path();
 				}
 			}
-			if (all_finished)
-				break;
+
+			swap(current_states, next_states);
 		}
 	}
 
@@ -11781,6 +11790,9 @@ AstExpression *typecheck(TypecheckState *state, AstSpan *span) {
 	return instantiate_span(subtype, span->location);
 }
 AstExpression *typecheck(TypecheckState *state, AstIf *If) {
+	auto is_statement = state->if_is_statement;
+	state->if_is_statement = false;
+
 	typecheck(state, If->condition);
 	if (!implicitly_cast(state, &state->reporter, &If->condition, compiler->builtin_bool.ident)) {
 		yield(TypecheckResult::fail);
@@ -11853,7 +11865,7 @@ AstExpression *typecheck(TypecheckState *state, AstTest *test) {
 	while (1) {
 		SWITCH_TO_FIBER(new_state->fiber);
 		current_typecheck_state = state;
-		switch (fiber_result) {
+		switch (new_state->result) {
 			case TypecheckResult::success: {
 				did_compile = true;
 				goto _break;
@@ -11866,9 +11878,7 @@ AstExpression *typecheck(TypecheckState *state, AstTest *test) {
 				yield(TypecheckResult::wait);
 				break;
 			}
-			default: {
-				invalid_code_path("something wrong with fiberutines");
-			}
+			default: invalid_code_path();
 		}
 	}
 _break:
@@ -13764,7 +13774,7 @@ restart_main:
 
 				SWITCH_TO_FIBER(statement.state->fiber);
 				current_typecheck_state = 0;
-				auto result = fiber_result;
+				auto result = statement.state->result;
 
 				switch (result) {
 					case TypecheckResult::success:
@@ -13790,6 +13800,7 @@ restart_main:
 					case TypecheckResult::wait:
 						next_statements_to_typecheck.add(statement);
 						break;
+					default: invalid_code_path();
 				}
 			}
 
