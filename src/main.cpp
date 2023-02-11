@@ -674,6 +674,12 @@ struct Parser {
 	AstDefinition *current_parameter = 0;
 	String current_directory = {};
 
+	TemporaryAllocatorState temporary_allocator_state { .allocator = page_allocator };
+	Allocator temporary_allocator = {
+		.func = tl::temporary_allocator.func,
+		.state = &temporary_allocator_state
+	};
+
 #define ENABLE_PARSER_BREAKS 1
 	bool next() {
 	retry:
@@ -990,7 +996,7 @@ KeyString parse_identifier(Parser *parser) {
 	if (parser->token->kind == Token_split_identifier) {
 		auto remaining = parser->token->string;
 		List<utf8> name;
-		name.allocator = temporary_allocator;
+		name.allocator = parser->temporary_allocator;
 		while (1) {
 			auto slash = find(remaining, u8'\\');
 			if (!slash) {
@@ -1242,6 +1248,7 @@ AstExpression *parse_lambda(Parser *parser) {
 		scoped_replace(parser->current_lambda_for_parameters, lambda);
 
 		List<AstDefinition *> queued_parameters;
+		queued_parameters.allocator = parser->temporary_allocator;
 
 		if (parser->token->kind != ')') {
 			for (;;) {
@@ -2406,7 +2413,9 @@ AstExpression *parse_expression_1(Parser *parser) {
 			auto open_paren = parser->token->string;
 			parser->next_solid();
 
+			// NOTE: will escape the scope
 			SmallList<NamedArgument> arguments;
+
 			if (parser->token->kind != ')') {
 				for (;;) {
 					NamedArgument argument = {};
@@ -4017,8 +4026,9 @@ u64 total_tokens_parsed;
 String normalize_path(String path) {
 	auto prev_allocator = current_allocator;
 
-	List<List<utf8>> directories;
 	scoped_allocator(temporary_allocator);
+
+	List<List<utf8>> directories;
 
 	auto s = path.begin();
 	if (path.count >= 2 && path[1] == ':') {
@@ -4136,6 +4146,7 @@ SourceFileContext *parse_file(String current_directory, String import_path, Stri
 	{
 		utf8 *line_start = source.data;
 		List<String> lines;
+		lines.allocator = context->parser.temporary_allocator;
 		lines.reserve(source.count / 16); // Guess 16 bytes per line on average
 
 		for (auto c = source.begin(); c < source.end(); ++c) {
@@ -4326,15 +4337,18 @@ struct TypecheckState {
 
 	TypecheckResult result = {};
 
-	// msvc crashed when i used `auto value`
-	template <class T>
-	AstLiteral *make_integer(T value, AstExpression *type, String location = {}) {
+	TemporaryAllocatorState temporary_allocator_state { .allocator = page_allocator };
+	Allocator temporary_allocator = {
+		.func = tl::temporary_allocator.func,
+		.state = &temporary_allocator_state
+	};
+
+	AstLiteral *make_integer(auto value, AstExpression *type, String location = {}) {
 		auto x = ::make_integer(value, location);
 		x->type = type;
 		return x;
 	}
-	template <class T>
-	AstLiteral *make_integer(T value, String location = {}) {
+	AstLiteral *make_integer(auto value, String location = {}) {
 		return make_integer(value, compiler->builtin_unsized_integer.ident, location);
 	}
 	AstLiteral *make_null(AstExpression *type, String location = {}) {
@@ -4391,6 +4405,7 @@ TypecheckState *get_pooled_typecheck_state(AstExpression *container_node, Scope 
 		state->waiting_for = 0;
 		state->waiting_for_name = {};
 		state->result = {};
+		state->temporary_allocator_state.clear();
 	} else {
 		state = default_allocator.allocate<TypecheckState>();
 		state->fiber = CreateFiber(4096, typecheck_pooled, state);
@@ -5448,24 +5463,51 @@ TypeKind get_type_kind(AstExpression *type) {
 	invalid_code_path();
 }
 
-AstCall *make_struct_initializer(AstExpression *type, Span<AstExpression *> arguments, String location) {
+template <class T>
+struct Steal {
+	T storage;
+	T *pointer;
+
+	Steal(T &value) : pointer(&value) {}
+	Steal(T &&value) : storage(value), pointer(&storage) {}
+
+	Steal(Steal const &) = delete;
+	Steal(Steal &&that) {
+		pointer = that.pointer;
+		that.pointer = {};
+	}
+
+	T &operator*() { return *pointer; }
+	T *operator->() { return pointer; }
+
+	~Steal() {
+		if (pointer)
+			*pointer = {};
+	}
+};
+
+AstCall *make_struct_initializer(AstExpression *type, Steal<SmallList<AstExpression *>> &&arguments, String location) {
 	auto Struct = direct_as<AstStruct>(type);
 	assert(Struct);
 
 	auto initializer = AstCall::create();
 	initializer->callable = type;
-	initializer->sorted_arguments.resize(Struct->data_members.count);
+	initializer->sorted_arguments = *arguments;
 	initializer->type = type;
 	initializer->location = location;
 
-	assert(arguments.count == Struct->data_members.count);
+	assert(arguments->count == Struct->data_members.count);
 
-	for (umm i = 0; i < arguments.count; ++i) {
-		initializer->sorted_arguments[i] = arguments.data[i];
-		assert(types_match(arguments.data[i]->type, Struct->data_members[i]->type));
+	for (umm i = 0; i < arguments->count; ++i) {
+		assert(types_match(arguments->data[i]->type, Struct->data_members[i]->type));
 	}
 
 	return initializer;
+}
+AstCall *make_struct_initializer(AstExpression *type, Span<AstExpression *> arguments, String location) {
+	SmallList<AstExpression *> list;
+	list.set(arguments);
+	return make_struct_initializer(type, Steal{list}, location);
 }
 AstCall *make_struct_initializer(AstExpression *type, std::initializer_list<AstExpression *> arguments, String location) {
 	return make_struct_initializer(type, {arguments.begin(), arguments.end()}, location);
@@ -7191,6 +7233,7 @@ bool try_match_overload_lambda(TypecheckState *state, Reporter &reporter, String
 		// Assign named arguments to corresponding parameters
 
 		List<AstExpression *> remaining_arguments;
+		remaining_arguments.allocator = state->temporary_allocator;
 
 		for (auto &argument : unsorted_arguments) {
 			if (argument.name.is_empty()) {
@@ -7370,7 +7413,11 @@ bool try_match_overload_struct(TypecheckState *state, Reporter &reporter, AstCal
 		}
 
 		List<NamedArgument> named_arguments;
+		named_arguments.allocator = state->temporary_allocator;
+
 		List<AstExpression *> unnamed_arguments;
+		unnamed_arguments.allocator = state->temporary_allocator;
+
 		for (auto arg : call->unsorted_arguments) {
 			if (arg.name.is_empty()) {
 				unnamed_arguments.add(arg.expression);
@@ -7386,7 +7433,7 @@ bool try_match_overload_struct(TypecheckState *state, Reporter &reporter, AstCal
 			}
 		}
 
-		List<AstExpression *> arguments;
+		auto &arguments = overload.sorted_arguments_struct;
 		arguments.resize(Struct->parameter_scope->statement_list.count);
 
 		for (auto arg : named_arguments) {
@@ -7398,8 +7445,6 @@ bool try_match_overload_struct(TypecheckState *state, Reporter &reporter, AstCal
 		for (auto arg : unnamed_arguments) {
 			*find(arguments, (AstExpression *)nullptr) = arg;
 		}
-
-		overload.sorted_arguments_struct = arguments;
 
 		if (arguments.count != Struct->parameter_scope->statement_list.count) {
 			reporter.error(call->location, "Argument count does not match. Expected {}, got {}", Struct->parameter_scope->statement_list.count, arguments.count);
@@ -7425,7 +7470,11 @@ bool try_match_overload_struct(TypecheckState *state, Reporter &reporter, AstCal
 		}
 
 		List<NamedArgument> named_arguments;
+		named_arguments.allocator = state->temporary_allocator;
+
 		List<AstExpression *> unnamed_arguments;
+		unnamed_arguments.allocator = state->temporary_allocator;
+
 		for (auto arg : call->unsorted_arguments) {
 			if (arg.name.is_empty()) {
 				unnamed_arguments.add(arg.expression);
@@ -7441,7 +7490,7 @@ bool try_match_overload_struct(TypecheckState *state, Reporter &reporter, AstCal
 			}
 		}
 
-		List<AstExpression *> arguments;
+		auto &arguments = overload.sorted_arguments_struct;
 		arguments.resize(Struct->data_members.count);
 
 		for (auto arg : named_arguments) {
@@ -7455,8 +7504,6 @@ bool try_match_overload_struct(TypecheckState *state, Reporter &reporter, AstCal
 		for (auto arg : unnamed_arguments) {
 			*find(arguments, (AstExpression *)nullptr) = arg;
 		}
-
-		overload.sorted_arguments_struct = arguments;
 
 		if (arguments.count != Struct->data_members.count) {
 			reporter.error(call->location, "Argument count does not match. Expected {}, got {}", Struct->data_members.count, arguments.count);
@@ -8215,7 +8262,7 @@ AstStatement *typecheck(TypecheckState *state, AstFor *For) {
 	int min_distance = max_value<int>;
 
 	List<Overload *> matches;
-	matches.allocator = temporary_allocator;
+	matches.allocator = state->temporary_allocator;
 
 	for (umm overload_index = 0; overload_index != overloads.count; ++overload_index) {
 		auto &overload = overloads[overload_index];
@@ -8262,6 +8309,7 @@ AstStatement *typecheck(TypecheckState *state, AstFor *For) {
 		match = matches[0];
 	} else {
 		List<Overload *> best_matches;
+		best_matches.allocator = state->temporary_allocator;
 		for (auto overload : matches) {
 			if (overload->distance == min_distance)
 				best_matches.add(overload);
@@ -8370,7 +8418,7 @@ AstStatement *typecheck(TypecheckState *state, AstFor *For) {
 	});
 
 	List<Scope *> scope_stack;
-	scope_stack.allocator = temporary_allocator;
+	scope_stack.allocator = state->temporary_allocator;
 
 	visit(copied_block, Combine{
 		[&](auto){},
@@ -8654,10 +8702,10 @@ AstExpression *set_common_return_type(TypecheckState *state, Span<AstExpression 
 	};
 
 	List<Concrete> concretes;
-	concretes.allocator = temporary_allocator;
+	concretes.allocator = state->temporary_allocator;
 
 	List<AstExpression **> inconcretes;
-	inconcretes.allocator = temporary_allocator;
+	inconcretes.allocator = state->temporary_allocator;
 
 	for (auto _expression : expressions) {
 		auto &expression = *_expression;
@@ -8700,7 +8748,7 @@ AstExpression *set_common_return_type(TypecheckState *state, Span<AstExpression 
 	}
 
 	List<AstExpression **> matches;
-	matches.allocator = temporary_allocator;
+	matches.allocator = state->temporary_allocator;
 
 	for (auto &concrete : concretes) {
 		if (concrete.count_of_expressions_castable_to_this == concretes.count - 1) {
@@ -8795,7 +8843,7 @@ void typecheck_body(TypecheckState *state, AstLambda *lambda) {
 		}
 	} else {
 		List<AstExpression **> return_expressions;
-		return_expressions.allocator = temporary_allocator;
+		return_expressions.allocator = state->temporary_allocator;
 
 		return_expressions.reserve(lambda->return_statements.count + 1);
 
@@ -9047,7 +9095,7 @@ AstLambda *instantiate_head(TypecheckState *state, Reporter *reporter, Overload 
 	// Assign named arguments to corresponding parameters
 
 	List<AstExpression *> remaining_arguments;
-
+	remaining_arguments.allocator = state->temporary_allocator;
 
 	for (auto &argument : unsorted_arguments) {
 		if (argument.name.is_empty()) {
@@ -9343,41 +9391,6 @@ void instantiate_body(TypecheckState *state, AstLambda *hardened_lambda) {
 	});
 }
 
-Optional<SmallList<AstExpression *>> sort_arguments(Reporter *reporter, AstCall *call, DefinitionList parameters) {
-	auto unsorted_arguments = call->unsorted_arguments;
-	SmallList<AstExpression *> sorted_arguments;
-	sorted_arguments.resize(unsorted_arguments.count);
-	for (int argument_index = 0; argument_index < unsorted_arguments.count; ++argument_index) {
-		auto &argument = unsorted_arguments[argument_index];
-		if (!argument.name.is_empty()) {
-			bool found = false;
-			for (int parameter_index = 0; parameter_index < parameters.count; ++parameter_index) {
-				auto &parameter = parameters[parameter_index];
-				if (argument.name == parameter->name) {
-					sorted_arguments[parameter_index] = argument.expression;
-					found = true;
-					break;
-				}
-			}
-			if (!found) {
-				reporter->error(argument.expression->location, "'{}' does not have a parameter named '{}'.", call->callable->location, argument.name);
-				return {};
-			}
-		}
-	}
-	for (auto &arg : unsorted_arguments) {
-		if (arg.name.is_empty()) {
-			for (auto &sorted_arg : sorted_arguments) {
-				if (!sorted_arg) {
-					sorted_arg = arg.expression;
-					break;
-				}
-			}
-		}
-	}
-	return sorted_arguments;
-}
-
 struct BinaryTypecheckerKey {
 	BinaryOperation operation;
 	AstExpression *left_type;
@@ -9563,6 +9576,8 @@ void get_overloads(TypecheckState *state, AstCall *call, List<Overload> &overloa
 				assert(ident);
 
 				DefinitionList all_methods;
+				all_methods.allocator = state->temporary_allocator;
+
 				for (auto scope = state->current_scope; scope; scope = scope->parent) {
 					if (auto definitions = scope->definition_map.find(ident->name)) {
 						for (auto &method : definitions->value) {
@@ -9577,6 +9592,7 @@ void get_overloads(TypecheckState *state, AstCall *call, List<Overload> &overloa
 				}
 
 				DefinitionList ready_methods;
+				ready_methods.allocator = state->temporary_allocator;
 
 				wait_for(state, call->callable->location, "methods",
 					[&] {
@@ -9741,7 +9757,7 @@ AstExpression *typecheck(TypecheckState *state, AstIdentifier *identifier) {
 	}};
 
 	DefinitionList inaccessible_definitions;
-	inaccessible_definitions.allocator = temporary_allocator;
+	inaccessible_definitions.allocator = state->temporary_allocator;
 
 	while (1) {
 		definitions.clear();
@@ -9773,6 +9789,8 @@ AstExpression *typecheck(TypecheckState *state, AstIdentifier *identifier) {
 			};
 
 			List<SuitableMember> suitable_members;
+			suitable_members.allocator = state->temporary_allocator;
+
 			for (auto Using : scope->usings) {
 				AstStruct *Struct = direct_as<AstStruct>(Using.definition->type);
 				if (!Struct) {
@@ -9868,6 +9886,8 @@ AstExpression *typecheck(TypecheckState *state, AstIdentifier *identifier) {
 						}
 					} else {
 						List<AstDefinition *> failed_definitions;
+						failed_definitions.allocator = state->temporary_allocator;
+
 						for (auto definition : definitions) {
 							if (!definition->type) {
 								failed_definitions.add(definition);
@@ -9953,14 +9973,14 @@ AstExpression *typecheck(TypecheckState *state, AstCall *call) {
 	}
 
 	List<Overload> overloads;
-	overloads.allocator = temporary_allocator;
+	overloads.allocator = state->temporary_allocator;
 
 	get_overloads(state, call, overloads);
 
 	int min_distance = max_value<int>;
 
 	List<Overload *> matches;
-	matches.allocator = temporary_allocator;
+	matches.allocator = state->temporary_allocator;
 
 	for (umm overload_index = 0; overload_index != overloads.count; ++overload_index) {
 		auto &overload = overloads[overload_index];
@@ -10033,6 +10053,7 @@ AstExpression *typecheck(TypecheckState *state, AstCall *call) {
 		match = matches[0];
 	} else {
 		List<Overload *> best_matches;
+		best_matches.allocator = state->temporary_allocator;
 		for (auto overload : matches) {
 			if (overload->distance == min_distance)
 				best_matches.add(overload);
@@ -10203,9 +10224,6 @@ AstExpression *typecheck(TypecheckState *state, AstBinaryOperator *bin) {
 					auto member_identifier = (AstIdentifier *)bin->right;
 					auto name = member_identifier->name;
 
-					//if (bin->location == "List.Node")
-					//	debug_break();
-
 					bool left_is_type = is_type(bin->left);
 					AstStruct *Struct = 0;
 
@@ -10220,6 +10238,7 @@ AstExpression *typecheck(TypecheckState *state, AstBinaryOperator *bin) {
 						// StructType.member
 						// StructType.method()
 
+						// NOTE: will escape
 						DefinitionList definitions;
 
 						if (auto member = Struct->member_scope->definition_map.find(name)) {
@@ -10299,7 +10318,7 @@ AstExpression *typecheck(TypecheckState *state, AstBinaryOperator *bin) {
 
 									if (Struct->member_scope->definition_list.count) {
 										StringBuilder available_members;
-										available_members.allocator = temporary_allocator;
+										available_members.allocator = state->temporary_allocator;
 
 										append(available_members, "Available members:\n");
 
@@ -10315,7 +10334,7 @@ AstExpression *typecheck(TypecheckState *state, AstBinaryOperator *bin) {
 						}
 
 						if (definitions.count > 1) {
-							member_identifier->possible_definitions.set(definitions);
+							member_identifier->possible_definitions = definitions;
 							member_identifier->type = bin->type = compiler->builtin_overload_set.ident;
 							return bin;
 						}
@@ -10335,7 +10354,7 @@ AstExpression *typecheck(TypecheckState *state, AstBinaryOperator *bin) {
 							}
 						);
 
-						member_identifier->possible_definitions.set(definition);
+						member_identifier->possible_definitions = definitions;
 						member_identifier->type = definition->type;
 						bin->type = bin->right->type;
 
@@ -11205,7 +11224,9 @@ AstExpression *typecheck(TypecheckState *state, AstBinaryOperator *bin) {
 				OperatorOverload overload;
 				bool ass;
 			};
+
 			List<Candidate> candidates;
+			candidates.allocator = state->temporary_allocator;
 
 			wait_for(state, bin->location, "binary overload", [&] {
 				candidates.clear();
@@ -11618,8 +11639,11 @@ AstExpression *typecheck(TypecheckState *state, AstStruct *Struct) {
 		auto member_statements = copy(Struct->member_scope->statement_list);
 
 		List<TypecheckState *> current_states;
-		List<TypecheckState *> next_states;
+		current_states.allocator = state->temporary_allocator;
 		current_states.reserve(Struct->member_scope->statement_list.count);
+
+		List<TypecheckState *> next_states;
+		next_states.allocator = state->temporary_allocator;
 
 		for (auto statement : member_statements) {
 			current_states.add(get_pooled_typecheck_state(statement, state));
@@ -11731,7 +11755,8 @@ AstExpression *typecheck(TypecheckState *state, AstStruct *Struct) {
 							Struct->size = max(1, ceil(struct_size, struct_alignment));
 
 							if (has_default_initialized_members) {
-								List<AstExpression *> values;
+								// NOTE: will be stolen
+								SmallList<AstExpression *> values;
 								for (auto member : Struct->data_members) {
 									if (member->expression) {
 										values.add(member->expression);
@@ -11743,7 +11768,7 @@ AstExpression *typecheck(TypecheckState *state, AstStruct *Struct) {
 									}
 								}
 
-								auto initializer = make_struct_initializer(Struct, values, Struct->location);
+								auto initializer = make_struct_initializer(Struct, Steal{values}, Struct->location);
 								Struct->default_value = evaluate(state, initializer);
 								if (!Struct->default_value) {
 									yield(TypecheckResult::fail);
@@ -12120,6 +12145,7 @@ AstExpression *typecheck(TypecheckState *state, AstMatch *Match) {
 
 				if (n_cases_handled != Enum->scope->statement_list.count) {
 					List<bool> handled;
+					handled.allocator = state->temporary_allocator;
 					handled.resize(Enum->scope->statement_list.count);
 
 
@@ -12658,6 +12684,7 @@ struct ParsedArguments {
 	bool no_typecheck = false;
 	bool debug_paths = false;
 	bool track_allocations = false;
+	bool should_print_stats = false;
 	bool success = false;
 };
 
@@ -12713,6 +12740,8 @@ ParsedArguments parse_arguments(Span<Span<utf8>> arguments) {
 			result.output = arguments[i];
 		} else if (arguments[i] == "--profile"str) {
 			compiler->do_profile = true;
+		} else if (arguments[i] == "--stats"str) {
+			result.should_print_stats = true;
 		} else if (arguments[i] == "--keep-temp"str) {
 			compiler->keep_temp = true;
 		} else if (arguments[i] == "--debug-template"str) {
@@ -13890,6 +13919,10 @@ restart_main:
 			swap(next_statements_to_typecheck, current_statements_to_typecheck);
 		}
 
+		if (args.should_print_stats) {
+			println("Peak typecheck state count: {}", typecheck_states_pool.count);
+		}
+
 		if (fail) {
 			with(ConsoleColor::red, print("Typechecking failed.\n"));
 			return 1;
@@ -14018,7 +14051,7 @@ restart_main:
 			break;
 	}
 
-	if (compiler->do_profile) {
+	if (args.should_print_stats) {
 		print("Total token count: {}\nYield count: {}\n", total_tokens_parsed, yield_wait_count);
 	}
 
