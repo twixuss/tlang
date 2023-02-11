@@ -1,14 +1,23 @@
 #pragma once
 #include "compiler.h"
 
+struct EnterScope {
+	Scope *scope;
+};
+
+struct ExitScope {
+	Scope *scope;
+};
+
 #define VISIT(x) (visitor(&x), visit(x, visitor))
 
 void visit(AstNode *node, auto &&visitor);
 void visit(Scope *scope, auto &&visitor) {
-	visitor(scope);
+	visitor(EnterScope{scope});
 	for (auto &statement : scope->statement_list) {
 		VISIT(statement);
 	}
+	visitor(ExitScope{scope});
 }
 
 void visit_children(AstDefinition *node, auto &&visitor) {

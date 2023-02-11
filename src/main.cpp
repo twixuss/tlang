@@ -109,8 +109,6 @@ struct Reporter {
 
 	template <class Size, class ...Args>
 	void error(Span<utf8, Size> location, char const *format_string, Args const &...args) {
-		//if (debugger_attached())
-		//	debug_break();
 		reports.add(make_report(ReportKind::error, location, format_string, args...));
 	}
 	template <class ...Args>
@@ -4475,101 +4473,153 @@ bool ensure_fits(Reporter *reporter, AstExpression *expression, BigInteger integ
 	return false;
 }
 
-void for_each_top_scope(AstExpression *expression, auto &&fn) {
-	switch (expression->kind) {
+void for_each_top_scope(AstNode *node, auto &&fn) {
+	switch (node->kind) {
 		case Ast_Block: {
-			auto Block = (AstBlock *)expression;
+			auto Block = (AstBlock *)node;
 			fn(Block->scope);
 			break;
 		}
 		case Ast_If: {
-			auto If = (AstIf *)expression;
+			auto If = (AstIf *)node;
 			fn(If->true_block->scope);
 			fn(If->false_block->scope);
 			break;
 		}
 		case Ast_Lambda: {
-			auto Lambda = (AstLambda *)expression;
+			auto Lambda = (AstLambda *)node;
 			fn(Lambda->constant_scope);
 			break;
 		}
 		case Ast_Struct: {
-			auto Struct = (AstStruct *)expression;
+			auto Struct = (AstStruct *)node;
 			fn(Struct->parameter_scope);
 			break;
 		}
 		case Ast_Test: {
-			auto Test = (AstTest *)expression;
+			auto Test = (AstTest *)node;
 			fn(Test->scope);
 			break;
 		}
 		case Ast_Enum: {
-			auto Enum = (AstEnum *)expression;
+			auto Enum = (AstEnum *)node;
 			fn(Enum->scope);
 			break;
 		}
 		case Ast_Match: {
-			auto Match = (AstMatch *)expression;
+			auto Match = (AstMatch *)node;
 			for (auto &Case : Match->cases)
 				fn(Case.block->scope);
 			break;
 		}
 		case Ast_ForMarker: {
-			auto ForMarker = (AstForMarker *)expression;
+			auto ForMarker = (AstForMarker *)node;
 			if (ForMarker->expression)
 				for_each_top_scope(ForMarker->expression, fn);
 			break;
 		}
-	}
-}
-void for_each_top_scope(AstStatement *statement, auto &&fn) {
-	switch (statement->kind) {
+
+
 		case Ast_ExpressionStatement: {
-			auto ExpressionStatement = (AstExpressionStatement *)statement;
+			auto ExpressionStatement = (AstExpressionStatement *)node;
 			for_each_top_scope(ExpressionStatement->expression, fn);
 			break;
 		}
 		case Ast_Definition: {
-			auto Definition = (AstDefinition *)statement;
+			auto Definition = (AstDefinition *)node;
 			if (Definition->expression)
 				for_each_top_scope(Definition->expression, fn);
 			break;
 		}
 		case Ast_While: {
-			auto While = (AstWhile *)statement;
+			auto While = (AstWhile *)node;
 			fn(While->scope);
 			break;
 		}
 		case Ast_For: {
-			auto For = (AstFor *)statement;
+			auto For = (AstFor *)node;
 			fn(For->scope);
 			break;
 		}
 		case Ast_Defer: {
-			auto Defer = (AstDefer *)statement;
+			auto Defer = (AstDefer *)node;
 			fn(Defer->scope);
 			break;
 		}
 	}
 }
-void for_each_top_scope(AstNode *node, auto &&fn) {
-	switch (node->kind) {
-#define e(name) case Ast_##name: return for_each_top_scope((AstExpression *)node, fn);
-ENUMERATE_EXPRESSION_KIND
-#undef e
+
+LinearSet<Scope *> debug_walked_scopes;
+
+void debug_write_scope_graph_1(StringBuilder &builder, AstNode *node, Scope *parent) {
+	for_each_top_scope(node, [&](Scope *scope) {
+		append_format(builder, "    x{} -> x{}\n", parent, scope);
+		if (find(debug_walked_scopes, scope))
+			return;
+		debug_walked_scopes.add(scope);
+		for (auto statement : scope->statement_list) {
+			debug_write_scope_graph_1(builder, statement, scope);
+		}
+
+	});
+}
+
+void debug_write_scope_graph_2(StringBuilder &builder, Scope *parent) {
+	for (auto scope : parent->children) {
+		append_format(builder, "    x{} -> x{}\n", parent, scope);
+
+		if (find(debug_walked_scopes, scope))
+			return;
+		debug_walked_scopes.add(scope);
+
+		debug_write_scope_graph_2(builder, scope);
 	}
-	return for_each_top_scope((AstStatement *)node, fn);
+}
+
+void debug_write_scope_graph(AstNode *node, Scope *parent) {
+
+	debug_walked_scopes.clear();
+	StringBuilder builder;
+
+	append(builder, "digraph {\n");
+	debug_write_scope_graph_1(builder, node, parent);
+	append_format(builder, "    x{} [label=\"root\"]\n", parent);
+	for (auto scope : debug_walked_scopes) {
+		append_format(builder, "    x{} [label=\"{}\"]\n", scope, scope->node->location);
+	}
+	append(builder, "}\n");
+	write_entire_file("scopes1.dot"s, to_string(builder));
+
+	debug_walked_scopes.clear();
+	builder.clear();
+
+	append(builder, "digraph {\n");
+	debug_write_scope_graph_2(builder, parent);
+	append_format(builder, "    x{} [label=\"root\"]\n", parent);
+	for (auto scope : debug_walked_scopes) {
+		append_format(builder, "    x{} [label=\"{}\"]\n", scope, scope->node->location);
+	}
+	append(builder, "}\n");
+	write_entire_file("scopes2.dot"s, to_string(builder));
 }
 
 AstNode *debug_current_node;
-void debug_verify_scope_relationship(AstNode *node, Scope *parent_scope) {
+
+void debug_verify_scope_relationship(AstNode *node, Scope *parent_scope, bool first = true) {
 	scoped_replace(get_current_node, [] {
 		return debug_current_node;
 	});
 
 	scoped_replace(debug_current_node, node);
 
+	if (first) {
+		debug_walked_scopes.clear();
+	}
+
 	for_each_top_scope(node, [&](Scope *scope) {
+		assert(!find(debug_walked_scopes, scope));
+		debug_walked_scopes.add(scope);
+
 		if (parent_scope) {
 			assert(scope->parent == parent_scope);
 		}
@@ -4577,32 +4627,12 @@ void debug_verify_scope_relationship(AstNode *node, Scope *parent_scope) {
 		for (auto statement : scope->statement_list) {
 			scoped_replace(debug_current_node, statement);
 			assert(statement->parent_scope == scope);
-			debug_verify_scope_relationship(statement, scope);
+			debug_verify_scope_relationship(statement, scope, false);
 		}
+		auto x = node;
 	});
 }
 
-int tabs = 0;
-void debug_print_scope_hierarchy(Scope *scope) {
-	for (int i = 0; i < tabs; ++i)
-		println("  ");
-	println(split(scope->node->location, u8'\n')[0]);
-
-
-	scoped_replace(get_current_node, [] {
-		return debug_current_node;
-	});
-
-	scoped_replace(debug_current_node, scope->node);
-
-	++tabs;
-	for (auto child : scope->children) {
-		scoped_replace(debug_current_node, child->node);
-		assert(child->parent == scope);
-		debug_print_scope_hierarchy(scope);
-	}
-	--tabs;
-}
 
 AstLiteral *make_type_literal(AstExpression *type) {
 	timed_function(compiler->profiler);
@@ -8336,10 +8366,20 @@ AstStatement *typecheck(TypecheckState *state, AstFor *For) {
 	inserted_block->scope->add(make_statement(copied_block));
 	for_each_top_scope(copied_block, [&](Scope *scope) {
 		scope->parent = inserted_block->scope;
+		inserted_block->scope->children.add(scope);
 	});
+
+	List<Scope *> scope_stack;
+	scope_stack.allocator = temporary_allocator;
 
 	visit(copied_block, Combine{
 		[&](auto){},
+		[&](EnterScope s){
+			scope_stack.add(s.scope);
+		},
+		[&](ExitScope s){
+			scope_stack.pop();
+		},
 		[&](AstReturn *Return) {
 			if (auto Lambda = as<AstLambda>(state->container_node)) {
 				Return->lambda = Lambda;
@@ -8355,8 +8395,16 @@ AstStatement *typecheck(TypecheckState *state, AstFor *For) {
 						*expression = make_bool(For->by_pointer);
 						break;
 					}
+					case ForMarker::body: {
+						auto body_block = AstBlock::create();
+						body_block->location = For->location;
+						body_block->scope = For->scope;
+						body_block->scope->parent = scope_stack.back();
+
+						*expression = body_block;
+						break;
+					}
 					case ForMarker::it:
-					case ForMarker::body:
 						break;
 					default: invalid_code_path();
 				}
@@ -8366,22 +8414,22 @@ AstStatement *typecheck(TypecheckState *state, AstFor *For) {
 			if (auto es = as<AstExpressionStatement>((*statement))) {
 				if (auto ForMarker = as<AstForMarker>(es->expression)) {
 					switch (ForMarker->marker) {
-						case ForMarker::by_pointer:
-							break;
 						case ForMarker::it: {
 							auto definition = AstDefinition::create();
 							definition->name = For->iterator_name;
-							definition->location = ForMarker->location;
+							definition->location = For->iterator_name;
 							definition->parent_scope = (*statement)->parent_scope;
 							definition->expression = ForMarker->expression;
+
+							// NOTE: this will overwrite the element in statement_list
 							*statement = definition;
+
+							definition->parent_scope->definition_list.add(definition);
+							definition->parent_scope->definition_map.get_or_insert(definition->name).add(definition);
 							break;
 						}
+						case ForMarker::by_pointer:
 						case ForMarker::body: {
-							auto body_block = AstBlock::create();
-							body_block->location = For->location;
-							body_block->scope = For->scope;
-							*statement = make_statement(body_block);
 							break;
 						}
 						default: invalid_code_path();
@@ -8391,10 +8439,8 @@ AstStatement *typecheck(TypecheckState *state, AstFor *For) {
 		},
 	});
 
-	if (For->range->location == "obj.faces") {
-		//debug_break();
-		debug_print_scope_hierarchy(inserted_block->scope);
-	}
+	debug_write_scope_graph(inserted_block, state->current_scope);
+	debug_verify_scope_relationship(inserted_block, state->current_scope);
 
 	typecheck(state, inserted_block);
 
@@ -12205,9 +12251,6 @@ void WINAPI typecheck_pooled(void *_state) {
 		throwing = false;
 		assert(state->current_scope);
 
-		if (state->root_statement && state->root_statement->uid == 32284)
-			debug_break();
-
 		try {
 			if (state->root_statement)
 				typecheck(state, state->root_statement);
@@ -13526,6 +13569,8 @@ restart_main:
 	construct(generated_comparers);
 
 	construct(typecheck_states_pool);
+
+	construct(debug_walked_scopes);
 
 #if SMALL_AST
 	Pool32<AstExpression>::init();
