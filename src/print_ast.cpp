@@ -16,24 +16,10 @@ void print_tabs() {
 #define print_label(...) (print_tabs(), print(__VA_ARGS__))
 
 void print_lowered(AstExpression *expression) {
-	void print_lowered(AstBinaryOperator *);
-	void print_lowered(AstLambda *);
-	void print_lowered(AstLambdaType *);
-	void print_lowered(AstIdentifier *);
-	void print_lowered(AstLiteral *);
-	void print_lowered(AstCall *);
-	void print_lowered(AstStruct *);
-	void print_lowered(AstEnum *);
-	void print_lowered(AstIf *);
-	void print_lowered(AstUnaryOperator *);
-	void print_lowered(AstSubscript *);
-	void print_lowered(AstArray *);
-	void print_lowered(AstTuple *);
-	void print_lowered(AstArrayInitializer *);
-	void print_lowered(AstSpan *);
-	void print_lowered(AstBlock *);
-	void print_lowered(AstMatch *);
-	void print_lowered(AstDistinct *);
+
+#define e(name) void print_lowered(Ast##name *);
+ENUMERATE_EXPRESSION_KIND
+#undef e
 
 	auto print_if_needed = [&] (char c) {
 		switch (expression->kind) {
@@ -49,24 +35,9 @@ void print_lowered(AstExpression *expression) {
 
 	print_if_needed('(');
 	switch (expression->kind) {
-		case Ast_Lambda:           print_lowered((AstLambda           *)expression); break;
-		case Ast_LambdaType:       print_lowered((AstLambdaType       *)expression); break;
-		case Ast_Identifier:       print_lowered((AstIdentifier       *)expression); break;
-		case Ast_Literal:          print_lowered((AstLiteral          *)expression); break;
-		case Ast_Call:             print_lowered((AstCall             *)expression); break;
-		case Ast_If:               print_lowered((AstIf               *)expression); break;
-		case Ast_BinaryOperator:   print_lowered((AstBinaryOperator   *)expression); break;
-		case Ast_Struct:           print_lowered((AstStruct           *)expression); break;
-		case Ast_Enum:             print_lowered((AstEnum             *)expression); break;
-		case Ast_UnaryOperator:    print_lowered((AstUnaryOperator    *)expression); break;
-		case Ast_Subscript:        print_lowered((AstSubscript        *)expression); break;
-		case Ast_Array:            print_lowered((AstArray            *)expression); break;
-		case Ast_Tuple:            print_lowered((AstTuple            *)expression); break;
-		case Ast_ArrayInitializer: print_lowered((AstArrayInitializer *)expression); break;
-		case Ast_Span:             print_lowered((AstSpan             *)expression); break;
-		case Ast_Block:            print_lowered((AstBlock            *)expression); break;
-		case Ast_Match:            print_lowered((AstMatch            *)expression); break;
-		case Ast_Distinct:         print_lowered((AstDistinct         *)expression); break;
+#define e(name) case Ast_##name: print_lowered((Ast##name *)expression); break;
+ENUMERATE_EXPRESSION_KIND
+#undef e
 		default:
 			print("!unknown expression!");
 			break;
@@ -75,33 +46,22 @@ void print_lowered(AstExpression *expression) {
 }
 
 void print_lowered(AstStatement *node) {
-	void print_lowered(AstExpression *);
-	void print_lowered(AstDefinition *);
-	void print_lowered(AstReturn *);
-	void print_lowered(AstWhile *);
-	void print_lowered(AstExpressionStatement *);
-	void print_lowered(AstAssert *);
-	void print_lowered(AstParse *);
-	void print_lowered(AstDefer *);
-	void print_lowered(AstBlock *);
-	void print_lowered(AstMatch *);
-	void print_lowered(AstOperatorDefinition *);
-	void print_lowered(AstLoopControl *);
-	void print_lowered(AstPrint *);
+#define e(name) void print_lowered(Ast##name *);
+ENUMERATE_STATEMENT_KIND
+#undef e
 
 	print_tabbed("");
+
+	defer {
+		if (node->kind == Ast_Definition) {
+			print(";\n");
+		}
+	};
+
 	switch (node->kind) {
-		case Ast_Definition:          return (print_lowered((AstDefinition *)node), print(";\n"), void());
-		case Ast_Return:              return print_lowered((AstReturn              *)node);
-		case Ast_While:               return print_lowered((AstWhile               *)node);
-		case Ast_ExpressionStatement: return print_lowered((AstExpressionStatement *)node);
-		case Ast_Assert:              return print_lowered((AstAssert              *)node);
-		case Ast_Parse:               return print_lowered((AstParse               *)node);
-		case Ast_Defer:               return print_lowered((AstDefer               *)node);
-		case Ast_OperatorDefinition:  return print_lowered((AstOperatorDefinition  *)node);
-		case Ast_LoopControl:         return print_lowered((AstLoopControl         *)node);
-		case Ast_Print:               return print_lowered((AstPrint               *)node);
-			break;
+#define e(name) case Ast_##name: print_lowered((Ast##name *)node); break;
+ENUMERATE_STATEMENT_KIND
+#undef e
 		default:
 			print("!unknown statement {}!", node->uid);
 			break;
@@ -156,13 +116,20 @@ void print_lowered(AstExpressionStatement *node) {
 void print_lowered(AstWhile *While) {
 	print("while ");
 	print_lowered(While->condition);
-	print(" {\n");
-	++tab_count;
-	for (auto statement : While->scope->statement_list) {
-		print_lowered(statement);
-	}
-	--tab_count;
-	print_tabbed("}\n");
+	print(" ");
+	print_lowered(While->scope);
+	print("\n");
+}
+void print_lowered(AstFor *For) {
+	print("for ");
+	if (For->by_pointer)
+		print("* ");
+	print(For->iterator_name);
+	print(" in ");
+	print_lowered(For->range);
+	print(" ");
+	print_lowered(For->scope);
+	print("\n");
 }
 void print_lowered(AstAssert *assert) {
 	if (assert->is_constant)
@@ -174,7 +141,23 @@ void print_lowered(AstAssert *assert) {
 void print_lowered(AstParse *parse) {
 	print("#parse ");
 	print_lowered(parse->expression);
+	print("\n");
+}
+void print_lowered(AstTest *Test) {
+	print("#compiles ");
+	print_lowered(Test->scope);
+	print("\n");
+}
+void print_lowered(AstEmptyStatement *) {
 	print(";\n");
+}
+void print_lowered(AstUsing *Using) {
+	println("using ");
+	print_lowered(Using->expression);
+}
+void print_lowered(AstYield *Yield) {
+	println("yield ");
+	print_lowered(Yield->expression);
 }
 void print_lowered(AstDefer *Defer) {
 	print("defer ");
@@ -188,6 +171,17 @@ void print_lowered(AstLoopControl *LoopControl) {
 	switch (LoopControl->control) {
 		case LoopControl::Break: println("break;"); break;
 		case LoopControl::Continue: println("continue;"); break;
+		default: invalid_code_path();
+	}
+}
+void print_lowered(AstForMarker *ForMarker) {
+	switch (ForMarker->marker) {
+		case ForMarker::it:
+			println("#for_it ");
+			print_lowered(ForMarker->expression);
+			break;
+		case ForMarker::body: println("#for_body"); break;
+		case ForMarker::by_pointer: println("#for_by_pointer"); break;
 		default: invalid_code_path();
 	}
 }
@@ -378,13 +372,8 @@ void print_lowered(AstLiteral *literal) {
 }
 void print_lowered(AstStruct *node) {
 	if (node->member_scope->statement_list.count) {
-		print("struct {\n");
-		++tab_count;
-		for (auto statement : node->member_scope->statement_list) {
-			print_lowered(statement);
-		}
-		--tab_count;
-		print_tabbed("}");
+		print("struct ");
+		print_lowered(node->member_scope);
 	} else {
 		print("struct {}");
 	}

@@ -28,6 +28,7 @@
 extern "C" void t_SwitchToFiber(void *);
 
 enum class TypecheckResult {
+	unknown,
 	wait,
 	fail,
 	success,
@@ -36,7 +37,6 @@ enum class TypecheckResult {
 u32 yield_wait_count;
 
 #if USE_FIBERS
-TypecheckResult fiber_result;
 bool throwing = false;
 #define yield(x) (\
 	pre_yield(state, x),\
@@ -1110,12 +1110,12 @@ AstStruct *parse_struct(Parser *parser, String token) {
 
 	scoped_replace(parser->container_node, Struct);
 
+	push_scope(Struct->parameter_scope);
+
 	if (parser->token->kind == '(') {
 		parser->next();
 
 		Struct->is_template = true;
-
-		push_scope(Struct->parameter_scope);
 
 		if (parser->token->kind != ')') {
 			for (;;) {
@@ -3317,6 +3317,7 @@ AstIf *parse_if_expression_starting_with_condition(Parser *parser, String if_tok
 		// Cleanup: false_block is empty, maybe don't allocate it? I'm doing this now just to not worry about it being null.
 		If->false_block = AstBlock::create();
 		If->false_block->scope->parent = parser->current_scope;
+		parser->current_scope->children.add(If->false_block->scope);
 
 		// NOTE: Here we might have skipped a line break, that may break binary operator parsing.
 		parser->token = token_right_after_true_block;
@@ -4323,7 +4324,9 @@ struct TypecheckState {
 
 	bool replace_properties_with_getter_call = true;
 
-	TypecheckResult result;
+	bool if_is_statement = false;
+
+	TypecheckResult result = {};
 
 	// msvc crashed when i used `auto value`
 	template <class T>
@@ -4389,6 +4392,7 @@ TypecheckState *get_pooled_typecheck_state(AstExpression *container_node, Scope 
 		state->template_call_stack.clear();
 		state->waiting_for = 0;
 		state->waiting_for_name = {};
+		state->result = {};
 	} else {
 		state = default_allocator.allocate<TypecheckState>();
 		state->fiber = CreateFiber(4096, typecheck_pooled, state);
@@ -4427,9 +4431,11 @@ TypecheckState *get_pooled_typecheck_state(Scope *root_scope, TypecheckState *pa
 }
 
 void pre_yield(TypecheckState *state, TypecheckResult result) {
-	fiber_result = result;
+	assert(result != TypecheckResult::unknown);
+	state->result = result;
 
 	if (result != TypecheckResult::wait) {
+		assert(!find(typecheck_states_pool, state));
 		typecheck_states_pool.add(state);
 	}
 
@@ -4442,6 +4448,7 @@ void pre_yield(TypecheckState *state, TypecheckResult result) {
 }
 
 void post_yield(TypecheckState *state, TypecheckResult result) {
+	assert(result != TypecheckResult::unknown);
 	current_typecheck_state = state;
 	if (result == TypecheckResult::fail) {
 		throwing = true;
@@ -4507,6 +4514,12 @@ void for_each_top_scope(AstExpression *expression, auto &&fn) {
 				fn(Case.block->scope);
 			break;
 		}
+		case Ast_ForMarker: {
+			auto ForMarker = (AstForMarker *)expression;
+			if (ForMarker->expression)
+				for_each_top_scope(ForMarker->expression, fn);
+			break;
+		}
 	}
 }
 void for_each_top_scope(AstStatement *statement, auto &&fn) {
@@ -4538,6 +4551,57 @@ void for_each_top_scope(AstStatement *statement, auto &&fn) {
 			break;
 		}
 	}
+}
+void for_each_top_scope(AstNode *node, auto &&fn) {
+	switch (node->kind) {
+#define e(name) case Ast_##name: return for_each_top_scope((AstExpression *)node, fn);
+ENUMERATE_EXPRESSION_KIND
+#undef e
+	}
+	return for_each_top_scope((AstStatement *)node, fn);
+}
+
+AstNode *debug_current_node;
+void debug_verify_scope_relationship(AstNode *node, Scope *parent_scope) {
+	scoped_replace(get_current_node, [] {
+		return debug_current_node;
+	});
+
+	scoped_replace(debug_current_node, node);
+
+	for_each_top_scope(node, [&](Scope *scope) {
+		if (parent_scope) {
+			assert(scope->parent == parent_scope);
+		}
+
+		for (auto statement : scope->statement_list) {
+			scoped_replace(debug_current_node, statement);
+			assert(statement->parent_scope == scope);
+			debug_verify_scope_relationship(statement, scope);
+		}
+	});
+}
+
+int tabs = 0;
+void debug_print_scope_hierarchy(Scope *scope) {
+	for (int i = 0; i < tabs; ++i)
+		println("  ");
+	println(split(scope->node->location, u8'\n')[0]);
+
+
+	scoped_replace(get_current_node, [] {
+		return debug_current_node;
+	});
+
+	scoped_replace(debug_current_node, scope->node);
+
+	++tabs;
+	for (auto child : scope->children) {
+		scoped_replace(debug_current_node, child->node);
+		assert(child->parent == scope);
+		debug_print_scope_hierarchy(scope);
+	}
+	--tabs;
 }
 
 AstLiteral *make_type_literal(AstExpression *type) {
@@ -6310,6 +6374,7 @@ T *copy_node(T *node) {
 }
 
 template <class T>
+requires std::is_base_of_v<AstExpression, T>
 T *copy_expression(T *expression) {
 	auto result = copy_node(expression);
 	result->type = expression->type;
@@ -6317,6 +6382,7 @@ T *copy_expression(T *expression) {
 }
 
 template <class T>
+requires std::is_base_of_v<AstExpression, T>
 T *copy_expression_keep_type(T *expression) {
 	auto result = copy_node(expression);
 	result->type = expression->type;
@@ -6324,6 +6390,7 @@ T *copy_expression_keep_type(T *expression) {
 }
 
 template <class T>
+requires std::is_base_of_v<AstStatement, T>
 T *copy_statement(T *statement) {
 	auto result = copy_node(statement);
 	return result;
@@ -6343,61 +6410,14 @@ void deep_copy(Scope *d, Scope *s) {
 	for (auto statement : s->statement_list) {
 		auto copied = deep_copy(statement);
 		d->add(copied);
-		switch (copied->kind) {
-			case Ast_While: {
-				auto While = (AstWhile *)copied;
-				add_child(d, While->scope);
-				break;
-			}
-			case Ast_For: {
-				auto For = (AstFor *)copied;
-				add_child(d, For->scope);
-				break;
-			}
-			case Ast_Defer: {
-				auto Defer = (AstDefer *)copied;
-				add_child(d, Defer->scope);
-				break;
-			}
-			case Ast_Definition: {
-				auto Definition = (AstDefinition *)copied;
-				if (Definition->expression) {
-					switch (Definition->expression->kind) {
-						case Ast_Struct: {
-							auto Struct = (AstStruct *)Definition->expression;
-							add_child(d, Struct->parameter_scope);
-							break;
-						}
-					}
-				}
-				break;
-			}
-			case Ast_ExpressionStatement: {
-				auto ExpressionStatement = (AstExpressionStatement *)copied;
-				switch (ExpressionStatement->expression->kind) {
-					case Ast_If: {
-						auto If = (AstIf *)ExpressionStatement->expression;
-						add_child(d, If->true_block->scope);
-						add_child(d, If->false_block->scope);
-						break;
-					}
-					case Ast_Block: {
-						auto Block = (AstBlock *)ExpressionStatement->expression;
-						add_child(d, Block->scope);
-						break;
-					}
-				}
-				break;
-			}
-			case Ast_Print:
-			case Ast_Return:
-			case Ast_Assert:
-			case Ast_Using:
-				break;
-			default:
-				invalid_code_path(statement->location, "INTERNAL ERROR: unhandled case in deep_copy(Scope *, Scope *): {}", copied->kind);
-		}
+
+		for_each_top_scope(copied, [&](Scope *copied_scope) {
+			add_child(d, copied_scope);
+		});
 	}
+
+	assert(d->children.count == s->children.count);
+	assert(d->statement_list.count == s->statement_list.count);
 }
 
 AstExpression *deep_copy(AstExpression *expression) {
@@ -6468,22 +6488,9 @@ AstAssert *deep_copy_kk(AstAssert *s) {
 	d->condition = deep_copy(s->condition);
 	return d;
 }
-AstBlock *deep_copy_kk(AstBlock *s) {
-	auto d = copy_statement(s);
-	deep_copy(d->scope, s->scope);
-	return d;
-}
 AstExpressionStatement *deep_copy_kk(AstExpressionStatement *s) {
 	auto d = copy_statement(s);
 	d->expression = deep_copy(s->expression);
-	return d;
-}
-AstIf *deep_copy_kk(AstIf *s) {
-	auto d = copy_statement(s);
-	d->is_constant = s->is_constant;
-	d->condition = deep_copy(s->condition);
-	d->true_block = deep_copy_kk(raw(s->true_block));
-	d->false_block = deep_copy_kk(raw(s->false_block));
 	return d;
 }
 AstOperatorDefinition *deep_copy_kk(AstOperatorDefinition *s) {
@@ -6669,6 +6676,19 @@ AstArrayInitializer *deep_copy_kk(AstArrayInitializer *s) { not_implemented(); }
 AstEnum *deep_copy_kk(AstEnum *s) { not_implemented(); }
 AstMatch *deep_copy_kk(AstMatch *s) { not_implemented(); }
 AstDistinct *deep_copy_kk(AstDistinct *s) { not_implemented(); }
+AstBlock *deep_copy_kk(AstBlock *s) {
+	auto d = copy_expression(s);
+	deep_copy(d->scope, s->scope);
+	return d;
+}
+AstIf *deep_copy_kk(AstIf *s) {
+	auto d = copy_expression(s);
+	d->is_constant = s->is_constant;
+	d->condition = deep_copy(s->condition);
+	d->true_block = deep_copy_kk(raw(s->true_block));
+	d->false_block = deep_copy_kk(raw(s->false_block));
+	return d;
+}
 
 void set_local_offset(TypecheckState *state, AstDefinition *definition, AstLambda *lambda) {
 	assert((lambda->locals_size & 0xf) == 0);
@@ -8371,11 +8391,17 @@ AstStatement *typecheck(TypecheckState *state, AstFor *For) {
 		},
 	});
 
+	if (For->range->location == "obj.faces") {
+		//debug_break();
+		debug_print_scope_hierarchy(inserted_block->scope);
+	}
+
 	typecheck(state, inserted_block);
 
 	return make_statement(inserted_block);
 }
 AstStatement *typecheck(TypecheckState *state, AstExpressionStatement *ExpressionStatement) {
+	state->if_is_statement = ExpressionStatement->expression->kind == Ast_If;
 	typecheck(state, ExpressionStatement->expression);
 	return ExpressionStatement;
 }
@@ -11003,7 +11029,7 @@ AstExpression *typecheck(TypecheckState *state, AstBinaryOperator *bin) {
 					retry:
 						SWITCH_TO_FIBER(new_state->fiber);
 						current_typecheck_state = state;
-						switch (fiber_result) {
+						switch (new_state->result) {
 							case TypecheckResult::wait: {
 								yield(TypecheckResult::wait);
 								goto retry;
@@ -11038,6 +11064,9 @@ AstExpression *typecheck(TypecheckState *state, AstBinaryOperator *bin) {
 								yield(TypecheckResult::fail);
 								break;
 							}
+							case TypecheckResult::success:
+								break;
+							default: invalid_code_path();
 						}
 
 						return call;
@@ -11070,7 +11099,7 @@ AstExpression *typecheck(TypecheckState *state, AstBinaryOperator *bin) {
 					retry2:
 						SWITCH_TO_FIBER(new_state->fiber);
 						current_typecheck_state = state;
-						switch (fiber_result) {
+						switch (new_state->result) {
 							case TypecheckResult::wait: {
 								yield(TypecheckResult::wait);
 								goto retry2;
@@ -11089,7 +11118,7 @@ AstExpression *typecheck(TypecheckState *state, AstBinaryOperator *bin) {
 								retry3:
 									SWITCH_TO_FIBER(new_state->fiber);
 									current_typecheck_state = state;
-									switch (fiber_result) {
+									switch (new_state->result) {
 										case TypecheckResult::wait: {
 											yield(TypecheckResult::wait);
 											goto retry3;
@@ -11113,6 +11142,9 @@ AstExpression *typecheck(TypecheckState *state, AstBinaryOperator *bin) {
 								}
 								break;
 							}
+							case TypecheckResult::success:
+								break;
+							default: invalid_code_path();
 						}
 
 						return call;
@@ -11471,7 +11503,7 @@ AstExpression *typecheck(TypecheckState *state, AstUnaryOperator *unop) {
 	retry:
 		SWITCH_TO_FIBER(new_state->fiber);
 		current_typecheck_state = state;
-		switch (fiber_result) {
+		switch (new_state->result) {
 			case TypecheckResult::wait: {
 				yield(TypecheckResult::wait);
 				goto retry;
@@ -11481,6 +11513,9 @@ AstExpression *typecheck(TypecheckState *state, AstUnaryOperator *unop) {
 				yield(TypecheckResult::fail);
 				break;
 			}
+			case TypecheckResult::success:
+				break;
+			default: invalid_code_path();
 		}
 
 		return call;
@@ -11555,7 +11590,7 @@ AstExpression *typecheck(TypecheckState *state, AstStruct *Struct) {
 
 				SWITCH_TO_FIBER(new_state->fiber);
 				current_typecheck_state = state;
-				switch ((TypecheckResult)fiber_result) {
+				switch (new_state->result) {
 					case TypecheckResult::fail: {
 						state->reporter.reports.add(new_state->reporter.reports);
 						yield(TypecheckResult::fail);
@@ -11680,6 +11715,8 @@ AstExpression *typecheck(TypecheckState *state, AstStruct *Struct) {
 						}
 						break;
 					}
+
+					default: invalid_code_path();
 				}
 			}
 			if (all_finished)
@@ -11781,6 +11818,9 @@ AstExpression *typecheck(TypecheckState *state, AstSpan *span) {
 	return instantiate_span(subtype, span->location);
 }
 AstExpression *typecheck(TypecheckState *state, AstIf *If) {
+	auto is_statement = state->if_is_statement;
+	state->if_is_statement = false;
+
 	typecheck(state, If->condition);
 	if (!implicitly_cast(state, &state->reporter, &If->condition, compiler->builtin_bool.ident)) {
 		yield(TypecheckResult::fail);
@@ -11800,39 +11840,49 @@ AstExpression *typecheck(TypecheckState *state, AstIf *If) {
 		If->true_branch_was_taken = condition->Bool;
 		auto block = condition->Bool ? If->true_block : If->false_block;
 
-		// FIXME: Figure out what to do with defers.
-		// FIXME: Put statements directly in parent scope in the right order.
-		//
-		// Instead of this:
-		//
-		//     typecheck(state, scope);
-		//
-		// We do this:
-		//
-		for (auto statement : block->scope->statement_list) {
-			typecheck(state, statement);
+		if (is_statement) {
+
+			// FIXME: Figure out what to do with defers.
+			// FIXME: Put statements directly in parent scope in the right order.
+			//
+			// Instead of this:
+			//
+			//     typecheck(state, scope);
+			//
+			// We do this:
+			//
+			for (auto statement : block->scope->statement_list) {
+				typecheck(state, statement);
+			}
+			//
+			// Because constant if's scopes are not regular.
+			// We want all statements to be outside these scopes as if they were directly
+			// in the parent scope.
+			// `typecheck(Scope)` sets the scope as the parent, and this is unwanted in this case.
+			//
+			// Note that right now this if statement remains to be in the parent's statement list.
+			// I think a better solution to this problem would be to add all selected statements into parent scope and remove the if.
+			//
+
+			// TODO:
+			// This should put children's statements in the place of children scope.
+			//   block->scope->parent->consume(block->scope);
+
+
+			// Current implementation does not keep the statement order,
+			// which is fine for global scope, but not for anything else.
+			assert(state->current_scope == &compiler->global_scope);
+
+			auto found = find(block->scope->parent->children, block->scope);
+			assert(found);
+			erase(block->scope->parent->children, found);
+			block->scope->parent->append(*block->scope);
+
+			If->type = compiler->builtin_void.ident;
+		} else {
+			typecheck(state, block);
+			return block;
 		}
-		//
-		// Because constant if's scopes are not regular.
-		// We want all statements to be outside these scopes as if they were directly
-		// in the parent scope.
-		// `typecheck(Scope)` sets the scope as the parent, and this is unwanted in this case.
-		//
-		// Note that right now this if statement remains to be in the parent's statement list.
-		// I think a better solution to this problem would be to add all selected statements into parent scope and remove the if.
-		//
-
-		// TODO:
-		// This should put children's statements in the place of children scope.
-		//   block->scope->parent->consume(block->scope);
-
-		auto found = find(block->scope->parent->children, block->scope);
-		assert(found);
-		erase(block->scope->parent->children, found);
-		block->scope->parent->append(*block->scope);
-
-		// FIXME: hack
-		If->type = compiler->builtin_void.ident;
 	} else {
 		typecheck(state, If->true_block);
 		typecheck(state, If->false_block);
@@ -11853,7 +11903,7 @@ AstExpression *typecheck(TypecheckState *state, AstTest *test) {
 	while (1) {
 		SWITCH_TO_FIBER(new_state->fiber);
 		current_typecheck_state = state;
-		switch (fiber_result) {
+		switch (new_state->result) {
 			case TypecheckResult::success: {
 				did_compile = true;
 				goto _break;
@@ -11866,9 +11916,7 @@ AstExpression *typecheck(TypecheckState *state, AstTest *test) {
 				yield(TypecheckResult::wait);
 				break;
 			}
-			default: {
-				invalid_code_path("something wrong with fiberutines");
-			}
+			default: invalid_code_path();
 		}
 	}
 _break:
@@ -12164,6 +12212,9 @@ void WINAPI typecheck_pooled(void *_state) {
 	while (1) {
 		throwing = false;
 		assert(state->current_scope);
+
+		if (state->root_statement && state->root_statement->uid == 32284)
+			debug_break();
 
 		try {
 			if (state->root_statement)
@@ -13751,6 +13802,8 @@ restart_main:
 
 			auto &state = current_statements_to_typecheck.add();
 			state.statement = statement;
+
+			debug_verify_scope_relationship(statement, &compiler->global_scope);
 		}
 
 		get_current_node = []{ return current_typecheck_state ? current_typecheck_state->current_node : 0; };
@@ -13764,7 +13817,7 @@ restart_main:
 
 				SWITCH_TO_FIBER(statement.state->fiber);
 				current_typecheck_state = 0;
-				auto result = fiber_result;
+				auto result = statement.state->result;
 
 				switch (result) {
 					case TypecheckResult::success:
@@ -13790,6 +13843,7 @@ restart_main:
 					case TypecheckResult::wait:
 						next_statements_to_typecheck.add(statement);
 						break;
+					default: invalid_code_path();
 				}
 			}
 
