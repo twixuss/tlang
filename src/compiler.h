@@ -7,12 +7,10 @@
 #include <tl/big_int.h>
 
 
-// #define e(name)
-// ENUMERATE_AST_KIND
-// #undef e
-#define ENUMERATE_AST_KIND \
-e(Definition) \
-e(Return) \
+//#define e(name)
+//ENUMERATE_AST_KIND
+//#undef e
+#define ENUMERATE_EXPRESSION_KIND \
 e(Lambda) \
 e(LambdaType) \
 e(Identifier) \
@@ -21,29 +19,38 @@ e(Call) \
 e(BinaryOperator) \
 e(Struct) \
 e(If) \
-e(ExpressionStatement) \
 e(UnaryOperator) \
-e(While) \
+e(ForMarker) \
 e(Subscript) \
 e(Span) \
 e(Block) \
 e(Tuple) \
+e(Enum) \
+e(Match) \
+e(ArrayInitializer) \
+e(Array) \
+e(Distinct) \
 e(Test) \
+
+#define ENUMERATE_STATEMENT_KIND \
+e(Definition) \
+e(Return) \
+e(ExpressionStatement) \
+e(While) \
+e(For) \
+e(LoopControl) \
 e(Assert) \
 e(Defer) \
 e(Print) \
 e(OperatorDefinition) \
 e(Parse) \
-e(Enum) \
 e(EmptyStatement) \
-e(For) \
-e(LoopControl) \
-e(Match) \
 e(Using) \
-e(ArrayInitializer) \
 e(Yield) \
-e(Array) \
-e(Distinct) \
+
+#define ENUMERATE_AST_KIND \
+ENUMERATE_STATEMENT_KIND \
+ENUMERATE_EXPRESSION_KIND
 
 enum AstKind : u8 {
 	Ast_Unknown = 0,
@@ -598,6 +605,22 @@ struct AstFor : AstStatement, StatementPool<AstFor> {
 	Scope *scope;
 
 	bool by_pointer : 1 = false;
+};
+
+enum class ForMarker {
+	it,
+	by_pointer,
+	body,
+};
+
+struct AstForMarker : AstExpression, ExpressionPool<AstForMarker> {
+	AstForMarker() {
+		kind = Ast_ForMarker;
+		directed = this;
+	}
+
+	ForMarker marker = {};
+	Expression<> expression = {};
 };
 
 //#define e(name, token)

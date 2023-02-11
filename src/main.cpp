@@ -761,12 +761,14 @@ u32 not_typechecked_has_value_overloads_count;
 List<AstLambda *> implicit_casts;
 List<AstLambda *> typechecked_explicit_casts;
 
-struct OeratorOverload {
+struct OperatorOverload {
 	AstLambda *lambda;
 	AstOperatorDefinition *definition;
 };
-Map<BinaryOperation, List<OeratorOverload>> binary_operators;
-Map<UnaryOperation, List<OeratorOverload>> unary_operators;
+Map<BinaryOperation, List<OperatorOverload>> binary_operators;
+Map<UnaryOperation, List<OperatorOverload>> unary_operators;
+
+List<OperatorOverload> for_overloads;
 
 List<AstLambda *> has_value_overloads;
 
@@ -2322,6 +2324,30 @@ void parse_expression_0(Parser *parser, AstExpression *&result) {
 					Distinct->expression = expression;
 					result = Distinct;
 					return;
+				} else if (parser->token->string == "#for_it") {
+					auto marker = AstForMarker::create();
+					marker->location = parser->token->string;
+					parser->next();
+					marker->marker = ForMarker::it;
+					marker->expression = parse_expression(parser);
+					if (!marker->expression)
+						return;
+					result = marker;
+					return;
+				} else if (parser->token->string == "#for_by_pointer") {
+					auto marker = AstForMarker::create();
+					marker->location = parser->token->string;
+					parser->next();
+					marker->marker = ForMarker::by_pointer;
+					result = marker;
+					return;
+				} else if (parser->token->string == "#for_body") {
+					auto marker = AstForMarker::create();
+					marker->location = parser->token->string;
+					parser->next();
+					marker->marker = ForMarker::body;
+					result = marker;
+					return;
 				} else {
 					parser->reporter->error(parser->token->string, "Unexpected directive (expression).");
 					return;
@@ -3183,6 +3209,9 @@ bool is_statement(AstExpression *expression) {
 		case Ast_Block:
 		case Ast_Match:
 			return true;
+		case Ast_ForMarker:
+			auto ForMarker = (AstForMarker *)expression;
+			return ForMarker->marker == ForMarker::it || ForMarker->marker == ForMarker::body;
 	}
 	return false;
 }
@@ -3320,6 +3349,14 @@ bool may_be_terminated_by_semicolon(AstStatement *statement) {
 		default:
 			return true;
 	}
+}
+
+bool all(auto x, auto predicate) {
+	for (auto v : x) {
+		if (!predicate(v))
+			return false;
+	}
+	return true;
 }
 
 void parse_statement(Parser *parser, AstStatement *&result) {
@@ -3671,14 +3708,14 @@ void parse_statement(Parser *parser, AstStatement *&result) {
 							parser->reporter->error(Operator->lambda->location, "'{}' is not an unary operator.", Operator->location);
 							return;
 						}
-						definition->name = format("operator{}"str, as_string(unop.value()));
+						definition->name = format("operator {}"str, as_string(unop.value()));
 						not_typechecked_unary_operators_count += 1;
 					} else if (Operator->lambda->parameters.count == 2) {
 						if (!binop) {
 							parser->reporter->error(Operator->lambda->location, "'{}' is not a binary operator.", Operator->location);
 							return;
 						}
-						definition->name = format("operator{}"str, as_string(binop.value()));
+						definition->name = format("operator {}"str, as_string(binop.value()));
 						not_typechecked_binary_operators_count += 1;
 					} else {
 						if (unop && binop)
@@ -3743,7 +3780,7 @@ void parse_statement(Parser *parser, AstStatement *&result) {
 					definition->expression = lambda;
 					definition->is_constant = true;
 					definition->location = Operator->location;
-					definition->name = format("operator{}"str, as_string(as_binary_operation(Operator->operation).value()));
+					definition->name = format("operator {}"str, as_string(as_binary_operation(Operator->operation).value()));
 
 					Operator->definition = definition;
 
@@ -3782,9 +3819,9 @@ void parse_statement(Parser *parser, AstStatement *&result) {
 					return;
 				}
 				case 'for': {
-					auto definition = AstOperatorDefinition::create();
-					definition->location = parser->token->string;
-					definition->operation = '?';
+					auto Operator = AstOperatorDefinition::create();
+					Operator->location = parser->token->string;
+					Operator->operation = 'for';
 
 					if (!parser->next_expect(':'))
 						return;
@@ -3792,11 +3829,47 @@ void parse_statement(Parser *parser, AstStatement *&result) {
 						return;
 					parser->next();
 
-					auto lambda = parse_lambda(parser);
-					if (!lambda)
+					auto lambda_expression = parse_lambda(parser);
+					if (!lambda_expression)
 						return;
 
-					parser->reporter->error(parser->token->string, "Overloading `for` operator is not implemented yet.");
+					auto lambda = as<AstLambda>(lambda_expression);
+
+					if (!lambda) {
+						parser->reporter->error(lambda_expression->location, "Expected a lambda expression.");
+						return;
+					}
+
+					if (!lambda->is_macro) {
+						parser->reporter->error(lambda->location, "`for` overload must be a macro. To make it a macro put #macro before the body.");
+						return;
+					}
+
+					if (lambda->parameters.count != 1) {
+						parser->reporter->error(lambda->location, "`for` overload must have exactly one parameter.");
+						return;
+					}
+
+					if (lambda->has_pack) {
+						parser->reporter->error(lambda->location, "`for` overload can not have a pack.");
+						return;
+					}
+
+					Operator->lambda = lambda;
+
+					auto definition = AstDefinition::create();
+					definition->expression = lambda;
+					definition->is_constant = true;
+					definition->location = Operator->location;
+					definition->name = "operator for"str;
+
+					Operator->definition = definition;
+
+					lambda->definition = definition;
+
+					for_overloads.add({.lambda = lambda, .definition = Operator});
+
+					result = Operator;
 					return;
 				}
 				default: {
@@ -4235,8 +4308,7 @@ struct TypecheckState {
 	AstWhile *current_loop = 0;
 
 	struct TemplateCall {
-		AstCall *call;
-		AstLambda *template_lambda;
+		String call_location, template_lambda_location;
 		AstLambda *hardened_lambda;
 	};
 
@@ -4492,6 +4564,26 @@ void ensure_definition_is_resolved(TypecheckState *state, AstIdentifier *identif
 			yield(TypecheckResult::fail);
 		}
 	}
+}
+
+struct Overload;
+
+AstLambda *instantiate_head(TypecheckState *state, Reporter *reporter, Overload &overload, Span<NamedArgument> unsorted_arguments, AstLambda *lambda, String call_location, bool *success);
+void instantiate_body(TypecheckState *state, AstLambda *hardened_lambda);
+
+struct StringizePolyTypes {
+	AstLambda *lambda;
+};
+
+umm append(StringBuilder &builder, StringizePolyTypes s) {
+	// NOTE: statements are ordered, but definitions are not.
+	umm result = 0;
+	for (auto statement : s.lambda->constant_scope->statement_list) {
+		assert(statement->kind == Ast_Definition);
+		auto definition = (AstDefinition *)statement;
+		result += append_format(builder, "\n                                {} = {}", definition->name, direct(definition->expression));
+	}
+	return result;
 }
 
 s64 get_size(TypecheckState *state, AstExpression *type);
@@ -5032,32 +5124,15 @@ bool do_all_paths_explicitly_return(AstLambda *lambda) {
 
 void typecheck(TypecheckState *state, CExpression auto &expression);
 
-AstStatement           *deep_copy(AstStatement           *);
-AstDefinition          *deep_copy(AstDefinition          *);
-AstDefer               *deep_copy(AstDefer               *);
-AstAssert              *deep_copy(AstAssert              *);
-AstBlock               *deep_copy(AstBlock               *);
-AstExpressionStatement *deep_copy(AstExpressionStatement *);
-AstIf                  *deep_copy(AstIf                  *);
-AstOperatorDefinition  *deep_copy(AstOperatorDefinition  *);
-AstParse               *deep_copy(AstParse               *);
-AstPrint               *deep_copy(AstPrint               *);
-AstReturn              *deep_copy(AstReturn              *);
-AstWhile               *deep_copy(AstWhile               *);
-AstFor                 *deep_copy(AstFor                 *);
-AstUsing               *deep_copy(AstUsing               *);
-AstExpression     *deep_copy(AstExpression     *);
-AstIdentifier     *deep_copy(AstIdentifier     *);
-AstCall           *deep_copy(AstCall           *);
-AstLiteral        *deep_copy(AstLiteral        *);
-AstLambda         *deep_copy(AstLambda         *);
-AstBinaryOperator *deep_copy(AstBinaryOperator *);
-AstUnaryOperator  *deep_copy(AstUnaryOperator  *);
-AstStruct         *deep_copy(AstStruct         *);
-AstSubscript      *deep_copy(AstSubscript      *);
-AstArray          *deep_copy(AstArray          *);
-AstTest           *deep_copy(AstTest           *);
-AstSpan           *deep_copy(AstSpan           *);
+
+AstStatement *deep_copy(AstStatement *);
+AstExpression *deep_copy(AstExpression *);
+
+// NOTE: kk stands for keep kind
+
+#define e(name) Ast##name *deep_copy_kk(Ast##name *);
+ENUMERATE_AST_KIND
+#undef e
 
 struct CastType {
 	AstStruct *from;
@@ -5146,7 +5221,7 @@ AstLiteral *find_enum_value(TypecheckState *state, AstEnum *Enum, KeyString name
 	ident->name = Enum->definition->name;
 	ident->possible_definitions.set(Enum->definition);
 
-	auto result = deep_copy(evaluate(state, member->expression));
+	auto result = deep_copy_kk(evaluate(state, member->expression));
 	result->type = ident;
 	result->location = location;
 	return result;
@@ -6329,36 +6404,18 @@ AstExpression *deep_copy(AstExpression *expression) {
 	if (!expression)
 		return 0;
 	switch (expression->kind) {
-		case Ast_Identifier    : return deep_copy((AstIdentifier     *)expression);
-		case Ast_Call          : return deep_copy((AstCall           *)expression);
-		case Ast_Literal       : return deep_copy((AstLiteral        *)expression);
-		case Ast_Lambda        : return deep_copy((AstLambda         *)expression);
-		case Ast_BinaryOperator: return deep_copy((AstBinaryOperator *)expression);
-		case Ast_UnaryOperator : return deep_copy((AstUnaryOperator  *)expression);
-		case Ast_Struct        : return deep_copy((AstStruct         *)expression);
-		case Ast_Subscript     : return deep_copy((AstSubscript      *)expression);
-		case Ast_Array         : return deep_copy((AstArray          *)expression);
-		case Ast_If            : return deep_copy((AstIf             *)expression);
-		case Ast_Test          : return deep_copy((AstTest           *)expression);
-		case Ast_Span          : return deep_copy((AstSpan           *)expression);
-		case Ast_Block         : return deep_copy((AstBlock          *)expression);
+#define e(name) case Ast_##name: return deep_copy_kk((Ast##name *)expression);
+ENUMERATE_EXPRESSION_KIND
+#undef e
 		default: invalid_code_path();
 	}
 }
 AstStatement *deep_copy(AstStatement *statement) {
 	assert(statement);
 	switch (statement->kind) {
-		case Ast_Definition:          return deep_copy((AstDefinition          *)statement);
-		case Ast_Defer:               return deep_copy((AstDefer               *)statement);
-		case Ast_Assert:              return deep_copy((AstAssert              *)statement);
-		case Ast_ExpressionStatement: return deep_copy((AstExpressionStatement *)statement);
-		case Ast_OperatorDefinition:  return deep_copy((AstOperatorDefinition  *)statement);
-		case Ast_Parse:               return deep_copy((AstParse               *)statement);
-		case Ast_Print:               return deep_copy((AstPrint               *)statement);
-		case Ast_Return:              return deep_copy((AstReturn              *)statement);
-		case Ast_While:               return deep_copy((AstWhile               *)statement);
-		case Ast_For:                 return deep_copy((AstFor                 *)statement);
-		case Ast_Using:               return deep_copy((AstUsing               *)statement);
+#define e(name) case Ast_##name: return deep_copy_kk((Ast##name *)statement);
+ENUMERATE_STATEMENT_KIND
+#undef e
 		default: invalid_code_path();
 	}
 }
@@ -6377,7 +6434,7 @@ T *shallow_copy(T *node) {
 	return _new;
 }
 
-AstDefinition *deep_copy(AstDefinition *s) {
+AstDefinition *deep_copy_kk(AstDefinition *s) {
 	auto d = copy_statement(s);
 	d->is_poly = s->is_poly;
 	d->is_constant = s->is_constant;
@@ -6385,7 +6442,7 @@ AstDefinition *deep_copy(AstDefinition *s) {
 	d->name = s->name;
 	d->placed_at = s->placed_at;
 	d->expression = deep_copy(s->expression);
-	d->evaluated = deep_copy(raw(s->evaluated));
+	d->evaluated = deep_copy_kk(raw(s->evaluated));
 	d->offset = s->offset;
 	d->has_using = s->has_using;
 
@@ -6401,76 +6458,87 @@ AstDefinition *deep_copy(AstDefinition *s) {
 
 	return d;
 }
-AstDefer *deep_copy(AstDefer *s) {
+AstDefer *deep_copy_kk(AstDefer *s) {
 	auto d = copy_statement(s);
 	deep_copy(d->scope, s->scope);
 	return d;
 }
-AstAssert *deep_copy(AstAssert *s) {
+AstAssert *deep_copy_kk(AstAssert *s) {
 	auto d = shallow_copy(s);
 	d->condition = deep_copy(s->condition);
 	return d;
 }
-AstBlock *deep_copy(AstBlock *s) {
+AstBlock *deep_copy_kk(AstBlock *s) {
 	auto d = copy_statement(s);
 	deep_copy(d->scope, s->scope);
 	return d;
 }
-AstExpressionStatement *deep_copy(AstExpressionStatement *s) {
+AstExpressionStatement *deep_copy_kk(AstExpressionStatement *s) {
 	auto d = copy_statement(s);
 	d->expression = deep_copy(s->expression);
 	return d;
 }
-AstIf *deep_copy(AstIf *s) {
+AstIf *deep_copy_kk(AstIf *s) {
 	auto d = copy_statement(s);
 	d->is_constant = s->is_constant;
 	d->condition = deep_copy(s->condition);
-	d->true_block = deep_copy(raw(s->true_block));
-	d->false_block = deep_copy(raw(s->false_block));
+	d->true_block = deep_copy_kk(raw(s->true_block));
+	d->false_block = deep_copy_kk(raw(s->false_block));
 	return d;
 }
-AstOperatorDefinition *deep_copy(AstOperatorDefinition *s) {
+AstOperatorDefinition *deep_copy_kk(AstOperatorDefinition *s) {
 	auto d = copy_statement(s);
 	d->is_implicit = s->is_implicit;
 	d->operation = s->operation;
-	d->lambda = deep_copy(raw(s->lambda));
+	d->lambda = deep_copy_kk(raw(s->lambda));
 	return d;
 }
-AstParse *deep_copy(AstParse *s) {
+AstParse *deep_copy_kk(AstParse *s) {
 	auto d = copy_statement(s);
 	d->expression = deep_copy(s->expression);
 	return d;
 }
-AstPrint *deep_copy(AstPrint *s) {
+AstPrint *deep_copy_kk(AstPrint *s) {
 	auto d = copy_statement(s);
 	d->expression = deep_copy(s->expression);
 	return d;
 }
-AstReturn *deep_copy(AstReturn *s) {
+AstReturn *deep_copy_kk(AstReturn *s) {
 	auto d = copy_statement(s);
 	d->expression = deep_copy(s->expression);
 	return d;
 }
-AstWhile *deep_copy(AstWhile *s) {
+AstWhile *deep_copy_kk(AstWhile *s) {
 	auto d = copy_statement(s);
 	d->condition = deep_copy(s->condition);
 	deep_copy(d->scope, s->scope);
 	return d;
 }
-AstFor *deep_copy(AstFor *s) {
+AstFor *deep_copy_kk(AstFor *s) {
 	auto d = copy_statement(s);
 	d->range = deep_copy(s->range);
 	d->iterator_name = s->iterator_name;
+	d->by_pointer = s->by_pointer;
 	deep_copy(d->scope, s->scope);
 	return d;
 }
-AstUsing *deep_copy(AstUsing *s) {
+AstUsing *deep_copy_kk(AstUsing *s) {
 	auto d = copy_statement(s);
 	d->expression = deep_copy(s->expression);
 	return d;
 }
+AstLoopControl *deep_copy_kk(AstLoopControl *s) {
+	auto d = copy_statement(s);
+	d->control = s->control;
+	return d;
+}
+AstEmptyStatement *deep_copy_kk(AstEmptyStatement *s) {
+	// NOTE: Empty statement is never modified.
+	return empty_statement;
+}
+AstYield *deep_copy_kk(AstYield *s) { not_implemented(); }
 
-AstIdentifier *deep_copy(AstIdentifier *s) {
+AstIdentifier *deep_copy_kk(AstIdentifier *s) {
 	if (!s) return 0;
 	auto d = copy_expression(s);
 	d->name = s->name;
@@ -6486,7 +6554,7 @@ AstIdentifier *deep_copy(AstIdentifier *s) {
 
 	return d;
 }
-AstCall *deep_copy(AstCall *s) {
+AstCall *deep_copy_kk(AstCall *s) {
 	if (!s) return 0;
 	auto d = copy_expression(s);
 	d->callable = deep_copy(s->callable);
@@ -6495,7 +6563,7 @@ AstCall *deep_copy(AstCall *s) {
 	}
 	return d;
 }
-AstLiteral *deep_copy(AstLiteral *s) {
+AstLiteral *deep_copy_kk(AstLiteral *s) {
 	if (!s) return 0;
 
 	auto d = copy_expression_keep_type(s);
@@ -6509,7 +6577,7 @@ AstLiteral *deep_copy(AstLiteral *s) {
 		case type:      d->type_value = deep_copy(s->type_value); break;
 		case string:	d->string.set(s->string.get()); break;
 		case Struct:
-			d->struct_values = map(s->struct_values, [&] (auto m) { return deep_copy(m); });
+			d->struct_values = map(s->struct_values, [&] (auto m) { return deep_copy_kk(m); });
 
 			// FIXME: i don't like this
 			if (current_typecheck_state)
@@ -6522,8 +6590,9 @@ AstLiteral *deep_copy(AstLiteral *s) {
 	}
 	return d;
 }
-AstLambda *deep_copy(AstLambda *s) { not_implemented(); }
-AstBinaryOperator *deep_copy(AstBinaryOperator *s) {
+AstLambda *deep_copy_kk(AstLambda *s) { not_implemented(); }
+AstLambdaType *deep_copy_kk(AstLambdaType *s) { not_implemented(); }
+AstBinaryOperator *deep_copy_kk(AstBinaryOperator *s) {
 	if (!s) return 0;
 	auto d = copy_expression(s);
 	d->left  = deep_copy(s->left );
@@ -6531,14 +6600,14 @@ AstBinaryOperator *deep_copy(AstBinaryOperator *s) {
 	d->operation = s->operation;
 	return d;
 }
-AstUnaryOperator *deep_copy(AstUnaryOperator *s) {
+AstUnaryOperator *deep_copy_kk(AstUnaryOperator *s) {
 	if (!s) return 0;
 	auto d = copy_expression(s);
 	d->expression = deep_copy(s->expression);
 	d->operation = s->operation;
 	return d;
 }
-AstStruct *deep_copy(AstStruct *s) {
+AstStruct *deep_copy_kk(AstStruct *s) {
 	auto d = copy_expression(s);
 
 	deep_copy(d->parameter_scope, s->parameter_scope);
@@ -6554,7 +6623,7 @@ AstStruct *deep_copy(AstStruct *s) {
 		}
 		m->container_node = s;
 	}
-	d->default_value = deep_copy(raw(s->default_value));
+	d->default_value = deep_copy_kk(raw(s->default_value));
 
 	d->alignment = s->alignment;
 	d->size = s->size;
@@ -6564,14 +6633,14 @@ AstStruct *deep_copy(AstStruct *s) {
 	d->layout = s->layout;
 	return d;
 }
-AstSubscript *deep_copy(AstSubscript *s) {
+AstSubscript *deep_copy_kk(AstSubscript *s) {
 	if (!s) return 0;
 	auto d = copy_expression(s);
 	d->expression       = deep_copy(s->expression      );
 	d->index_expression = deep_copy(s->index_expression);
 	return d;
 }
-AstArray *deep_copy(AstArray *s) {
+AstArray *deep_copy_kk(AstArray *s) {
 	if (!s) return 0;
 	auto d = copy_expression(s);
 	d->element_type     = deep_copy(s->element_type    );
@@ -6579,16 +6648,27 @@ AstArray *deep_copy(AstArray *s) {
 	d->count = s->count;
 	return d;
 }
-AstTest *deep_copy(AstTest *s) {
+AstTest *deep_copy_kk(AstTest *s) {
 	auto d = copy_expression(s);
 	deep_copy(d->scope, s->scope);
 	return d;
 }
-AstSpan *deep_copy(AstSpan *s) {
+AstSpan *deep_copy_kk(AstSpan *s) {
 	auto d = copy_expression(s);
 	d->expression = deep_copy(s->expression);
 	return d;
 }
+AstForMarker *deep_copy_kk(AstForMarker *s) {
+	auto d = copy_expression(s);
+	d->expression = deep_copy(s->expression);
+	d->marker = s->marker;
+	return d;
+}
+AstTuple *deep_copy_kk(AstTuple *s) { not_implemented(); }
+AstArrayInitializer *deep_copy_kk(AstArrayInitializer *s) { not_implemented(); }
+AstEnum *deep_copy_kk(AstEnum *s) { not_implemented(); }
+AstMatch *deep_copy_kk(AstMatch *s) { not_implemented(); }
+AstDistinct *deep_copy_kk(AstDistinct *s) { not_implemented(); }
 
 void set_local_offset(TypecheckState *state, AstDefinition *definition, AstLambda *lambda) {
 	assert((lambda->locals_size & 0xf) == 0);
@@ -6712,7 +6792,7 @@ void append_literal(StringBuilder &builder, AstLiteral *value) {
 AstExpression *get_not_instantiated_template(AstExpression *type) {
 	AstExpression *result = 0;
 	visit(type, Combine{
-		[&](AstNode *) {},
+		[&](auto) {},
 		[&](AstIdentifier *Identifier) {
 			if (result)
 				return;
@@ -6753,7 +6833,7 @@ bool has_template(AstExpression *type) {
 	bool result = false;
 
 	visit(type, Combine{
-		[&](AstNode *) {},
+		[&](auto) {},
 		[&](AstIdentifier *Identifier) {
 			if (auto Struct = direct_as<AstStruct>(Identifier)) {
 				result |= Struct->is_template;
@@ -6881,7 +6961,7 @@ void typecheck_definition(TypecheckState *state, AstDefinition *definition, Type
 		ensure_template_is_instantiated(state, definition->type);
 
 		//visit(definition->expression, Combine{
-		//	[&](AstNode *) {},
+		//  [&](auto) {},
 		//	[&](AstIdentifier *Identifier) {
 		//		if (result)
 		//			return;
@@ -6988,6 +7068,783 @@ void typecheck_definition(TypecheckState *state, AstDefinition *definition, Type
 		state->current_scope->usings.add({0, definition});
 }
 
+struct Overload {
+	AstExpression *type = {};
+	AstDefinition *definition = {};
+	List<NamedArgument> unsorted_arguments;
+
+	Reporter reporter;
+	bool success = false;
+	AstLambda *lambda = 0;
+	AstLambda *instantiated_lambda = 0;
+	int distance = 0;
+
+	// Outer list corresponds to lambda parameters.
+	// Inner list corresponds to a parameter pack.
+	// For example:
+	//     foo :: (a: Int, b: ..String, c: Float)
+	//     foo(1, "hello", "world", 2)
+	//     sorted_arguments = [1, ["hello", "world"], 2]
+	List<List<AstExpression *>> sorted_arguments_lambda;
+
+	// Structs can't have packs, so theres no need in inner list.
+	List<AstExpression *> sorted_arguments_struct;
+
+	AstStruct *Struct = 0;
+	AstExpression *callable = {};
+
+	AstDistinct *Distinct = 0;
+};
+
+bool try_match_overload_lambda(TypecheckState *state, Reporter &reporter, String call_location, AstLambdaType *lambda_type, Overload &overload) {
+	auto lambda = lambda_type->lambda;
+
+
+	// Lambda                          | Call                 | Sorted argument list
+	// --------------------------------+----------------------+---------------------
+	// foo :: (a: Int, b: Int, c: int) | foo(b=1, a=2, 3)     | foo(2, 1, 3)
+	//                                 | 1.foo(c=2, 3)        | foo(1, 3, 2)
+
+	auto &unsorted_arguments = overload.unsorted_arguments;
+
+	auto &sorted_arguments = overload.sorted_arguments_lambda;
+	sorted_arguments.resize(lambda->parameters.count);
+
+	overload.distance += lambda->has_pack; // If we have 2 matches, one with a pack and other without, select the one without.
+
+	if (lambda->is_poly) {
+		bool success;
+		{
+			state->template_call_stack.add({
+				.call_location = call_location,
+				.template_lambda_location = lambda->location
+			});
+			defer { state->template_call_stack.pop(); };
+			overload.instantiated_lambda = instantiate_head(state, &reporter, overload, unsorted_arguments, lambda, call_location, &success);
+		}
+		if (!success)
+			return false;
+
+		assert(!as<AstLambdaType>(overload.instantiated_lambda->type)->lambda->is_poly);
+
+		overload.lambda = lambda;
+	} else {
+		wait_for(
+			state, lambda->location, "typechecked head",
+			[&] { return lambda->finished_typechecking_head; },
+			[&] {
+				state->reporter.error(lambda->location, "Lambda's head couldn't finish typechecking");
+				state->reporter.info(call_location, "Waited here:");
+			}
+		);
+
+		// Assign named arguments to corresponding parameters
+
+		List<AstExpression *> remaining_arguments;
+
+		for (auto &argument : unsorted_arguments) {
+			if (argument.name.is_empty()) {
+				remaining_arguments.add(argument.expression);
+				continue;
+			}
+
+			auto found_parameter = find_if(lambda->parameters, [&](AstDefinition *parameter) { return parameter->name == argument.name; });
+			if (!found_parameter) {
+				reporter.error(call_location, "Lambda does not take argument named '{}'.", argument.name);
+				return false;
+			}
+
+			auto parameter_index = index_of(lambda->parameters, found_parameter);
+
+			if (sorted_arguments[parameter_index].count) {
+				reporter.error(argument.expression->location, "Argument '{}' was already assigned.", argument.name);
+				return false;
+			}
+
+
+			if (!implicitly_cast(state, &reporter, &argument.expression, lambda->parameters[parameter_index]->type, 0, false)) {
+				return false;
+			}
+
+			sorted_arguments[parameter_index].set(argument.expression);
+		}
+
+
+		// Now that named arguments are assigned, assign unnamed arguments
+		{
+			umm parameter_index = 0;
+
+			while (parameter_index < sorted_arguments.count && sorted_arguments[parameter_index].count)
+				++parameter_index;
+
+			// Returns
+			//     true if there is an unassigned parameter
+			//     false if there is no parameters remaining
+			auto next_unassigned_parameter = [&] {
+				while (1) {
+					++parameter_index;
+					if (parameter_index >= sorted_arguments.count)
+						return false;
+
+					if (sorted_arguments[parameter_index].count == 0)
+						return true;
+				}
+			};
+
+			for (auto &argument : remaining_arguments) {
+				auto distance = TypeDistance::exact;
+				defer {
+					overload.distance += argument_distance({.type_distance = distance, .const_distance = true});
+				};
+
+			retry_argument:
+				if (parameter_index >= sorted_arguments.count) {
+					reporter.error(call_location, "Too many arguments.");
+					return false;
+				}
+
+				auto parameter = lambda->parameters[parameter_index];
+
+				if (parameter->is_pack) {
+					auto param_subtype = get_span_subtype(parameter->type);
+					assert(param_subtype);
+
+					if (auto arg_subtype = get_span_subtype(argument->type)) {
+						if (types_match(arg_subtype, param_subtype)) {
+							// Pass the span to the pack
+							sorted_arguments[parameter_index].add(argument);
+							next_unassigned_parameter();
+							continue;
+						}
+					} else {
+						if (implicitly_cast(state, &reporter, &argument, param_subtype, &distance, false)) {
+							sorted_arguments[parameter_index].add(argument);
+							continue;
+						} else {
+							next_unassigned_parameter();
+							goto retry_argument;
+						}
+					}
+				} else {
+					if (!implicitly_cast(state, &reporter, &argument, parameter->type, &distance, false)) {
+						return false;
+					}
+
+					assert(sorted_arguments[parameter_index].count == 0);
+					sorted_arguments[parameter_index].set(argument);
+
+				}
+
+				next_unassigned_parameter();
+			}
+		}
+
+
+		// Assign default values to everything that is left over.
+		for (umm i = 0; i != sorted_arguments.count; ++i) {
+			auto &args = sorted_arguments[i];
+			auto param = lambda->parameters[i];
+
+			if (param->expression && args.count == 0) {
+
+				// Put the value for default argument in constant section once, then reference it.
+
+				AstIdentifier *default_value_ident = 0;
+
+				if (auto found = lambda->parameter_to_default_value.find(param)) {
+					default_value_ident = found->value;
+				} else {
+					auto default_value_def = AstDefinition::create();
+					default_value_def->is_constant = true;
+					default_value_def->location = param->location;
+					default_value_def->expression = param->expression;
+					default_value_def->parsed_type = param->type;
+					compiler->global_scope.add(default_value_def);
+
+					{
+						scoped_replace(state->current_scope, &compiler->global_scope);
+						scoped_replace(state->container_node, 0);
+						typecheck(state, default_value_def);
+					}
+
+					default_value_ident = AstIdentifier::create();
+					default_value_ident->possible_definitions.set(default_value_def);
+					default_value_ident->location = param->location;
+					default_value_ident->type = default_value_def->type;
+
+					lambda->parameter_to_default_value.get_or_insert(param) = default_value_ident;
+				}
+
+				args.add(deep_copy(default_value_ident));
+			}
+		}
+
+		// Ensure every parameter has a matching argument
+		for (umm i = 0; i != sorted_arguments.count; ++i) {
+			auto args = sorted_arguments[i];
+			auto param = lambda->parameters[i];
+
+			if (args.count == 0 && !param->is_pack && !param->expression) {
+				reporter.error(call_location, "Not enough arguments. Value for {} was not provided", param->name);
+				return false;
+			}
+		}
+
+		overload.lambda = lambda;
+	}
+	return true;
+}
+bool try_match_overload_struct(TypecheckState *state, Reporter &reporter, AstCall *call, AstStruct *Struct, Overload &overload) {
+	wait_for(
+		state, Struct->location, "typechecked struct",
+		[&] {
+			if (!Struct->type)
+				return false;
+			for (auto &member : Struct->data_members) {
+				if (!member->type)
+					return false;
+			}
+			return true;
+		},
+		[&] {
+			state->reporter.error(Struct->location, "Struct couldn't finish typechecking");
+			state->reporter.info(call->location, "Waited here:");
+		}
+	);
+
+	if (Struct->is_template) {
+
+		if (call->unsorted_arguments.count > Struct->parameter_scope->statement_list.count) {
+			reporter.error(call->location, "Too many parameters. Expected {}, got {}", Struct->parameter_scope->statement_list.count, call->unsorted_arguments.count);
+			return false;
+		}
+
+		List<NamedArgument> named_arguments;
+		List<AstExpression *> unnamed_arguments;
+		for (auto arg : call->unsorted_arguments) {
+			if (arg.name.is_empty()) {
+				unnamed_arguments.add(arg.expression);
+			} else {
+				for (auto other : named_arguments) {
+					if (other.name == arg.name) {
+						state->reporter.error(arg.expression->location, "Using the same parameter twice is not allowed.");
+						state->reporter.info(other.expression->location, "Here is the first one.");
+						yield(TypecheckResult::fail);
+					}
+				}
+				named_arguments.add(arg);
+			}
+		}
+
+		List<AstExpression *> arguments;
+		arguments.resize(Struct->parameter_scope->statement_list.count);
+
+		for (auto arg : named_arguments) {
+			auto parameter = find_if(Struct->parameter_scope->statement_list, [&](auto parameter){ return arg.name == ((AstDefinition *)parameter)->name;});
+			assert(parameter);
+			arguments[index_of(Struct->parameter_scope->statement_list, parameter)] = arg.expression;
+		}
+
+		for (auto arg : unnamed_arguments) {
+			*find(arguments, (AstExpression *)nullptr) = arg;
+		}
+
+		overload.sorted_arguments_struct = arguments;
+
+		if (arguments.count != Struct->parameter_scope->statement_list.count) {
+			reporter.error(call->location, "Argument count does not match. Expected {}, got {}", Struct->parameter_scope->statement_list.count, arguments.count);
+			return false;
+		}
+
+		for (umm i = 0; i < arguments.count; ++i) {
+			auto &argument = arguments[i];
+			if (argument) {
+				auto &parameter = (AstDefinition *&)Struct->parameter_scope->statement_list[i];
+
+				if (!implicitly_cast(state, &reporter, &argument, parameter->type, 0, false)) {
+					return false;
+				}
+			}
+		}
+
+		overload.Struct = Struct;
+	} else {
+		if (call->unsorted_arguments.count > Struct->data_members.count) {
+			reporter.error(call->location, "Too many arguments. Expected {}, got {}", Struct->data_members.count, call->unsorted_arguments.count);
+			return false;
+		}
+
+		List<NamedArgument> named_arguments;
+		List<AstExpression *> unnamed_arguments;
+		for (auto arg : call->unsorted_arguments) {
+			if (arg.name.is_empty()) {
+				unnamed_arguments.add(arg.expression);
+			} else {
+				for (auto other : named_arguments) {
+					if (other.name == arg.name) {
+						state->reporter.error(arg.expression->location, "Using the same parameter twice is not allowed.");
+						state->reporter.info(other.expression->location, "Here is the first one.");
+						yield(TypecheckResult::fail);
+					}
+				}
+				named_arguments.add(arg);
+			}
+		}
+
+		List<AstExpression *> arguments;
+		arguments.resize(Struct->data_members.count);
+
+		for (auto arg : named_arguments) {
+			auto member = find_if(Struct->data_members, [&](auto member){return arg.name == ((AstDefinition *)member)->name;});
+			if (!member) {
+				return false;
+			}
+			arguments[index_of(Struct->data_members, member)] = arg.expression;
+		}
+
+		for (auto arg : unnamed_arguments) {
+			*find(arguments, (AstExpression *)nullptr) = arg;
+		}
+
+		overload.sorted_arguments_struct = arguments;
+
+		if (arguments.count != Struct->data_members.count) {
+			reporter.error(call->location, "Argument count does not match. Expected {}, got {}", Struct->data_members.count, arguments.count);
+			return false;
+		}
+
+		for (umm i = 0; i < arguments.count; ++i) {
+			auto &argument = arguments[i];
+			if (argument) {
+				auto &member = (AstDefinition *&)Struct->data_members[i];
+
+				if (!implicitly_cast(state, &reporter, &argument, member->type, 0, false)) {
+					return false;
+				}
+			}
+		}
+
+		overload.Struct = Struct;
+	}
+	return true;
+}
+bool try_match_overload_distinct(TypecheckState *state, Reporter &reporter, AstCall *call, AstDistinct *Distinct, Overload &overload) {
+	if (call->unsorted_arguments.count == 0) {
+		not_implemented("Default initialized for distinct type");
+	}
+	if (call->unsorted_arguments.count != 1) {
+		reporter.error(call->location, "Distinct type initializer can not have more than one argument.");
+		return false;
+	}
+
+	if (!implicitly_cast(state, &reporter, &call->unsorted_arguments[0].expression, Distinct->expression, 0, false)) {
+		return false;
+	}
+
+	overload.Distinct = Distinct;
+
+	call->sorted_arguments.set(call->unsorted_arguments[0].expression);
+
+	return true;
+}
+
+bool try_match_overload(TypecheckState *state, Reporter &reporter, AstCall *call, AstExpression *overload_type, Overload &overload) {
+	switch (overload_type->kind)  {
+		case Ast_LambdaType: return try_match_overload_lambda  (state, reporter, call->location, (AstLambdaType *)overload_type, overload);
+		case Ast_Struct:     return try_match_overload_struct  (state, reporter, call, (AstStruct     *)overload_type, overload);
+		case Ast_Distinct:   return try_match_overload_distinct(state, reporter, call, (AstDistinct   *)overload_type, overload);
+		default: invalid_code_path("unable to match overload: unknown kind");
+	}
+}
+
+AstExpression *apply_overload_lambda(TypecheckState *state, AstCall *call, Overload &match)  {
+	if (match.lambda->is_poly) {
+		match.lambda = match.instantiated_lambda;
+		auto lambda = match.lambda;
+		{
+			assert(match.instantiated_lambda);
+			state->template_call_stack.add({
+				.call_location = call->location,
+				.template_lambda_location = match.lambda->location,
+				.hardened_lambda = match.instantiated_lambda
+			});
+			defer { state->template_call_stack.pop(); };
+
+			for (u32 i = 0; i < match.sorted_arguments_lambda.count; ++i) {
+				auto &argument = match.sorted_arguments_lambda[i];
+				auto &parameter = lambda->parameters[i];
+
+				if (parameter->is_constant) {
+					if (!implicitly_cast(state, &state->reporter, &parameter->expression, parameter->type)) {
+						state->reporter.error(parameter->location, "INTERNAL ERROR: implicit cast did not succeed the second time for constant parameter.");
+						state->reporter.info(argument[0]->location, "Argument is here:");
+						yield(TypecheckResult::fail);
+					}
+				}
+			}
+
+			instantiate_body(state, match.instantiated_lambda);
+		}
+		assert(match.instantiated_lambda->definition); // TODO: deal with unnamed poly lambdas
+
+		AstIdentifier *ident = 0;
+
+		if (call->callable->kind == Ast_Identifier) {
+			ident = (AstIdentifier *)call->callable;
+		} else if (auto binop = as<AstBinaryOperator>(call->callable)) {
+			assert(binop->operation == BinaryOperation::dot);
+			assert(binop->right->kind == Ast_Identifier);
+			call->callable = ident = (AstIdentifier *)binop->right;
+		} else {
+			// NOTE: if callable is not an identifier, it can only be immediately invoked lambda, right?
+			assert(call->callable->kind == Ast_Lambda);
+
+			ident = AstIdentifier::create();
+			ident->name = match.instantiated_lambda->definition->name;
+			ident->location = call->callable->location;
+			call->callable = ident;
+		}
+
+		ident->possible_definitions.set(match.instantiated_lambda->definition);
+		ident->type = match.instantiated_lambda->type;
+	}
+
+	auto lambda = match.lambda;
+
+
+	// Set call->sorted_arguments
+	if (lambda->has_pack) {
+		call->sorted_arguments.resize(match.sorted_arguments_lambda.count);
+		for (umm i = 0; i < match.sorted_arguments_lambda.count; ++i) {
+			auto &pack = match.sorted_arguments_lambda[i];
+			auto &parameter = match.lambda->parameters[i];
+
+			if (parameter->is_pack) {
+				auto elem_type = get_span_subtype(parameter->type);
+				assert(elem_type);
+
+				// NOTE: Allow passing spans to packs as-is.
+				if (pack.count == 1) {
+					auto expr = pack[0];
+
+					if (get_span_subtype(expr->type)) {
+						call->sorted_arguments[i] = pack[0];
+						continue;
+					}
+				}
+
+				for (auto &elem : pack) {
+					make_concrete(state, &elem);
+					if (!implicitly_cast(state, &state->reporter, &elem, elem_type, 0)) {
+						state->reporter.error(elem->location, "INTERNAL ERROR: implicit cast did not succeed the second time for pack.");
+						yield(TypecheckResult::fail);
+					}
+				}
+
+				auto array = AstArrayInitializer::create();
+				array->elements = (decltype(array->elements))pack;
+				if (array->elements.count)
+					array->location = {array->elements.front()->location.begin(), array->elements.back()->location.end()};
+
+				auto type = AstArray::create();
+				type->element_type = elem_type;
+				type->count = (u64)array->elements.count;
+				// Cleanup: Is this needed?
+				type->count_expression = make_integer(type->count);
+				type->location = array->location;
+				type->type = compiler->builtin_type.ident;
+
+				array->type = type;
+				call->sorted_arguments[i] = array;
+			} else {
+				assert(pack.count == 1);
+				call->sorted_arguments[i] = pack[0];
+			}
+		}
+	} else {
+		call->sorted_arguments.reserve(match.sorted_arguments_lambda.count);
+		for (umm i = 0; i < match.sorted_arguments_lambda.count; ++i) {
+			auto param = match.lambda->parameters[i];
+			auto &args = match.sorted_arguments_lambda[i];
+
+			assert(args.count == 1);
+			if (param->is_constant) {
+				call->sorted_arguments.add(0);
+			} else {
+				make_concrete(state, &args.data[0]);
+				call->sorted_arguments.add(args.data[0]);
+			}
+		}
+	}
+
+
+	assert(call->sorted_arguments.count == lambda->parameters.count);
+
+	for (u32 i = 0; i < call->sorted_arguments.count; ++i) {
+		auto &argument = call->sorted_arguments[i];
+		auto &parameter = lambda->parameters[i];
+
+		assert(!parameter->is_poly);
+		if (argument) {
+			if (!implicitly_cast(state, &state->reporter, &argument, parameter->type, 0)) {
+				state->reporter.error(argument->location, "INTERNAL ERROR: implicit cast did not succeed the second time.");
+				yield(TypecheckResult::fail);
+			}
+		}
+	}
+
+	//if (lambda->is_member) {
+	//	assert(probably_this);
+	//	if (!is_type(probably_this)) {
+	//		auto pointer = make_address_of(&state->reporter, probably_this);
+	//		if (!pointer)
+	//			yield(TypecheckResult::fail);
+	//		call->sorted_arguments.insert_at(pointer, 0);
+	//	}
+	//}
+
+	// NOTE: not sure if this wait is necessary
+	wait_for(
+		state, lambda->location, "deduced return type",
+		[&] { return lambda->return_parameter; },
+		[&] {
+			// This message feels like noise
+			// state->reporter.error(lambda->location, "Could not deduce the return type.");
+			// state->reporter.info(call->location, "Called here:");
+		}
+	);
+
+	assert(lambda->return_parameter->container_node == lambda);
+	if (!lambda->return_parameter) {
+		state->reporter.error(call->location, "Lambda's return parameter is undefined. This is probably due to errors while hardening a poly.");
+		yield(TypecheckResult::fail);
+	}
+	call->type = lambda->return_parameter->type;
+
+	assert(lambda->type->kind == Ast_LambdaType);
+	call->lambda_type = (AstLambdaType *)lambda->type;
+	assert(call->lambda_type);
+
+
+	if (lambda->is_macro) {
+		auto inserted_block = AstBlock::create();
+		inserted_block->location = call->location;
+		inserted_block->scope->parent = state->current_scope;
+
+		for (umm i = 0; i < call->sorted_arguments.count; ++i) {
+			auto &arg = call->sorted_arguments[i];
+			auto &param = lambda->parameters[i];
+
+			auto def = AstDefinition::create();
+			def->container_node = state->container_node;
+			def->name = param->name;
+			def->expression = arg;
+			def->location = arg->location;
+			def->parent_scope = inserted_block->scope;
+
+			inserted_block->scope->add(raw(def));
+		}
+		auto copied_block = deep_copy(lambda->body);
+		copied_block->location = call->location;
+
+		inserted_block->scope->add(make_statement(copied_block));
+		for_each_top_scope(copied_block, [&](Scope *scope) {
+			scope->parent = inserted_block->scope;
+		});
+
+		visit(copied_block, Combine{
+			[&](auto) {},
+			[&](AstReturn *Return) {
+				if (auto Lambda = as<AstLambda>(state->container_node)) {
+					Return->lambda = Lambda;
+				} else {
+					state->reporter.error(copied_block->location, "There's return statement in macro expansion, but we are currently not in a lambda.");
+					yield(TypecheckResult::fail);
+				}
+			},
+		});
+
+		typecheck(state, inserted_block);
+
+		return inserted_block;
+	}
+
+	if (auto lambda_type = direct_as<AstLambdaType>(call->callable->type)) {
+		assert(!lambda_type->lambda->is_poly);
+	}
+
+	return call;
+}
+AstExpression *apply_overload_struct(TypecheckState *state, AstCall *call, Overload &match) {
+	call->sorted_arguments = (decltype(call->sorted_arguments))match.sorted_arguments_struct;
+
+	if (match.Struct->is_template) {
+		// Make sure arguments are constant
+		for (auto &argument : call->sorted_arguments) {
+			if (argument) {
+				if (!is_constant(argument)) {
+					state->reporter.error(argument->location, "Only constants can be here.");
+					yield(TypecheckResult::fail);
+				}
+			} else {
+				state->reporter.error(call->location, "Not enough template arguments.");
+				yield(TypecheckResult::fail);
+			}
+		}
+
+		// Search cached instantiations
+		for (auto instantiated : match.Struct->instantiations) {
+			assert(instantiated.arguments.count == call->sorted_arguments.count);
+			bool all_args_match = true;
+			for (umm i = 0; i < call->sorted_arguments.count; ++i) {
+				if (!types_match(instantiated.arguments[i], call->sorted_arguments[i])) {
+					all_args_match = false;
+					break;
+				}
+			}
+			if (all_args_match) {
+				return instantiated.ident;
+			}
+		}
+		// NOTE: We need to add this before typechecking the instantiated struct, so it can reference itself.
+		auto &instantiation = match.Struct->instantiations.add();
+		instantiation.arguments = call->sorted_arguments;
+
+
+		// Instantiate a struct with specified arguments
+
+		auto instantiated_struct = AstStruct::create();
+
+		instantiation.Struct = instantiated_struct;
+
+		instantiated_struct->instantiated_from = match.Struct;
+		instantiated_struct->is_template = false;
+		instantiated_struct->is_union = match.Struct->is_union;
+		instantiated_struct->layout = match.Struct->layout;
+		instantiated_struct->location = call->location;
+		instantiated_struct->parameter_scope->parent = match.Struct->parameter_scope->parent;
+		for (umm i = 0; i < call->sorted_arguments.count; ++i) {
+			auto &argument = call->sorted_arguments[i];
+			auto &template_parameter = match.Struct->parameter_scope->definition_list[i];
+			auto parameter = AstDefinition::create();
+			parameter->name = template_parameter->name;
+			parameter->location = template_parameter->location;
+			parameter->container_node = instantiated_struct;
+			parameter->expression = argument;
+			parameter->is_constant = true;
+			parameter->type = argument->type;
+			instantiated_struct->parameter_scope->add(raw(parameter));
+		}
+
+		for (umm i = 0; i < call->sorted_arguments.count; ++i) {
+			auto &argument = call->sorted_arguments[i];
+			auto &member = instantiated_struct->parameter_scope->definition_list[i];
+			if (argument) {
+				if (!implicitly_cast(state, &state->reporter, &argument, member->type, 0)) {
+					state->reporter.error(argument->location, "INTERNAL ERROR: implicit cast did not succeed the second time.");
+					yield(TypecheckResult::fail);
+				}
+			} else {
+				argument = state->make_null(member->type, call->location);
+			}
+		}
+
+		auto instantiated_struct_definition = AstDefinition::create();
+		instantiated_struct_definition->name = type_to_string(call);
+
+		assert(match.Struct->definition);
+		instantiated_struct_definition->container_node = match.Struct->definition->container_node;
+		instantiated_struct_definition->expression = instantiated_struct;
+		instantiated_struct_definition->is_constant = true;
+		instantiated_struct_definition->parent_scope = match.Struct->definition->parent_scope;
+		instantiated_struct_definition->type = compiler->builtin_type.ident;
+		instantiated_struct->definition = instantiated_struct_definition;
+
+		// Typecheck instantiated body.
+
+		deep_copy(instantiated_struct->member_scope, match.Struct->member_scope);
+
+		// NOTE: instantiation.ident must be set before calling typecheck on instantiated_struct
+		auto instantiated_struct_ident = AstIdentifier::create();
+
+		instantiation.ident = instantiated_struct_ident;
+
+		instantiated_struct_ident->location = instantiated_struct->location;
+		instantiated_struct_ident->possible_definitions.set(instantiated_struct_definition);
+		instantiated_struct_ident->type = instantiated_struct_definition->type;
+		instantiated_struct_ident->directed = instantiated_struct;
+		instantiated_struct_ident->name = call->location;
+
+		typecheck(state, instantiated_struct);
+
+		return instantiated_struct_ident;
+	} else {
+		for (umm i = 0; i < call->sorted_arguments.count; ++i) {
+			auto &argument = call->sorted_arguments[i];
+			auto &member = match.Struct->data_members[i];
+			if (argument) {
+				if (!implicitly_cast(state, &state->reporter, &argument, member->type, 0)) {
+					state->reporter.error(argument->location, "INTERNAL ERROR: implicit cast did not succeed the second time.");
+					yield(TypecheckResult::fail);
+				}
+			} else {
+				if (member->expression) {
+					argument = evaluate(state, member->expression);
+				} else {
+					if (auto member_struct = direct_as<AstStruct>(member->type); member_struct && member_struct->default_value) {
+						argument = deep_copy(raw(member_struct->default_value));
+					} else {
+						argument = state->make_null(member->type, call->location);
+					}
+				}
+			}
+		}
+		call->type = call->callable;
+		if (call->callable->kind == Ast_Identifier) {
+			auto ident = (AstIdentifier *)call->callable;
+			ident->possible_definitions.set(match.definition);
+		}
+
+		return call;
+	}
+}
+AstExpression *apply_overload_distinct(TypecheckState *state, AstCall *call, Overload &match) {
+	auto Distinct = match.Distinct;
+	if (!implicitly_cast(state, &state->reporter, &call->sorted_arguments[0], Distinct->expression)) {
+		state->reporter.error(call->sorted_arguments[0]->location, "INTERNAL ERROR: implicit cast did not succeed the second time (distinct).");
+		yield(TypecheckResult::fail);
+	}
+
+	auto result = call->sorted_arguments[0];
+	result->type = Distinct->identifier;
+	return result;
+}
+
+AstExpression *apply_overload(TypecheckState *state, AstCall *call, Overload &match) {
+
+	if (call->debug_overload) {
+		immediate_info(match.definition->location, "DEBUG: Selected");
+	}
+
+	call->callable = match.callable;
+
+	// NOTE: overloading is possible only with definitions, so match.definition must be set.
+	if (types_match(call->callable->type, compiler->builtin_overload_set)) {
+		call->callable->type = match.definition->type;
+
+		// Right now i don't see what other nodes could be here
+		assert(call->callable->kind == Ast_Identifier);
+		auto identifier = (AstIdentifier *)call->callable;
+		identifier->possible_definitions.set(match.definition);
+	}
+
+	if (match.lambda) return apply_overload_lambda(state, call, match);
+	if (match.Struct) return apply_overload_struct(state, call, match);
+	if (match.Distinct) return apply_overload_distinct(state, call, match);
+
+	invalid_code_path();
+}
+
 AstStatement *typecheck(TypecheckState *state, AstDefinition *definition) {
 	typecheck_definition(state, definition);
 	return definition;
@@ -7033,263 +7890,490 @@ AstStatement *typecheck(TypecheckState *state, AstWhile *While) {
 	return While;
 }
 AstStatement *typecheck(TypecheckState *state, AstFor *For) {
-	// FIXME: Copypasted 6 times? Not bad.
+	{
+		typecheck(state, For->range);
+		auto directed_struct = direct_through_distinct_as<AstStruct>(For->range->type);
 
-	typecheck(state, For->range);
-	auto directed_struct = direct_through_distinct_as<AstStruct>(For->range->type);
+		Reporter reporter;
 
-	Reporter reporter;
+		assert(state->container_node->kind == Ast_Lambda);
+		auto container_lambda = (AstLambda *)state->container_node;
 
-	assert(state->container_node->kind == Ast_Lambda);
-	auto lambda = (AstLambda *)state->container_node;
+		// FIXME: Copypasted 6 times? Not bad.
+		if (For->by_pointer) {
+			if (directed_struct && is_range(directed_struct)) {
+				state->reporter.error(For->range->location, "Ranges are not iterable by pointer, only by value.");
+				yield(TypecheckResult::fail);
+			} else if ((directed_struct && ::is_span(directed_struct)) || types_match(For->range->type, compiler->builtin_string)) {
+				auto replacement_block = AstBlock::create();
+				replacement_block->scope->parent = state->current_scope;
 
-	if (For->by_pointer) {
-		if (directed_struct && is_range(directed_struct)) {
-			state->reporter.error(For->range->location, "Ranges are not iterable by pointer, only by value.");
-			yield(TypecheckResult::fail);
-		} else if ((directed_struct && ::is_span(directed_struct)) || types_match(For->range->type, compiler->builtin_string)) {
-			auto replacement_block = AstBlock::create();
-			replacement_block->scope->parent = state->current_scope;
-
-			auto range_definition = AstDefinition::create();
-			range_definition->name = "_span"str;
-			range_definition->container_node = state->container_node;
-			range_definition->expression = For->range;
-			range_definition->type = range_definition->expression->type;
-			set_local_offset(state, range_definition, lambda);
-			replacement_block->scope->add(raw(range_definition));
-
-			auto it1 = AstDefinition::create();
-			it1->name = "_it"str;
-			it1->container_node = state->container_node;
-			it1->expression = make_binop(BinaryOperation::dot, make_identifier(range_definition->name), make_identifier("data"str));
-			replacement_block->scope->add(raw(it1));
-
-			auto end = AstDefinition::create();
-			end->name = "_end"str;
-			end->container_node = state->container_node;
-			end->expression = make_binop(BinaryOperation::add,
-				make_binop(BinaryOperation::dot, make_identifier(range_definition->name), make_identifier("data"str)),
-				make_binop(BinaryOperation::dot, make_identifier(range_definition->name), make_identifier("count"str))
-			);
-			replacement_block->scope->add(raw(end));
-
-			auto While = AstWhile::create();
-			While->condition = make_binop(BinaryOperation::lt, make_identifier(it1->name), make_identifier(end->name));
-			While->scope->parent = replacement_block->scope;
-			replacement_block->scope->add(While);
-
-			auto it2 = AstDefinition::create();
-			it2->name = For->iterator_name;
-			it2->container_node = state->container_node;
-			it2->expression = make_identifier(it1->name);
-			While->scope->add(raw(it2));
-
-			auto inner = AstBlock::create();
-			inner->scope = For->scope;
-			inner->scope->parent = While->scope;
-			While->scope->add(make_statement(inner));
-
-			auto inc = make_binop(BinaryOperation::addass, make_identifier(it1->name), make_integer(1ll));
-			While->scope->add(make_statement(inc));
-
-			typecheck(state, replacement_block);
-			return make_statement(replacement_block);
-		} else if (auto arr = direct_as<AstArray>(For->range->type)) {
-			auto replacement_block = AstBlock::create();
-			replacement_block->scope->parent = state->current_scope;
-
-			auto range_definition = AstDefinition::create();
-			range_definition->name = "_arr"str;
-			range_definition->container_node = state->container_node;
-			if (is_addressable(For->range)) {
-				range_definition->expression = make_address_of(&reporter, For->range);
-			} else {
+				auto range_definition = AstDefinition::create();
+				range_definition->name = "_span"str;
+				range_definition->container_node = state->container_node;
 				range_definition->expression = For->range;
+				range_definition->type = range_definition->expression->type;
+				set_local_offset(state, range_definition, container_lambda); // FIXME: is this needed? we typecheck the whole thing afterwards
+				replacement_block->scope->add(raw(range_definition));
+
+				auto it1 = AstDefinition::create();
+				it1->name = "_it"str;
+				it1->container_node = state->container_node;
+				it1->expression = make_binop(BinaryOperation::dot, make_identifier(range_definition->name), make_identifier("data"str));
+				replacement_block->scope->add(raw(it1));
+
+				auto end = AstDefinition::create();
+				end->name = "_end"str;
+				end->container_node = state->container_node;
+				end->expression = make_binop(BinaryOperation::add,
+					make_binop(BinaryOperation::dot, make_identifier(range_definition->name), make_identifier("data"str)),
+					make_binop(BinaryOperation::dot, make_identifier(range_definition->name), make_identifier("count"str))
+				);
+				replacement_block->scope->add(raw(end));
+
+				auto While = AstWhile::create();
+				While->condition = make_binop(BinaryOperation::lt, make_identifier(it1->name), make_identifier(end->name));
+				While->scope->parent = replacement_block->scope;
+				replacement_block->scope->add(While);
+
+				auto it2 = AstDefinition::create();
+				it2->name = For->iterator_name;
+				it2->container_node = state->container_node;
+				it2->expression = make_identifier(it1->name);
+				While->scope->add(raw(it2));
+
+				auto inner = AstBlock::create();
+				inner->scope = For->scope;
+				inner->scope->parent = While->scope;
+				While->scope->add(make_statement(inner));
+
+				auto inc = make_binop(BinaryOperation::addass, make_identifier(it1->name), make_integer(1ll));
+				While->scope->add(make_statement(inc));
+
+				typecheck(state, replacement_block);
+				return make_statement(replacement_block);
+			} else if (auto arr = direct_as<AstArray>(For->range->type)) {
+				auto replacement_block = AstBlock::create();
+				replacement_block->scope->parent = state->current_scope;
+
+				auto range_definition = AstDefinition::create();
+				range_definition->name = "_arr"str;
+				range_definition->container_node = state->container_node;
+				if (is_addressable(For->range)) {
+					range_definition->expression = make_address_of(&reporter, For->range);
+				} else {
+					range_definition->expression = For->range;
+				}
+				range_definition->type = range_definition->expression->type;
+				set_local_offset(state, range_definition, container_lambda); // FIXME: is this needed? we typecheck the whole thing afterwards
+				replacement_block->scope->add(raw(range_definition));
+
+				auto it1 = AstDefinition::create();
+				it1->name = "_it"str;
+				it1->container_node = state->container_node;
+				it1->expression = make_unary(UnaryOperation::address_of, make_subscript(make_unary(UnaryOperation::star, make_identifier(range_definition->name)), make_integer(0ll)));
+				replacement_block->scope->add(raw(it1));
+
+				auto end = AstDefinition::create();
+				end->name = "_end"str;
+				end->container_node = state->container_node;
+
+				// FIXME: we already know array count, no need for this
+				end->expression = make_binop(BinaryOperation::add,
+					make_identifier(it1->name),
+					make_binop(BinaryOperation::dot, make_unary(UnaryOperation::star, make_identifier(range_definition->name)), make_identifier("count"str))
+				);
+				replacement_block->scope->add(raw(end));
+
+				auto While = AstWhile::create();
+				While->condition = make_binop(BinaryOperation::lt, make_identifier(it1->name), make_identifier(end->name));
+				While->scope->parent = replacement_block->scope;
+				replacement_block->scope->add(While);
+
+				auto it2 = AstDefinition::create();
+				it2->name = For->iterator_name;
+				it2->container_node = state->container_node;
+				it2->expression = make_identifier(it1->name);
+				While->scope->add(raw(it2));
+
+				auto inner = AstBlock::create();
+				inner->scope = For->scope;
+				inner->scope->parent = While->scope;
+				While->scope->add(make_statement(inner));
+
+				auto inc = make_binop(BinaryOperation::addass, make_identifier(it1->name), make_integer(1ll));
+				While->scope->add(make_statement(inc));
+
+				typecheck(state, replacement_block);
+				return make_statement(replacement_block);
 			}
-			range_definition->type = range_definition->expression->type;
-			set_local_offset(state, range_definition, lambda);
-			replacement_block->scope->add(raw(range_definition));
+		} else {
+			if (directed_struct && is_range(directed_struct)) {
+				auto replacement_block = AstBlock::create();
+				replacement_block->scope->parent = state->current_scope;
 
-			auto it1 = AstDefinition::create();
-			it1->name = "_it"str;
-			it1->container_node = state->container_node;
-			it1->expression = make_unary(UnaryOperation::address_of, make_subscript(make_unary(UnaryOperation::star, make_identifier(range_definition->name)), make_integer(0ll)));
-			replacement_block->scope->add(raw(it1));
-
-			auto end = AstDefinition::create();
-			end->name = "_end"str;
-			end->container_node = state->container_node;
-
-			// FIXME: we already know array count, no need for this
-			end->expression = make_binop(BinaryOperation::add,
-				make_identifier(it1->name),
-				make_binop(BinaryOperation::dot, make_unary(UnaryOperation::star, make_identifier(range_definition->name)), make_identifier("count"str))
-			);
-			replacement_block->scope->add(raw(end));
-
-			auto While = AstWhile::create();
-			While->condition = make_binop(BinaryOperation::lt, make_identifier(it1->name), make_identifier(end->name));
-			While->scope->parent = replacement_block->scope;
-			replacement_block->scope->add(While);
-
-			auto it2 = AstDefinition::create();
-			it2->name = For->iterator_name;
-			it2->container_node = state->container_node;
-			it2->expression = make_identifier(it1->name);
-			While->scope->add(raw(it2));
-
-			auto inner = AstBlock::create();
-			inner->scope = For->scope;
-			inner->scope->parent = While->scope;
-			While->scope->add(make_statement(inner));
-
-			auto inc = make_binop(BinaryOperation::addass, make_identifier(it1->name), make_integer(1ll));
-			While->scope->add(make_statement(inc));
-
-			typecheck(state, replacement_block);
-			return make_statement(replacement_block);
-		}
-	} else {
-		if (directed_struct && is_range(directed_struct)) {
-			auto replacement_block = AstBlock::create();
-			replacement_block->scope->parent = state->current_scope;
-
-			auto range_definition = AstDefinition::create();
-			range_definition->name = "_range"str;
-			range_definition->container_node = state->container_node;
-			range_definition->expression = For->range;
-			range_definition->type = range_definition->expression->type;
-			set_local_offset(state, range_definition, lambda);
-			replacement_block->scope->add(raw(range_definition));
-
-			auto While = AstWhile::create();
-			While->condition = make_binop(BinaryOperation::lt, make_binop(BinaryOperation::dot, make_identifier(range_definition->name), make_identifier("min"str)), make_binop(BinaryOperation::dot, make_identifier(range_definition->name), make_identifier("max"str)));
-			While->scope->parent = replacement_block->scope;
-			replacement_block->scope->add(While);
-
-			auto it2 = AstDefinition::create();
-			it2->name = For->iterator_name;
-			it2->container_node = state->container_node;
-			it2->expression = make_binop(BinaryOperation::dot, make_identifier(range_definition->name), make_identifier("min"str));
-			While->scope->add(raw(it2));
-
-			auto inner = AstBlock::create();
-			inner->scope = For->scope;
-			inner->scope->parent = While->scope;
-			While->scope->add(make_statement(inner));
-
-			auto inc = make_binop(BinaryOperation::addass, make_binop(BinaryOperation::dot, make_identifier(range_definition->name), make_identifier("min"str)), make_integer(1ll));
-			While->scope->add(make_statement(inc));
-
-			typecheck(state, replacement_block);
-			return make_statement(replacement_block);
-		} else if ((directed_struct && ::is_span(directed_struct)) || types_match(For->range->type, compiler->builtin_string)) {
-			auto replacement_block = AstBlock::create();
-			replacement_block->scope->parent = state->current_scope;
-
-			auto range_definition = AstDefinition::create();
-			range_definition->name = "_span"str;
-			range_definition->container_node = state->container_node;
-			range_definition->expression = For->range;
-			range_definition->type = range_definition->expression->type;
-			set_local_offset(state, range_definition, lambda);
-			replacement_block->scope->add(raw(range_definition));
-
-			auto it1 = AstDefinition::create();
-			it1->name = "_it"str;
-			it1->container_node = state->container_node;
-			it1->expression = make_binop(BinaryOperation::dot, make_identifier(range_definition->name), make_identifier("data"str));
-			replacement_block->scope->add(raw(it1));
-
-			auto end = AstDefinition::create();
-			end->name = "_end"str;
-			end->container_node = state->container_node;
-			end->expression = make_binop(BinaryOperation::add,
-				make_binop(BinaryOperation::dot, make_identifier(range_definition->name), make_identifier("data"str)),
-				make_binop(BinaryOperation::dot, make_identifier(range_definition->name), make_identifier("count"str))
-			);
-			replacement_block->scope->add(raw(end));
-
-			auto While = AstWhile::create();
-			While->condition = make_binop(BinaryOperation::lt, make_identifier(it1->name), make_identifier(end->name));
-			While->scope->parent = replacement_block->scope;
-			replacement_block->scope->add(While);
-
-			auto it2 = AstDefinition::create();
-			it2->name = For->iterator_name;
-			it2->container_node = state->container_node;
-			it2->expression = make_unary(UnaryOperation::star, make_identifier(it1->name));
-			While->scope->add(raw(it2));
-
-			auto inner = AstBlock::create();
-			inner->scope = For->scope;
-			inner->scope->parent = While->scope;
-			While->scope->add(make_statement(inner));
-
-			auto inc = make_binop(BinaryOperation::addass, make_identifier(it1->name), make_integer(1ll));
-			While->scope->add(make_statement(inc));
-
-			typecheck(state, replacement_block);
-			return make_statement(replacement_block);
-		} else if (auto arr = direct_as<AstArray>(For->range->type)) {
-			auto replacement_block = AstBlock::create();
-			replacement_block->scope->parent = state->current_scope;
-
-			auto range_definition = AstDefinition::create();
-			range_definition->name = "_arr"str;
-			range_definition->container_node = state->container_node;
-			if (is_addressable(For->range)) {
-				range_definition->expression = make_address_of(&reporter, For->range);
-			} else {
+				auto range_definition = AstDefinition::create();
+				range_definition->name = "_range"str;
+				range_definition->container_node = state->container_node;
 				range_definition->expression = For->range;
+				range_definition->type = range_definition->expression->type;
+				set_local_offset(state, range_definition, container_lambda); // FIXME: is this needed? we typecheck the whole thing afterwards
+				replacement_block->scope->add(raw(range_definition));
+
+				auto While = AstWhile::create();
+				While->condition = make_binop(BinaryOperation::lt, make_binop(BinaryOperation::dot, make_identifier(range_definition->name), make_identifier("min"str)), make_binop(BinaryOperation::dot, make_identifier(range_definition->name), make_identifier("max"str)));
+				While->scope->parent = replacement_block->scope;
+				replacement_block->scope->add(While);
+
+				auto it2 = AstDefinition::create();
+				it2->name = For->iterator_name;
+				it2->container_node = state->container_node;
+				it2->expression = make_binop(BinaryOperation::dot, make_identifier(range_definition->name), make_identifier("min"str));
+				While->scope->add(raw(it2));
+
+				auto inner = AstBlock::create();
+				inner->scope = For->scope;
+				inner->scope->parent = While->scope;
+				While->scope->add(make_statement(inner));
+
+				auto inc = make_binop(BinaryOperation::addass, make_binop(BinaryOperation::dot, make_identifier(range_definition->name), make_identifier("min"str)), make_integer(1ll));
+				While->scope->add(make_statement(inc));
+
+				typecheck(state, replacement_block);
+				return make_statement(replacement_block);
+			} else if ((directed_struct && ::is_span(directed_struct)) || types_match(For->range->type, compiler->builtin_string)) {
+				auto replacement_block = AstBlock::create();
+				replacement_block->scope->parent = state->current_scope;
+
+				auto range_definition = AstDefinition::create();
+				range_definition->name = "_span"str;
+				range_definition->container_node = state->container_node;
+				range_definition->expression = For->range;
+				range_definition->type = range_definition->expression->type;
+				set_local_offset(state, range_definition, container_lambda); // FIXME: is this needed? we typecheck the whole thing afterwards
+				replacement_block->scope->add(raw(range_definition));
+
+				auto it1 = AstDefinition::create();
+				it1->name = "_it"str;
+				it1->container_node = state->container_node;
+				it1->expression = make_binop(BinaryOperation::dot, make_identifier(range_definition->name), make_identifier("data"str));
+				replacement_block->scope->add(raw(it1));
+
+				auto end = AstDefinition::create();
+				end->name = "_end"str;
+				end->container_node = state->container_node;
+				end->expression = make_binop(BinaryOperation::add,
+					make_binop(BinaryOperation::dot, make_identifier(range_definition->name), make_identifier("data"str)),
+					make_binop(BinaryOperation::dot, make_identifier(range_definition->name), make_identifier("count"str))
+				);
+				replacement_block->scope->add(raw(end));
+
+				auto While = AstWhile::create();
+				While->condition = make_binop(BinaryOperation::lt, make_identifier(it1->name), make_identifier(end->name));
+				While->scope->parent = replacement_block->scope;
+				replacement_block->scope->add(While);
+
+				auto it2 = AstDefinition::create();
+				it2->name = For->iterator_name;
+				it2->container_node = state->container_node;
+				it2->expression = make_unary(UnaryOperation::star, make_identifier(it1->name));
+				While->scope->add(raw(it2));
+
+				auto inner = AstBlock::create();
+				inner->scope = For->scope;
+				inner->scope->parent = While->scope;
+				While->scope->add(make_statement(inner));
+
+				auto inc = make_binop(BinaryOperation::addass, make_identifier(it1->name), make_integer(1ll));
+				While->scope->add(make_statement(inc));
+
+				typecheck(state, replacement_block);
+				return make_statement(replacement_block);
+			} else if (auto arr = direct_as<AstArray>(For->range->type)) {
+				auto replacement_block = AstBlock::create();
+				replacement_block->scope->parent = state->current_scope;
+
+				auto range_definition = AstDefinition::create();
+				range_definition->name = "_arr"str;
+				range_definition->container_node = state->container_node;
+				if (is_addressable(For->range)) {
+					range_definition->expression = make_address_of(&reporter, For->range);
+				} else {
+					range_definition->expression = For->range;
+				}
+				range_definition->type = range_definition->expression->type;
+				set_local_offset(state, range_definition, container_lambda); // FIXME: is this needed? we typecheck the whole thing afterwards
+				replacement_block->scope->add(raw(range_definition));
+
+				auto it1 = AstDefinition::create();
+				it1->name = "_it"str;
+				it1->container_node = state->container_node;
+				it1->expression = make_unary(UnaryOperation::address_of, make_subscript(make_unary(UnaryOperation::star, make_identifier(range_definition->name)), make_integer(0ll)));
+				replacement_block->scope->add(raw(it1));
+
+				auto end = AstDefinition::create();
+				end->name = "_end"str;
+				end->container_node = state->container_node;
+				// FIXME: we already know array count, no need for this
+				end->expression = make_binop(BinaryOperation::add,
+					make_identifier(it1->name),
+					make_binop(BinaryOperation::dot, make_unary(UnaryOperation::star, make_identifier(range_definition->name)), make_identifier("count"str))
+				);
+				replacement_block->scope->add(raw(end));
+
+				auto While = AstWhile::create();
+				While->condition = make_binop(BinaryOperation::lt, make_identifier(it1->name), make_identifier(end->name));
+				While->scope->parent = replacement_block->scope;
+				replacement_block->scope->add(While);
+
+				auto it2 = AstDefinition::create();
+				it2->name = For->iterator_name;
+				it2->container_node = state->container_node;
+				it2->expression = make_unary(UnaryOperation::star, make_identifier(it1->name));
+				While->scope->add(raw(it2));
+
+				auto inner = AstBlock::create();
+				inner->scope = For->scope;
+				inner->scope->parent = While->scope;
+				While->scope->add(make_statement(inner));
+
+				auto inc = make_binop(BinaryOperation::addass, make_identifier(it1->name), make_integer(1ll));
+				While->scope->add(make_statement(inc));
+
+				typecheck(state, replacement_block);
+				return make_statement(replacement_block);
 			}
-			range_definition->type = range_definition->expression->type;
-			set_local_offset(state, range_definition, lambda);
-			replacement_block->scope->add(raw(range_definition));
-
-			auto it1 = AstDefinition::create();
-			it1->name = "_it"str;
-			it1->container_node = state->container_node;
-			it1->expression = make_unary(UnaryOperation::address_of, make_subscript(make_unary(UnaryOperation::star, make_identifier(range_definition->name)), make_integer(0ll)));
-			replacement_block->scope->add(raw(it1));
-
-			auto end = AstDefinition::create();
-			end->name = "_end"str;
-			end->container_node = state->container_node;
-			// FIXME: we already know array count, no need for this
-			end->expression = make_binop(BinaryOperation::add,
-				make_identifier(it1->name),
-				make_binop(BinaryOperation::dot, make_unary(UnaryOperation::star, make_identifier(range_definition->name)), make_identifier("count"str))
-			);
-			replacement_block->scope->add(raw(end));
-
-			auto While = AstWhile::create();
-			While->condition = make_binop(BinaryOperation::lt, make_identifier(it1->name), make_identifier(end->name));
-			While->scope->parent = replacement_block->scope;
-			replacement_block->scope->add(While);
-
-			auto it2 = AstDefinition::create();
-			it2->name = For->iterator_name;
-			it2->container_node = state->container_node;
-			it2->expression = make_unary(UnaryOperation::star, make_identifier(it1->name));
-			While->scope->add(raw(it2));
-
-			auto inner = AstBlock::create();
-			inner->scope = For->scope;
-			inner->scope->parent = While->scope;
-			While->scope->add(make_statement(inner));
-
-			auto inc = make_binop(BinaryOperation::addass, make_identifier(it1->name), make_integer(1ll));
-			While->scope->add(make_statement(inc));
-
-			typecheck(state, replacement_block);
-			return make_statement(replacement_block);
 		}
 	}
-	state->reporter.error(For->range->location, "Expressions of type {} are not iterable. Right now you can iterate over ranges (e.g. 0..5), spans, strings and arrays", type_to_string(For->range->type));
-	yield(TypecheckResult::fail);
-	return 0;
+
+	wait_for(state, For->location, "for overloads", [&] {
+		return all(for_overloads, [](auto Operator){ return Operator.lambda->finished_typechecking_head; });
+	}, [&] {
+		state->reporter.error(For->range->location, "Expressions of type {} are not iterable.", type_to_string(For->range->type));
+		state->reporter.info("Built-in iterable types are ranges (e.g. 0..5), spans, strings and arrays");
+	});
+
+	auto overloads = map(for_overloads, [&](auto Operator) {
+		auto argument = NamedArgument{.expression = For->range};
+		return Overload{
+			.type = Operator.lambda->type,
+			.definition = Operator.definition->definition,
+			.unsorted_arguments = to_list(Span(&argument, 1)),
+		};
+	});
+
+	int min_distance = max_value<int>;
+
+	List<Overload *> matches;
+	matches.allocator = temporary_allocator;
+
+	for (umm overload_index = 0; overload_index != overloads.count; ++overload_index) {
+		auto &overload = overloads[overload_index];
+		auto &reporter = overload.reporter;
+
+		auto overload_type = direct(overload.type);
+
+		if (try_match_overload_lambda(state, reporter, For->location, as<AstLambdaType>(overload_type), overload)) {
+			overload.success = true;
+			matches.add(&overload);
+			min_distance = min(min_distance, overload.distance);
+		}
+	}
+	Overload *match = 0;
+	if (matches.count == 0) {
+		state->reporter.error(For->range->location, "Expressions of type {} are not iterable. No matching overload found.", type_to_string(For->range->type));
+		if (overloads.count) {
+			if (overloads.count > 1) {
+				for (umm overload_index = 0; overload_index != overloads.count; ++overload_index) {
+					auto &overload = overloads[overload_index];
+					auto &definition = overload.definition;
+					auto &reporter = overload.reporter;
+					if (overload.instantiated_lambda && overload.instantiated_lambda->constant_scope->statement_list.count) {
+						state->reporter.info(definition->location, "Overload #{} with {}", overload_index + 1, StringizePolyTypes{overload.instantiated_lambda});
+					} else {
+						state->reporter.info(definition->location, "Overload #{}:", overload_index + 1);
+					}
+					state->reporter.reports.add(reporter.reports);
+				}
+			} else {
+				auto &overload = overloads[0];
+				auto &definition = overload.definition;
+				auto &reporter = overload.reporter;
+				state->reporter.reports.add(reporter.reports);
+				if (overload.instantiated_lambda) {
+					state->reporter.info(definition->location, "Couldn't match this with{}", StringizePolyTypes{overload.instantiated_lambda});
+				} else {
+					state->reporter.info(definition->location, "Couldn't match this:");
+				}
+			}
+		}
+		yield(TypecheckResult::fail);
+	} else if (matches.count == 1) {
+		match = matches[0];
+	} else {
+		List<Overload *> best_matches;
+		for (auto overload : matches) {
+			if (overload->distance == min_distance)
+				best_matches.add(overload);
+		}
+
+		if (best_matches.count == 1) {
+			match = best_matches[0];
+		} else {
+			state->reporter.error(For->range->location, "Ambiguous matches were found");
+			for (auto overload : best_matches) {
+				state->reporter.info(overload->definition->location, "Here");
+			}
+			yield(TypecheckResult::fail);
+		}
+	}
+
+	if (match->lambda->is_poly) {
+		match->lambda = match->instantiated_lambda;
+		auto lambda = match->lambda;
+		{
+			assert(match->instantiated_lambda);
+			state->template_call_stack.add({
+				.call_location = For->range->location,
+				.template_lambda_location = match->lambda->location,
+				.hardened_lambda = match->instantiated_lambda
+			});
+			defer { state->template_call_stack.pop(); };
+
+			for (u32 i = 0; i < match->sorted_arguments_lambda.count; ++i) {
+				auto &argument = match->sorted_arguments_lambda[i];
+				auto &parameter = lambda->parameters[i];
+
+				if (parameter->is_constant) {
+					if (!implicitly_cast(state, &state->reporter, &parameter->expression, parameter->type)) {
+						state->reporter.error(parameter->location, "INTERNAL ERROR: implicit cast did not succeed the second time for constant parameter.");
+						state->reporter.info(argument[0]->location, "Argument is here:");
+						yield(TypecheckResult::fail);
+					}
+				}
+			}
+		}
+		assert(match->instantiated_lambda->definition); // TODO: deal with unnamed poly lambdas
+	}
+
+	auto lambda = match->lambda;
+
+
+	assert(!lambda->has_pack);
+	assert(lambda->is_macro);
+	assert(match->lambda->parameters.count == 1);
+	assert(match->sorted_arguments_lambda.count == 1);
+	assert(match->sorted_arguments_lambda[0].count == 1);
+
+	auto parameter = match->lambda->parameters[0];
+	auto argument = match->sorted_arguments_lambda[0][0];
+
+	if (!parameter->is_constant) {
+		make_concrete(state, &argument);
+	}
+
+
+	assert(!parameter->is_poly);
+	if (argument) {
+		if (!implicitly_cast(state, &state->reporter, &argument, parameter->type, 0)) {
+			state->reporter.error(argument->location, "INTERNAL ERROR: implicit cast did not succeed the second time.");
+			yield(TypecheckResult::fail);
+		}
+	}
+
+	// NOTE: not sure if this wait is necessary
+	wait_for(
+		state, lambda->location, "deduced return type",
+		[&] { return lambda->return_parameter; },
+		[&] {
+			// This message feels like noise
+			// state->reporter.error(lambda->location, "Could not deduce the return type.");
+			// state->reporter.info(call->location, "Called here:");
+		}
+	);
+
+	assert(lambda->return_parameter->container_node == lambda);
+	assert(lambda->type);
+	assert(lambda->type->kind == Ast_LambdaType);
+
+	auto inserted_block = AstBlock::create();
+	inserted_block->location = For->location;
+	inserted_block->scope->parent = state->current_scope;
+
+	{
+		auto def = AstDefinition::create();
+		def->container_node = state->container_node;
+		def->name = parameter->name;
+		def->expression = argument;
+		def->location = argument->location;
+		def->parent_scope = inserted_block->scope;
+
+		inserted_block->scope->add(raw(def));
+	}
+	auto copied_block = deep_copy(lambda->original_poly ? lambda->original_poly->body : lambda->body);
+	copied_block->location = For->location;
+
+	inserted_block->scope->add(make_statement(copied_block));
+	for_each_top_scope(copied_block, [&](Scope *scope) {
+		scope->parent = inserted_block->scope;
+	});
+
+	visit(copied_block, Combine{
+		[&](auto){},
+		[&](AstReturn *Return) {
+			if (auto Lambda = as<AstLambda>(state->container_node)) {
+				Return->lambda = Lambda;
+			} else {
+				state->reporter.error(copied_block->location, "There's return statement in macro expansion, but we are currently not in a lambda.");
+				yield(TypecheckResult::fail);
+			}
+		},
+		[&](AstExpression **expression) {
+			if (auto ForMarker = as<AstForMarker>((*expression))) {
+				switch (ForMarker->marker) {
+					case ForMarker::by_pointer: {
+						*expression = make_bool(For->by_pointer);
+						break;
+					}
+					case ForMarker::it:
+					case ForMarker::body:
+						break;
+					default: invalid_code_path();
+				}
+			}
+		},
+		[&](AstStatement **statement) {
+			if (auto es = as<AstExpressionStatement>((*statement))) {
+				if (auto ForMarker = as<AstForMarker>(es->expression)) {
+					switch (ForMarker->marker) {
+						case ForMarker::by_pointer:
+							break;
+						case ForMarker::it: {
+							auto definition = AstDefinition::create();
+							definition->name = For->iterator_name;
+							definition->location = ForMarker->location;
+							definition->parent_scope = (*statement)->parent_scope;
+							definition->expression = ForMarker->expression;
+							*statement = definition;
+							break;
+						}
+						case ForMarker::body: {
+							auto body_block = AstBlock::create();
+							body_block->location = For->location;
+							body_block->scope = For->scope;
+							*statement = make_statement(body_block);
+							break;
+						}
+						default: invalid_code_path();
+					}
+				}
+			}
+		},
+	});
+
+	typecheck(state, inserted_block);
+
+	return make_statement(inserted_block);
 }
 AstStatement *typecheck(TypecheckState *state, AstExpressionStatement *ExpressionStatement) {
 	typecheck(state, ExpressionStatement->expression);
@@ -7352,12 +8436,13 @@ AstStatement *typecheck(TypecheckState *state, AstPrint *Print) {
 	return Print;
 }
 AstStatement *typecheck(TypecheckState *state, AstOperatorDefinition *OperatorDefinition) {
+
+	auto expression = (Expression<>)OperatorDefinition->lambda;
+	typecheck(state, expression);
+
 	switch (OperatorDefinition->operation) {
 		using enum BinaryOperation;
 		case 'as': {
-			auto expression = (Expression<>)OperatorDefinition->lambda;
-			typecheck(state, expression);
-
 			if (OperatorDefinition->is_implicit) {
 				implicit_casts.add(OperatorDefinition->lambda);
 				not_typechecked_implicit_casts_count -= 1;
@@ -7382,8 +8467,6 @@ AstStatement *typecheck(TypecheckState *state, AstOperatorDefinition *OperatorDe
 		case '>':
 		case '<=':
 		case '>=': {
-			typecheck(state, (Expression<> &)OperatorDefinition->lambda);
-
 			if (OperatorDefinition->lambda->parameters.count == 1) {
 				unary_operators.get_or_insert(as_unary_operation(OperatorDefinition->operation).value()).add({OperatorDefinition->lambda, OperatorDefinition});
 				not_typechecked_unary_operators_count -= 1;
@@ -7394,9 +8477,11 @@ AstStatement *typecheck(TypecheckState *state, AstOperatorDefinition *OperatorDe
 			break;
 		}
 		case '?': {
-			typecheck(state, (Expression<> &)OperatorDefinition->lambda);
 			has_value_overloads.add(OperatorDefinition->lambda);
 			not_typechecked_has_value_overloads_count -= 1;
+			break;
+		}
+		case 'for': {
 			break;
 		}
 		default: invalid_code_path();
@@ -7448,23 +8533,16 @@ AstStatement *typecheck(TypecheckState *state, AstUsing *Using) {
 	state->current_scope->usings.add({Using, Ident->definition()});
 	return Using;
 }
+AstStatement *typecheck(TypecheckState *state, AstEmptyStatement *EmptyStatement) {
+	return EmptyStatement;
+}
 void typecheck(TypecheckState *state, AstStatement *&statement) {
 	defer { atomic_add(&shared_progress, 1); };
 	scoped_replace(state->current_node, statement);
 	switch (statement->kind) {
-		case Ast_Return:              statement = typecheck(state, (AstReturn              *)statement); break;
-		case Ast_Yield:               statement = typecheck(state, (AstYield               *)statement); break;
-		case Ast_Definition:          statement = typecheck(state, (AstDefinition          *)statement); break;
-		case Ast_While:               statement = typecheck(state, (AstWhile               *)statement); break;
-		case Ast_For:                 statement = typecheck(state, (AstFor                 *)statement); break;
-		case Ast_ExpressionStatement: statement = typecheck(state, (AstExpressionStatement *)statement); break;
-		case Ast_Assert:              statement = typecheck(state, (AstAssert              *)statement); break;
-		case Ast_Defer:               statement = typecheck(state, (AstDefer               *)statement); break;
-		case Ast_Print:               statement = typecheck(state, (AstPrint               *)statement); break;
-		case Ast_OperatorDefinition:  statement = typecheck(state, (AstOperatorDefinition  *)statement); break;
-		case Ast_LoopControl:         statement = typecheck(state, (AstLoopControl         *)statement); break;
-		case Ast_Parse:               statement = typecheck(state, (AstParse               *)statement); break;
-		case Ast_Using:               statement = typecheck(state, (AstUsing               *)statement); break;
+#define e(name) case Ast_##name: statement = typecheck(state, (Ast##name *)statement); break;
+ENUMERATE_STATEMENT_KIND
+#undef e
 		default: {
 			state->reporter.error(statement->location, "INTERNAL ERROR: Invalid statement kind: {}", statement->kind);
 			yield(TypecheckResult::fail);
@@ -7823,52 +8901,9 @@ bool match_templates(TypecheckState *state, Reporter *reporter, AstLambda *harde
 	return false;
 }
 
-struct StringizePolyTypes {
-	AstLambda *lambda;
-};
-
-umm append(StringBuilder &builder, StringizePolyTypes s) {
-	// NOTE: statements are ordered, but definitions are not.
-	umm result = 0;
-	for (auto statement : s.lambda->constant_scope->statement_list) {
-		assert(statement->kind == Ast_Definition);
-		auto definition = (AstDefinition *)statement;
-		result += append_format(builder, "\n                                {} = {}", definition->name, direct(definition->expression));
-	}
-	return result;
-}
-
-struct Overload {
-	AstExpression *type = {};
-	AstDefinition *definition = {};
-	List<NamedArgument> unsorted_arguments;
-
-	Reporter reporter;
-	bool success = false;
-	AstLambda *lambda = 0;
-	AstLambda *instantiated_lambda = 0;
-	int distance = 0;
-
-	// Outer list corresponds to lambda parameters.
-	// Inner list corresponds to a parameter pack.
-	// For example:
-	//     foo :: (a: Int, b: ..String, c: Float)
-	//     foo(1, "hello", "world", 2)
-	//     sorted_arguments = [1, ["hello", "world"], 2]
-	List<List<AstExpression *>> sorted_arguments_lambda;
-
-	// Structs can't have packs, so theres no need in inner list.
-	List<AstExpression *> sorted_arguments_struct;
-
-	AstStruct *Struct = 0;
-	AstExpression *callable = {};
-
-	AstDistinct *Distinct = 0;
-};
-
 // Right now these copy everything.
 // Maybe copy only nodes that depend on a poly parameter?
-AstLambda *instantiate_head(TypecheckState *state, Reporter *reporter, Overload &overload, Span<NamedArgument> unsorted_arguments, AstLambda *lambda, String call_location, bool *success) {
+AstLambda *instantiate_head(TypecheckState *state, Reporter *reporter, Overload &overload, Span<NamedArgument> unsorted_arguments, AstLambda *template_lambda, String call_location, bool *success) {
 
 	*success = false;
 
@@ -7876,40 +8911,41 @@ AstLambda *instantiate_head(TypecheckState *state, Reporter *reporter, Overload 
 	auto hardened_lambda = AstLambda::create();
 	auto hardened_lambda_definition = AstDefinition::create();
 
-	assert(lambda->definition); // TODO: deal with unnamed poly lambdas
+	assert(template_lambda->definition); // TODO: deal with unnamed poly lambdas
 	hardened_lambda_definition->expression = hardened_lambda;
 	hardened_lambda_definition->location = hardened_lambda->location;
-	hardened_lambda_definition->name = lambda->definition->name;
+	hardened_lambda_definition->name = template_lambda->definition->name;
 	hardened_lambda_definition->is_constant = true;
-	hardened_lambda_definition->container_node = lambda->definition->container_node;
-	hardened_lambda_definition->parent_scope = lambda->definition->parent_scope;
+	hardened_lambda_definition->container_node = template_lambda->definition->container_node;
+	hardened_lambda_definition->parent_scope = template_lambda->definition->parent_scope;
 	hardened_lambda->definition = hardened_lambda_definition;
 
 	hardened_lambda->is_poly = false;
-	hardened_lambda->convention = lambda->convention;
-	hardened_lambda->extern_language = lambda->extern_language;
-	hardened_lambda->extern_library = lambda->extern_library;
+	hardened_lambda->is_macro = template_lambda->is_macro;
+	hardened_lambda->convention = template_lambda->convention;
+	hardened_lambda->extern_language = template_lambda->extern_language;
+	hardened_lambda->extern_library = template_lambda->extern_library;
 	hardened_lambda->finished_typechecking_head = false;
-	hardened_lambda->is_intrinsic = lambda->is_intrinsic;
-	hardened_lambda->is_type = lambda->is_type;
-	hardened_lambda->location = lambda->location;
-	hardened_lambda->extern_library = lambda->extern_library;
-	hardened_lambda->print_bytecode = lambda->print_bytecode;
+	hardened_lambda->is_intrinsic = template_lambda->is_intrinsic;
+	hardened_lambda->is_type = template_lambda->is_type;
+	hardened_lambda->location = template_lambda->location;
+	hardened_lambda->extern_library = template_lambda->extern_library;
+	hardened_lambda->print_bytecode = template_lambda->print_bytecode;
 	hardened_lambda->type = create_lambda_type(hardened_lambda);
 	hardened_lambda->type->type = compiler->builtin_type.ident;
-	hardened_lambda->outer_scope()->parent = lambda->outer_scope()->parent;
-	hardened_lambda->original_poly = lambda;
+	hardened_lambda->outer_scope()->parent = template_lambda->outer_scope()->parent;
+	hardened_lambda->original_poly = template_lambda;
 
-	for (auto &parameter : lambda->parameters) {
-		auto new_parameter = deep_copy(parameter);
+	for (auto &parameter : template_lambda->parameters) {
+		auto new_parameter = deep_copy_kk(parameter);
 		new_parameter->container_node = hardened_lambda;
 		hardened_lambda->parameters.add(new_parameter);
 		hardened_lambda->parameter_scope->add(new_parameter);
 	}
 
 
-	for (auto definition : lambda->constant_scope->definition_list) {
-		auto copied = deep_copy(definition);
+	for (auto definition : template_lambda->constant_scope->definition_list) {
+		auto copied = deep_copy_kk(definition);
 		copied->container_node = hardened_lambda;
 		hardened_lambda->constant_scope->add(copied);
 	}
@@ -7947,14 +8983,14 @@ AstLambda *instantiate_head(TypecheckState *state, Reporter *reporter, Overload 
 			continue;
 		}
 
-		auto found_parameter = find_if(lambda->parameters, [&](AstDefinition *parameter) { return parameter->name == argument.name; });
+		auto found_parameter = find_if(template_lambda->parameters, [&](AstDefinition *parameter) { return parameter->name == argument.name; });
 		if (!found_parameter) {
 			reporter->error(call_location, "Lambda does not take argument named '{}'.", argument.name);
 			*success = false;
 			return 0;
 		}
 
-		auto parameter_index = index_of(lambda->parameters, found_parameter);
+		auto parameter_index = index_of(template_lambda->parameters, found_parameter);
 		auto parameter = hardened_lambda->parameters[parameter_index];
 
 		if (parameter->is_constant) invalid_code_path("Not implemented");
@@ -8139,11 +9175,11 @@ AstLambda *instantiate_head(TypecheckState *state, Reporter *reporter, Overload 
 	scoped_replace(state->current_scope, hardened_lambda->parameter_scope);
 
 	if (compiler->debug_template) {
-		immediate_info(call_location, "Instantiated poly head: {} with {}", type_to_string(lambda->type), StringizePolyTypes{hardened_lambda});
+		immediate_info(call_location, "Instantiated poly head: {} with {}", type_to_string(template_lambda->type), StringizePolyTypes{hardened_lambda});
 	}
 
-	if (lambda->return_parameter) {
-		hardened_lambda->return_parameter = deep_copy(raw(lambda->return_parameter));
+	if (template_lambda->return_parameter) {
+		hardened_lambda->return_parameter = deep_copy_kk(raw(template_lambda->return_parameter));
 		hardened_lambda->parameter_scope->add(raw(hardened_lambda->return_parameter));
 		typecheck(state, hardened_lambda->return_parameter);
 	}
@@ -8152,7 +9188,7 @@ AstLambda *instantiate_head(TypecheckState *state, Reporter *reporter, Overload 
 
 	*success = true;
 
-	for (auto &cached : lambda->cached_instantiations) {
+	for (auto &cached : template_lambda->cached_instantiations) {
 		for (umm i = 0; i < hardened_lambda->constant_scope->definition_list.count; ++i) {
 			if (!are_equal(evaluate(state, hardened_lambda->constant_scope->definition_list[i]), evaluate(state, cached.lambda->constant_scope->definition_list[i]))) {
 				goto next_cached;
@@ -8170,7 +9206,7 @@ AstLambda *instantiate_head(TypecheckState *state, Reporter *reporter, Overload 
 	next_cached:;
 	}
 
-	lambda->cached_instantiations.add({.lambda=hardened_lambda, .definition=hardened_lambda_definition});
+	template_lambda->cached_instantiations.add({.lambda=hardened_lambda, .definition=hardened_lambda_definition});
 	return hardened_lambda;
 }
 void instantiate_body(TypecheckState *state, AstLambda *hardened_lambda) {
@@ -8210,7 +9246,7 @@ void instantiate_body(TypecheckState *state, AstLambda *hardened_lambda) {
 		});
 
 		visit(hardened_lambda->body, Combine {
-			[&](AstNode *){},
+			[&](auto) {},
 			[&](AstDefinition *definition){
 				if (!definition->container_node)
 					definition->container_node = get_container_node(definition);
@@ -8225,7 +9261,7 @@ void instantiate_body(TypecheckState *state, AstLambda *hardened_lambda) {
 	hardened_lambda->return_parameter->container_node = hardened_lambda;
 
 	visit(hardened_lambda, Combine{
-		[&]	(AstNode *) {},
+		[&](auto) {},
 		[&]	(AstDefinition *Definition) {
 			if (Definition->parent_scope->node && Definition->parent_scope->node->kind == Ast_Struct) {
 				assert(Definition->container_node);
@@ -8618,773 +9654,6 @@ void get_overloads(TypecheckState *state, AstCall *call, List<Overload> &overloa
 	}
 }
 
-bool try_match_overload_lambda(TypecheckState *state, Reporter &reporter, AstCall *call, AstLambdaType *lambda_type, Overload &overload) {
-	auto lambda = lambda_type->lambda;
-
-
-	// Lambda                          | Call                 | Sorted argument list
-	// --------------------------------+----------------------+---------------------
-	// foo :: (a: Int, b: Int, c: int) | foo(b=1, a=2, 3)     | foo(2, 1, 3)
-	//                                 | 1.foo(c=2, 3)        | foo(1, 3, 2)
-
-	auto &unsorted_arguments = overload.unsorted_arguments;
-
-	auto &sorted_arguments = overload.sorted_arguments_lambda;
-	sorted_arguments.resize(lambda->parameters.count);
-
-	overload.distance += lambda->has_pack; // If we have 2 matches, one with a pack and other without, select the one without.
-
-	if (lambda->is_poly) {
-		bool success;
-		{
-			state->template_call_stack.add({.call = call, .template_lambda = lambda});
-			defer { state->template_call_stack.pop(); };
-			overload.instantiated_lambda = instantiate_head(state, &reporter, overload, unsorted_arguments, lambda, call->location, &success);
-		}
-		if (!success)
-			return false;
-
-		assert(!as<AstLambdaType>(overload.instantiated_lambda->type)->lambda->is_poly);
-
-		overload.lambda = lambda;
-	} else {
-		wait_for(
-			state, lambda->location, "typechecked head",
-			[&] { return lambda->finished_typechecking_head; },
-			[&] {
-				state->reporter.error(lambda->location, "Lambda's head couldn't finish typechecking");
-				state->reporter.info(call->location, "Waited here:");
-			}
-		);
-
-		// Assign named arguments to corresponding parameters
-
-		List<AstExpression *> remaining_arguments;
-
-		for (auto &argument : unsorted_arguments) {
-			if (argument.name.is_empty()) {
-				remaining_arguments.add(argument.expression);
-				continue;
-			}
-
-			auto found_parameter = find_if(lambda->parameters, [&](AstDefinition *parameter) { return parameter->name == argument.name; });
-			if (!found_parameter) {
-				reporter.error(call->location, "Lambda does not take argument named '{}'.", argument.name);
-				return false;
-			}
-
-			auto parameter_index = index_of(lambda->parameters, found_parameter);
-
-			if (sorted_arguments[parameter_index].count) {
-				reporter.error(argument.expression->location, "Argument '{}' was already assigned.", argument.name);
-				return false;
-			}
-
-
-			if (!implicitly_cast(state, &reporter, &argument.expression, lambda->parameters[parameter_index]->type, 0, false)) {
-				return false;
-			}
-
-			sorted_arguments[parameter_index].set(argument.expression);
-		}
-
-
-		// Now that named arguments are assigned, assign unnamed arguments
-		{
-			umm parameter_index = 0;
-
-			while (parameter_index < sorted_arguments.count && sorted_arguments[parameter_index].count)
-				++parameter_index;
-
-			// Returns
-			//     true if there is an unassigned parameter
-			//     false if there is no parameters remaining
-			auto next_unassigned_parameter = [&] {
-				while (1) {
-					++parameter_index;
-					if (parameter_index >= sorted_arguments.count)
-						return false;
-
-					if (sorted_arguments[parameter_index].count == 0)
-						return true;
-				}
-			};
-
-			for (auto &argument : remaining_arguments) {
-				auto distance = TypeDistance::exact;
-				defer {
-					overload.distance += argument_distance({.type_distance = distance, .const_distance = true});
-				};
-
-			retry_argument:
-				if (parameter_index >= sorted_arguments.count) {
-					reporter.error(call->location, "Too many arguments.");
-					return false;
-				}
-
-				auto parameter = lambda->parameters[parameter_index];
-
-				if (parameter->is_pack) {
-					auto param_subtype = get_span_subtype(parameter->type);
-					assert(param_subtype);
-
-					if (auto arg_subtype = get_span_subtype(argument->type)) {
-						if (types_match(arg_subtype, param_subtype)) {
-							// Pass the span to the pack
-							sorted_arguments[parameter_index].add(argument);
-							next_unassigned_parameter();
-							continue;
-						}
-					} else {
-						if (implicitly_cast(state, &reporter, &argument, param_subtype, &distance, false)) {
-							sorted_arguments[parameter_index].add(argument);
-							continue;
-						} else {
-							next_unassigned_parameter();
-							goto retry_argument;
-						}
-					}
-				} else {
-					if (!implicitly_cast(state, &reporter, &argument, parameter->type, &distance, false)) {
-						return false;
-					}
-
-					assert(sorted_arguments[parameter_index].count == 0);
-					sorted_arguments[parameter_index].set(argument);
-
-				}
-
-				next_unassigned_parameter();
-			}
-		}
-
-
-		// Assign default values to everything that is left over.
-		for (umm i = 0; i != sorted_arguments.count; ++i) {
-			auto &args = sorted_arguments[i];
-			auto param = lambda->parameters[i];
-
-			if (param->expression && args.count == 0) {
-
-				// Put the value for default argument in constant section once, then reference it.
-
-				AstIdentifier *default_value_ident = 0;
-
-				if (auto found = lambda->parameter_to_default_value.find(param)) {
-					default_value_ident = found->value;
-				} else {
-					auto default_value_def = AstDefinition::create();
-					default_value_def->is_constant = true;
-					default_value_def->location = param->location;
-					default_value_def->expression = param->expression;
-					default_value_def->parsed_type = param->type;
-					compiler->global_scope.add(default_value_def);
-
-					{
-						scoped_replace(state->current_scope, &compiler->global_scope);
-						scoped_replace(state->container_node, 0);
-						typecheck(state, default_value_def);
-					}
-
-					default_value_ident = AstIdentifier::create();
-					default_value_ident->possible_definitions.set(default_value_def);
-					default_value_ident->location = param->location;
-					default_value_ident->type = default_value_def->type;
-
-					lambda->parameter_to_default_value.get_or_insert(param) = default_value_ident;
-				}
-
-				args.add(deep_copy(default_value_ident));
-			}
-		}
-
-		// Ensure every parameter has a matching argument
-		for (umm i = 0; i != sorted_arguments.count; ++i) {
-			auto args = sorted_arguments[i];
-			auto param = lambda->parameters[i];
-
-			if (args.count == 0 && !param->is_pack && !param->expression) {
-				reporter.error(call->location, "Not enough arguments. Value for {} was not provided", param->name);
-				return false;
-			}
-		}
-
-		overload.lambda = lambda;
-	}
-	return true;
-}
-bool try_match_overload_struct(TypecheckState *state, Reporter &reporter, AstCall *call, AstStruct *Struct, Overload &overload) {
-	wait_for(
-		state, Struct->location, "typechecked struct",
-		[&] {
-			if (!Struct->type)
-				return false;
-			for (auto &member : Struct->data_members) {
-				if (!member->type)
-					return false;
-			}
-			return true;
-		},
-		[&] {
-			state->reporter.error(Struct->location, "Struct couldn't finish typechecking");
-			state->reporter.info(call->location, "Waited here:");
-		}
-	);
-
-	if (Struct->is_template) {
-
-		if (call->unsorted_arguments.count > Struct->parameter_scope->statement_list.count) {
-			reporter.error(call->location, "Too many parameters. Expected {}, got {}", Struct->parameter_scope->statement_list.count, call->unsorted_arguments.count);
-			return false;
-		}
-
-		List<NamedArgument> named_arguments;
-		List<AstExpression *> unnamed_arguments;
-		for (auto arg : call->unsorted_arguments) {
-			if (arg.name.is_empty()) {
-				unnamed_arguments.add(arg.expression);
-			} else {
-				for (auto other : named_arguments) {
-					if (other.name == arg.name) {
-						state->reporter.error(arg.expression->location, "Using the same parameter twice is not allowed.");
-						state->reporter.info(other.expression->location, "Here is the first one.");
-						yield(TypecheckResult::fail);
-					}
-				}
-				named_arguments.add(arg);
-			}
-		}
-
-		List<AstExpression *> arguments;
-		arguments.resize(Struct->parameter_scope->statement_list.count);
-
-		for (auto arg : named_arguments) {
-			auto parameter = find_if(Struct->parameter_scope->statement_list, [&](auto parameter){ return arg.name == ((AstDefinition *)parameter)->name;});
-			assert(parameter);
-			arguments[index_of(Struct->parameter_scope->statement_list, parameter)] = arg.expression;
-		}
-
-		for (auto arg : unnamed_arguments) {
-			*find(arguments, (AstExpression *)nullptr) = arg;
-		}
-
-		overload.sorted_arguments_struct = arguments;
-
-		if (arguments.count != Struct->parameter_scope->statement_list.count) {
-			reporter.error(call->location, "Argument count does not match. Expected {}, got {}", Struct->parameter_scope->statement_list.count, arguments.count);
-			return false;
-		}
-
-		for (umm i = 0; i < arguments.count; ++i) {
-			auto &argument = arguments[i];
-			if (argument) {
-				auto &parameter = (AstDefinition *&)Struct->parameter_scope->statement_list[i];
-
-				if (!implicitly_cast(state, &reporter, &argument, parameter->type, 0, false)) {
-					return false;
-				}
-			}
-		}
-
-		overload.Struct = Struct;
-	} else {
-		if (call->unsorted_arguments.count > Struct->data_members.count) {
-			reporter.error(call->location, "Too many arguments. Expected {}, got {}", Struct->data_members.count, call->unsorted_arguments.count);
-			return false;
-		}
-
-		List<NamedArgument> named_arguments;
-		List<AstExpression *> unnamed_arguments;
-		for (auto arg : call->unsorted_arguments) {
-			if (arg.name.is_empty()) {
-				unnamed_arguments.add(arg.expression);
-			} else {
-				for (auto other : named_arguments) {
-					if (other.name == arg.name) {
-						state->reporter.error(arg.expression->location, "Using the same parameter twice is not allowed.");
-						state->reporter.info(other.expression->location, "Here is the first one.");
-						yield(TypecheckResult::fail);
-					}
-				}
-				named_arguments.add(arg);
-			}
-		}
-
-		List<AstExpression *> arguments;
-		arguments.resize(Struct->data_members.count);
-
-		for (auto arg : named_arguments) {
-			auto member = find_if(Struct->data_members, [&](auto member){return arg.name == ((AstDefinition *)member)->name;});
-			if (!member) {
-				return false;
-			}
-			arguments[index_of(Struct->data_members, member)] = arg.expression;
-		}
-
-		for (auto arg : unnamed_arguments) {
-			*find(arguments, (AstExpression *)nullptr) = arg;
-		}
-
-		overload.sorted_arguments_struct = arguments;
-
-		if (arguments.count != Struct->data_members.count) {
-			reporter.error(call->location, "Argument count does not match. Expected {}, got {}", Struct->data_members.count, arguments.count);
-			return false;
-		}
-
-		for (umm i = 0; i < arguments.count; ++i) {
-			auto &argument = arguments[i];
-			if (argument) {
-				auto &member = (AstDefinition *&)Struct->data_members[i];
-
-				if (!implicitly_cast(state, &reporter, &argument, member->type, 0, false)) {
-					return false;
-				}
-			}
-		}
-
-		overload.Struct = Struct;
-	}
-	return true;
-}
-bool try_match_overload_distinct(TypecheckState *state, Reporter &reporter, AstCall *call, AstDistinct *Distinct, Overload &overload) {
-	if (call->unsorted_arguments.count == 0) {
-		not_implemented("Default initialized for distinct type");
-	}
-	if (call->unsorted_arguments.count != 1) {
-		reporter.error(call->location, "Distinct type initializer can not have more than one argument.");
-		return false;
-	}
-
-	if (!implicitly_cast(state, &reporter, &call->unsorted_arguments[0].expression, Distinct->expression, 0, false)) {
-		return false;
-	}
-
-	overload.Distinct = Distinct;
-
-	call->sorted_arguments.set(call->unsorted_arguments[0].expression);
-
-	return true;
-}
-
-bool try_match_overload(TypecheckState *state, Reporter &reporter, AstCall *call, AstExpression *overload_type, Overload &overload) {
-	switch (overload_type->kind)  {
-		case Ast_LambdaType: return try_match_overload_lambda  (state, reporter, call, (AstLambdaType *)overload_type, overload);
-		case Ast_Struct:     return try_match_overload_struct  (state, reporter, call, (AstStruct     *)overload_type, overload);
-		case Ast_Distinct:   return try_match_overload_distinct(state, reporter, call, (AstDistinct   *)overload_type, overload);
-		default: invalid_code_path("unable to match overload: unknown kind");
-	}
-}
-
-AstExpression *apply_overload_lambda(TypecheckState *state, AstCall *call, Overload &match)  {
-	if (match.lambda->is_poly) {
-		match.lambda = match.instantiated_lambda;
-		auto lambda = match.lambda;
-		{
-			assert(match.instantiated_lambda);
-			state->template_call_stack.add({.call = call, .template_lambda = match.lambda, .hardened_lambda = match.instantiated_lambda});
-			defer { state->template_call_stack.pop(); };
-
-			for (u32 i = 0; i < match.sorted_arguments_lambda.count; ++i) {
-				auto &argument = match.sorted_arguments_lambda[i];
-				auto &parameter = lambda->parameters[i];
-
-				if (parameter->is_constant) {
-					if (!implicitly_cast(state, &state->reporter, &parameter->expression, parameter->type)) {
-						state->reporter.error(parameter->location, "INTERNAL ERROR: implicit cast did not succeed the second time for constant parameter.");
-						state->reporter.info(argument[0]->location, "Argument is here:");
-						yield(TypecheckResult::fail);
-					}
-				}
-			}
-
-			instantiate_body(state, match.instantiated_lambda);
-		}
-		assert(match.instantiated_lambda->definition); // TODO: deal with unnamed poly lambdas
-
-		AstIdentifier *ident = 0;
-
-		if (call->callable->kind == Ast_Identifier) {
-			ident = (AstIdentifier *)call->callable;
-		} else if (auto binop = as<AstBinaryOperator>(call->callable)) {
-			assert(binop->operation == BinaryOperation::dot);
-			assert(binop->right->kind == Ast_Identifier);
-			call->callable = ident = (AstIdentifier *)binop->right;
-		} else {
-			// NOTE: if callable is not an identifier, it can only be immediately invoked lambda, right?
-			assert(call->callable->kind == Ast_Lambda);
-
-			ident = AstIdentifier::create();
-			ident->name = match.instantiated_lambda->definition->name;
-			ident->location = call->callable->location;
-			call->callable = ident;
-		}
-
-		ident->possible_definitions.set(match.instantiated_lambda->definition);
-		ident->type = match.instantiated_lambda->type;
-	}
-
-	auto lambda = match.lambda;
-
-
-	// Set call->sorted_arguments
-	if (lambda->has_pack) {
-		call->sorted_arguments.resize(match.sorted_arguments_lambda.count);
-		for (umm i = 0; i < match.sorted_arguments_lambda.count; ++i) {
-			auto &pack = match.sorted_arguments_lambda[i];
-			auto &parameter = match.lambda->parameters[i];
-
-			if (parameter->is_pack) {
-				auto elem_type = get_span_subtype(parameter->type);
-				assert(elem_type);
-
-				// NOTE: Allow passing spans to packs as-is.
-				if (pack.count == 1) {
-					auto expr = pack[0];
-
-					if (get_span_subtype(expr->type)) {
-						call->sorted_arguments[i] = pack[0];
-						continue;
-					}
-				}
-
-				for (auto &elem : pack) {
-					make_concrete(state, &elem);
-					if (!implicitly_cast(state, &state->reporter, &elem, elem_type, 0)) {
-						state->reporter.error(elem->location, "INTERNAL ERROR: implicit cast did not succeed the second time for pack.");
-						yield(TypecheckResult::fail);
-					}
-				}
-
-				auto array = AstArrayInitializer::create();
-				array->elements = (decltype(array->elements))pack;
-				if (array->elements.count)
-					array->location = {array->elements.front()->location.begin(), array->elements.back()->location.end()};
-
-				auto type = AstArray::create();
-				type->element_type = elem_type;
-				type->count = (u64)array->elements.count;
-				// Cleanup: Is this needed?
-				type->count_expression = make_integer(type->count);
-				type->location = array->location;
-				type->type = compiler->builtin_type.ident;
-
-				array->type = type;
-				call->sorted_arguments[i] = array;
-			} else {
-				assert(pack.count == 1);
-				call->sorted_arguments[i] = pack[0];
-			}
-		}
-	} else {
-		call->sorted_arguments.reserve(match.sorted_arguments_lambda.count);
-		for (umm i = 0; i < match.sorted_arguments_lambda.count; ++i) {
-			auto param = match.lambda->parameters[i];
-			auto &args = match.sorted_arguments_lambda[i];
-
-			assert(args.count == 1);
-			if (param->is_constant) {
-				call->sorted_arguments.add(0);
-			} else {
-				make_concrete(state, &args.data[0]);
-				call->sorted_arguments.add(args.data[0]);
-			}
-		}
-	}
-
-
-	assert(call->sorted_arguments.count == lambda->parameters.count);
-
-	for (u32 i = 0; i < call->sorted_arguments.count; ++i) {
-		auto &argument = call->sorted_arguments[i];
-		auto &parameter = lambda->parameters[i];
-
-		assert(!parameter->is_poly);
-		if (argument) {
-			if (!implicitly_cast(state, &state->reporter, &argument, parameter->type, 0)) {
-				state->reporter.error(argument->location, "INTERNAL ERROR: implicit cast did not succeed the second time.");
-				yield(TypecheckResult::fail);
-			}
-		}
-	}
-
-	//if (lambda->is_member) {
-	//	assert(probably_this);
-	//	if (!is_type(probably_this)) {
-	//		auto pointer = make_address_of(&state->reporter, probably_this);
-	//		if (!pointer)
-	//			yield(TypecheckResult::fail);
-	//		call->sorted_arguments.insert_at(pointer, 0);
-	//	}
-	//}
-
-	// NOTE: not sure if this wait is necessary
-	wait_for(
-		state, lambda->location, "deduced return type",
-		[&] { return lambda->return_parameter; },
-		[&] {
-			// This message feels like noise
-			// state->reporter.error(lambda->location, "Could not deduce the return type.");
-			// state->reporter.info(call->location, "Called here:");
-		}
-	);
-
-	assert(lambda->return_parameter->container_node == lambda);
-	if (!lambda->return_parameter) {
-		state->reporter.error(call->location, "Lambda's return parameter is undefined. This is probably due to errors while hardening a poly.");
-		yield(TypecheckResult::fail);
-	}
-	call->type = lambda->return_parameter->type;
-
-	assert(lambda->type->kind == Ast_LambdaType);
-	call->lambda_type = (AstLambdaType *)lambda->type;
-	assert(call->lambda_type);
-
-
-	if (lambda->is_macro) {
-		auto inserted_block = AstBlock::create();
-		inserted_block->location = call->location;
-		inserted_block->scope->parent = state->current_scope;
-
-		for (umm i = 0; i < call->sorted_arguments.count; ++i) {
-			auto &arg = call->sorted_arguments[i];
-			auto &param = lambda->parameters[i];
-
-			auto def = AstDefinition::create();
-			def->container_node = state->container_node;
-			def->name = param->name;
-			def->expression = arg;
-			def->location = arg->location;
-			def->parent_scope = inserted_block->scope;
-
-			inserted_block->scope->add(raw(def));
-		}
-
-#if 0
-
-		for (auto &statement : lambda->body_scope->statement_list) {
-			auto new_statement = deep_copy(statement);
-
-			inserted_block->scope->add(new_statement);
-			for_each_top_scope(new_statement, [&](Scope *scope) {
-				scope->parent = inserted_block->scope;
-			});
-
-			visit(new_statement, Combine{
-				[&](AstNode *){},
-				[&](AstReturn *Return) {
-					if (auto Lambda = as<AstLambda>(state->container_node)) {
-						Return->lambda = Lambda;
-					} else {
-						state->reporter.error(new_statement->location, "There's return statement in macro expansion, but we are currently not in a lambda.");
-						yield(TypecheckResult::fail);
-					}
-				},
-			});
-		}
-#else
-		auto copied_block = deep_copy(lambda->body);
-		copied_block->location = call->location;
-
-		inserted_block->scope->add(make_statement(copied_block));
-		for_each_top_scope(copied_block, [&](Scope *scope) {
-			scope->parent = inserted_block->scope;
-		});
-
-		visit(copied_block, Combine{
-			[&](AstNode *){},
-			[&](AstReturn *Return) {
-				if (auto Lambda = as<AstLambda>(state->container_node)) {
-					Return->lambda = Lambda;
-				} else {
-					state->reporter.error(copied_block->location, "There's return statement in macro expansion, but we are currently not in a lambda.");
-					yield(TypecheckResult::fail);
-				}
-			},
-		});
-#endif
-
-		typecheck(state, inserted_block);
-
-		return inserted_block;
-	}
-
-	if (auto lambda_type = direct_as<AstLambdaType>(call->callable->type)) {
-		assert(!lambda_type->lambda->is_poly);
-	}
-
-	return call;
-}
-AstExpression *apply_overload_struct(TypecheckState *state, AstCall *call, Overload &match) {
-	call->sorted_arguments = (decltype(call->sorted_arguments))match.sorted_arguments_struct;
-
-	if (match.Struct->is_template) {
-		// Make sure arguments are constant
-		for (auto &argument : call->sorted_arguments) {
-			if (argument) {
-				if (!is_constant(argument)) {
-					state->reporter.error(argument->location, "Only constants can be here.");
-					yield(TypecheckResult::fail);
-				}
-			} else {
-				state->reporter.error(call->location, "Not enough template arguments.");
-				yield(TypecheckResult::fail);
-			}
-		}
-
-		// Search cached instantiations
-		for (auto instantiated : match.Struct->instantiations) {
-			assert(instantiated.arguments.count == call->sorted_arguments.count);
-			bool all_args_match = true;
-			for (umm i = 0; i < call->sorted_arguments.count; ++i) {
-				if (!types_match(instantiated.arguments[i], call->sorted_arguments[i])) {
-					all_args_match = false;
-					break;
-				}
-			}
-			if (all_args_match) {
-				return instantiated.ident;
-			}
-		}
-		// NOTE: We need to add this before typechecking the instantiated struct, so it can reference itself.
-		auto &instantiation = match.Struct->instantiations.add();
-		instantiation.arguments = call->sorted_arguments;
-
-
-		// Instantiate a struct with specified arguments
-
-		auto instantiated_struct = AstStruct::create();
-
-		instantiation.Struct = instantiated_struct;
-
-		instantiated_struct->instantiated_from = match.Struct;
-		instantiated_struct->is_template = false;
-		instantiated_struct->is_union = match.Struct->is_union;
-		instantiated_struct->layout = match.Struct->layout;
-		instantiated_struct->location = call->location;
-		instantiated_struct->parameter_scope->parent = match.Struct->parameter_scope->parent;
-		for (umm i = 0; i < call->sorted_arguments.count; ++i) {
-			auto &argument = call->sorted_arguments[i];
-			auto &template_parameter = match.Struct->parameter_scope->definition_list[i];
-			auto parameter = AstDefinition::create();
-			parameter->name = template_parameter->name;
-			parameter->location = template_parameter->location;
-			parameter->container_node = instantiated_struct;
-			parameter->expression = argument;
-			parameter->is_constant = true;
-			parameter->type = argument->type;
-			instantiated_struct->parameter_scope->add(raw(parameter));
-		}
-
-		for (umm i = 0; i < call->sorted_arguments.count; ++i) {
-			auto &argument = call->sorted_arguments[i];
-			auto &member = instantiated_struct->parameter_scope->definition_list[i];
-			if (argument) {
-				if (!implicitly_cast(state, &state->reporter, &argument, member->type, 0)) {
-					state->reporter.error(argument->location, "INTERNAL ERROR: implicit cast did not succeed the second time.");
-					yield(TypecheckResult::fail);
-				}
-			} else {
-				argument = state->make_null(member->type, call->location);
-			}
-		}
-
-		auto instantiated_struct_definition = AstDefinition::create();
-		instantiated_struct_definition->name = type_to_string(call);
-
-		assert(match.Struct->definition);
-		instantiated_struct_definition->container_node = match.Struct->definition->container_node;
-		instantiated_struct_definition->expression = instantiated_struct;
-		instantiated_struct_definition->is_constant = true;
-		instantiated_struct_definition->parent_scope = match.Struct->definition->parent_scope;
-		instantiated_struct_definition->type = compiler->builtin_type.ident;
-		instantiated_struct->definition = instantiated_struct_definition;
-
-		// Typecheck instantiated body.
-
-		deep_copy(instantiated_struct->member_scope, match.Struct->member_scope);
-
-		// NOTE: instantiation.ident must be set before calling typecheck on instantiated_struct
-		auto instantiated_struct_ident = AstIdentifier::create();
-
-		instantiation.ident = instantiated_struct_ident;
-
-		instantiated_struct_ident->location = instantiated_struct->location;
-		instantiated_struct_ident->possible_definitions.set(instantiated_struct_definition);
-		instantiated_struct_ident->type = instantiated_struct_definition->type;
-		instantiated_struct_ident->directed = instantiated_struct;
-		instantiated_struct_ident->name = call->location;
-
-		typecheck(state, instantiated_struct);
-
-		return instantiated_struct_ident;
-	} else {
-		for (umm i = 0; i < call->sorted_arguments.count; ++i) {
-			auto &argument = call->sorted_arguments[i];
-			auto &member = match.Struct->data_members[i];
-			if (argument) {
-				if (!implicitly_cast(state, &state->reporter, &argument, member->type, 0)) {
-					state->reporter.error(argument->location, "INTERNAL ERROR: implicit cast did not succeed the second time.");
-					yield(TypecheckResult::fail);
-				}
-			} else {
-				if (member->expression) {
-					argument = evaluate(state, member->expression);
-				} else {
-					if (auto member_struct = direct_as<AstStruct>(member->type); member_struct && member_struct->default_value) {
-						argument = deep_copy(raw(member_struct->default_value));
-					} else {
-						argument = state->make_null(member->type, call->location);
-					}
-				}
-			}
-		}
-		call->type = call->callable;
-		if (call->callable->kind == Ast_Identifier) {
-			auto ident = (AstIdentifier *)call->callable;
-			ident->possible_definitions.set(match.definition);
-		}
-
-		return call;
-	}
-}
-AstExpression *apply_overload_distinct(TypecheckState *state, AstCall *call, Overload &match) {
-	auto Distinct = match.Distinct;
-	if (!implicitly_cast(state, &state->reporter, &call->sorted_arguments[0], Distinct->expression)) {
-		state->reporter.error(call->sorted_arguments[0]->location, "INTERNAL ERROR: implicit cast did not succeed the second time (distinct).");
-		yield(TypecheckResult::fail);
-	}
-
-	auto result = call->sorted_arguments[0];
-	result->type = Distinct->identifier;
-	return result;
-}
-
-AstExpression *apply_overload(TypecheckState *state, AstCall *call, Overload &match) {
-
-	if (call->debug_overload) {
-		immediate_info(match.definition->location, "DEBUG: Selected");
-	}
-
-	call->callable = match.callable;
-
-	// NOTE: overloading is possible only with definitions, so match.definition must be set.
-	if (types_match(call->callable->type, compiler->builtin_overload_set)) {
-		call->callable->type = match.definition->type;
-
-		// Right now i don't see what other nodes could be here
-		assert(call->callable->kind == Ast_Identifier);
-		auto identifier = (AstIdentifier *)call->callable;
-		identifier->possible_definitions.set(match.definition);
-	}
-
-	if (match.lambda) return apply_overload_lambda(state, call, match);
-	if (match.Struct) return apply_overload_struct(state, call, match);
-	if (match.Distinct) return apply_overload_distinct(state, call, match);
-
-	invalid_code_path();
-}
-
 HashMap<AstStruct *, AstIdentifier *> generated_comparers;
 
 AstExpression *typecheck(TypecheckState *state, AstIdentifier *identifier) {
@@ -9612,6 +9881,7 @@ AstExpression *typecheck(TypecheckState *state, AstCall *call) {
 	}
 
 	List<Overload> overloads;
+	overloads.allocator = temporary_allocator;
 
 	get_overloads(state, call, overloads);
 
@@ -9775,6 +10045,7 @@ AstExpression *typecheck(TypecheckState *state, AstLambda *lambda) {
 	push_scope(lambda->parameter_scope);
 
 	if (lambda->is_poly) {
+		lambda->finished_typechecking_head = true;
 		return lambda;
 	}
 
@@ -10853,7 +11124,7 @@ AstExpression *typecheck(TypecheckState *state, AstBinaryOperator *bin) {
 			}
 
 			struct Candidate {
-				OeratorOverload overload;
+				OperatorOverload overload;
 				bool ass;
 			};
 			List<Candidate> candidates;
@@ -11297,14 +11568,6 @@ AstExpression *typecheck(TypecheckState *state, AstStruct *Struct) {
 					}
 
 					case TypecheckResult::success: {
-						auto all = [](auto x, auto predicate) {
-							for (auto v : x) {
-								if (!predicate(v))
-									return false;
-							}
-							return true;
-						};
-
 						if (Struct->size == -1 && all(Struct->data_members, [](auto d){ return d->type; })) {
 
 							bool has_default_initialized_members = false;
@@ -11841,6 +12104,12 @@ AstExpression *typecheck(TypecheckState *state, AstDistinct *Distinct) {
 	Distinct->type = Distinct->expression->type;
 	return Distinct;
 }
+AstExpression *typecheck(TypecheckState *state, AstForMarker *ForMarker) {
+	state->reporter.error(ForMarker->location, "{} is usable only inside for overloads.", ForMarker->location);
+	yield(TypecheckResult::fail);
+	return ForMarker;
+}
+AstExpression *typecheck(TypecheckState *state, AstTuple *Tuple) { not_implemented(); }
 
 void typecheck(TypecheckState *state, CExpression auto &expression) {
 	assert(expression);
@@ -11860,61 +12129,11 @@ void typecheck(TypecheckState *state, CExpression auto &expression) {
 	auto new_expression = expression;
 
 	switch (expression->kind) {
-		case Ast_Identifier:       new_expression = typecheck(state, (AstIdentifier       *)expression); break;
-		case Ast_Call:             new_expression = typecheck(state, (AstCall             *)expression); break;
-		case Ast_Literal:          new_expression = typecheck(state, (AstLiteral          *)expression); break;
-		case Ast_Lambda:           new_expression = typecheck(state, (AstLambda           *)expression); break;
-		case Ast_LambdaType:       new_expression = typecheck(state, (AstLambdaType       *)expression); break;
-		case Ast_BinaryOperator:   new_expression = typecheck(state, (AstBinaryOperator   *)expression); break;
-		case Ast_UnaryOperator:    new_expression = typecheck(state, (AstUnaryOperator    *)expression); break;
-		case Ast_Struct:           new_expression = typecheck(state, (AstStruct           *)expression); break;
-		case Ast_Subscript:        new_expression = typecheck(state, (AstSubscript        *)expression); break;
-		case Ast_Array:            new_expression = typecheck(state, (AstArray            *)expression); break;
-		case Ast_Span:             new_expression = typecheck(state, (AstSpan             *)expression); break;
-		case Ast_If:               new_expression = typecheck(state, (AstIf               *)expression); break;
-		case Ast_Test:             new_expression = typecheck(state, (AstTest             *)expression); break;
-		case Ast_Enum:             new_expression = typecheck(state, (AstEnum             *)expression); break;
-		case Ast_ArrayInitializer: new_expression = typecheck(state, (AstArrayInitializer *)expression); break;
-		case Ast_Block:            new_expression = typecheck(state, (AstBlock            *)expression); break;
-		case Ast_Match:            new_expression = typecheck(state, (AstMatch            *)expression); break;
-		case Ast_Distinct:         new_expression = typecheck(state, (AstDistinct         *)expression); break;
-#if 0
-		case Ast_Import: {
-			auto import = (AstImport *)expression;
-			import->type = import; // MYTYPEISME
-			state->current_scope->append(*import->scope);
-
-			// TODO: if import path is a literal, maybe do it at parse time?
-
-			auto path_literal = evaluate(state, import->expression);
-			if (!path_literal) {
-				yield(TypecheckResult::fail);
-			}
-
-			if (path_literal->literal_kind != LiteralKind::string) {
-				state->reporter.error(import->expression->location, "Import expression must be a string");
-				yield(TypecheckResult::fail);
-			}
-
-			for (auto import_path : import_paths) {
-				auto child = parse_file((String)concatenate(import_path, '\\', path_literal->string));
-				if (child->result == ParseResult::ok) {
-					break;
-				}
-				if (child->result == ParseResult::read_error) {
-					continue;
-				}
-				assert(child->result == ParseResult::syntax_error);
-				state->reporter.reports.add(child->reporter.reports);
-				yield(TypecheckResult::fail);
-			}
-
-			break;
-		}
-#endif
+#define e(name) case Ast_##name: new_expression = typecheck(state, (Ast##name *)expression); break;
+ENUMERATE_EXPRESSION_KIND
+#undef e
 		default: {
-			state->reporter.error(new_expression->location, "Internal error: typecheck(AstExpression *): unhandled case '{}'", new_expression->kind);
-			invalid_code_path();
+			state->reporter.error(expression->location, "INTERNAL ERROR: Invalid expression kind: {}", expression->kind);
 			yield(TypecheckResult::fail);
 		}
 	}
@@ -12342,6 +12561,7 @@ void mark_referenced_definitions(AstSpan *Span) { invalid_code_path("'Span' node
 void mark_referenced_definitions(AstDistinct *Distinct) {
 	mark_referenced_definitions(Distinct->expression);
 }
+void mark_referenced_definitions(AstForMarker *ForMarker) { invalid_code_path("'ForMarker' node should be replaced after typechecking"); }
 
 struct ParsedArguments {
 	String target;
@@ -12943,7 +13163,7 @@ binary_typecheckers.get_or_insert({BinaryOperation::op, compiler->builtin_##l.St
 		if (literal) {
 			assert(literal->literal_kind == LiteralKind::integer);
 		} else {
-			literal = deep_copy(get_literal(unsized_integer));
+			literal = deep_copy_kk(get_literal(unsized_integer));
 		}
 
 		literal->literal_kind = LiteralKind::Float;
@@ -13254,6 +13474,8 @@ restart_main:
 	construct(binary_operators);
 	construct(unary_operators);
 
+	construct(for_overloads);
+
 	construct(has_value_overloads);
 
 	construct(typeinfo_definitinos);
@@ -13558,8 +13780,8 @@ restart_main:
 										append(builder, direct(definition->expression));
 										append(builder, ", ");
 									}
-									statement.state->reporter.info(entry.call->location, "While resolving {}", entry.call->callable->location);
-									statement.state->reporter.info(entry.template_lambda->location, "With {}", to_string(builder));
+									statement.state->reporter.info(entry.call_location, "While resolving {}", entry.call_location);
+									statement.state->reporter.info(entry.template_lambda_location, "With {}", to_string(builder));
 								}
 							}
 						}
