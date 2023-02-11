@@ -371,7 +371,7 @@ _debug_error:
 						case SectionKind::data_readonly: append_format(builder, "constants+{}"s, offset); break;
 						case SectionKind::data_readwrite: append_format(builder, "rwdata+{}"s, offset); break;
 						case SectionKind::data_zero: append_format(builder, "zeros+{}"s, offset); break;
-						case SectionKind::code: append_format(builder, "i{}"s, relocation->lambda->location_in_bytecode); break;
+						case SectionKind::code: append_format(builder, "i{}"s, relocation->lambda->location_in_bytecode + offset); break;
 					}
 
 					i += 8;

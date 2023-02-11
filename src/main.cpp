@@ -1972,17 +1972,18 @@ void parse_expression_0(Parser *parser, AstExpression *&result) {
 				return;
 			parser->next_solid();
 
+
+
 			while (parser->token->kind != '}') {
 				auto &Case = Match->cases.add();
 
 				if (parser->token->kind == 'else') {
-					if (Match->default_case) {
+					if (Match->default_case_location.count) {
 						parser->reporter->error(parser->token->string, "Redefinition of else block");
 						parser->reporter->info(Match->default_case_location, "Previously defined here");
 						return;
 					}
 					Match->default_case_location = parser->token->string;
-					Match->default_case = &Case;
 
 					parser->next_solid();
 				} else {
@@ -1994,14 +1995,18 @@ void parse_expression_0(Parser *parser, AstExpression *&result) {
 				if (parser->token->kind == '=>')
 					parser->next_solid();
 
-				Case.block = parse_block(parser, {.allow_no_braces = true});
-				if (!Case.block)
+				Case.body = parse_block(parser, {.allow_no_braces = true});
+				if (!Case.body)
 					return;
 
-				Case.block->scope->node = Match;
 				skip_newlines(parser);
 			}
 			parser->next();
+
+			if (Match->cases.count == 0) {
+				parser->reporter->error(Match->location, "`match` must have at least one case.");
+				return;
+			}
 
 			result = Match;
 			return;
@@ -4523,8 +4528,10 @@ void for_each_top_scope(AstNode *node, auto &&fn) {
 		}
 		case Ast_Match: {
 			auto Match = (AstMatch *)node;
-			for (auto &Case : Match->cases)
-				fn(Case.block->scope);
+			for (auto &Case : Match->cases) {
+				for_each_top_scope(Case.expression, fn);
+				for_each_top_scope(Case.body, fn);
+			}
 			break;
 		}
 		case Ast_ForMarker: {
@@ -6186,6 +6193,8 @@ bool implicitly_cast(TypecheckState *state, Reporter *reporter, CExpression auto
 	return false;
 }
 
+AstExpression *set_common_type(TypecheckState *state, Span<AstExpression **> expressions);
+
 bool is_concrete_type(AstExpression *type) {
 	assert(is_type(type), "is_concrete_type accepts a type, but got an expression");
 	if (types_match(type, compiler->builtin_unsized_integer) ||
@@ -6210,9 +6219,9 @@ AstExpression *get_concrete_type(AstExpression *type) {
 	return type;
 }
 
-void make_concrete(TypecheckState *state, AstExpression **_expression, AstExpression *target_type = 0);
+void make_concrete(TypecheckState *state, AstExpression **_expression, AstExpression *target_type = 0, bool is_minor_statement = false);
 
-void make_concrete(TypecheckState *state, AstBlock *block, AstExpression *target_type = 0) {
+void make_concrete(TypecheckState *state, AstBlock *block, AstExpression *target_type = 0, bool is_minor_statement = false) {
 	if (block->scope->statement_list.count == 0)
 		return;
 
@@ -6220,10 +6229,10 @@ void make_concrete(TypecheckState *state, AstBlock *block, AstExpression *target
 	if (!es)
 		return;
 
-	make_concrete(state, &es->expression, target_type);
+	make_concrete(state, &es->expression, target_type, is_minor_statement);
 	block->type = es->expression->type;
 }
-void make_concrete(TypecheckState *state, AstExpression **_expression, AstExpression *target_type) {
+void make_concrete(TypecheckState *state, AstExpression **_expression, AstExpression *target_type, bool is_minor_statement) {
 	auto &expression = *_expression;
 
 	if (is_concrete_type(expression->type)) {
@@ -6275,9 +6284,12 @@ void make_concrete(TypecheckState *state, AstExpression **_expression, AstExpres
 			auto tc = is_concrete_type(If->true_block->type);
 			auto fc = is_concrete_type(If->false_block->type);
 
-			if (!tc && !fc) {
-				make_concrete(state, If->true_block, target_type);
-				make_concrete(state, If->false_block, target_type);
+			if ((!tc && !fc) || is_minor_statement) {
+				make_concrete(state, If->true_block, target_type, is_minor_statement);
+				make_concrete(state, If->false_block, target_type, is_minor_statement);
+
+				if (is_minor_statement)
+					break;
 			}
 
 			if (types_match(If->true_block->type, If->false_block->type)) {
@@ -6335,7 +6347,7 @@ void make_concrete(TypecheckState *state, AstExpression **_expression, AstExpres
 			switch (UnaryOperator->operation) {
 				case UnaryOperation::plus:
 				case UnaryOperation::minus: {
-					make_concrete(state, &UnaryOperator->expression, target_type);
+					make_concrete(state, &UnaryOperator->expression, target_type, is_minor_statement);
 					UnaryOperator->type = UnaryOperator->expression->type;
 					break;
 				}
@@ -6344,7 +6356,38 @@ void make_concrete(TypecheckState *state, AstExpression **_expression, AstExpres
 		}
 		case Ast_Block: {
 			auto Block = (AstBlock *)expression;
-			make_concrete(state, Block, target_type);
+			make_concrete(state, Block, target_type, is_minor_statement);
+			break;
+		}
+		case Ast_Match: {
+			auto Match = (AstMatch *)expression;
+
+			if (!is_minor_statement) {
+				if (!Match->default_case_location.count) {
+					state->reporter.error(Match->location, "All cases must be handled to use `match` as an expression.");
+					yield(TypecheckResult::fail);
+				}
+			}
+
+			List<AstExpression *> storage;
+			storage.allocator = state->temporary_allocator;
+
+			List<AstExpression **> vals;
+			vals.allocator = state->temporary_allocator;
+
+			for (auto &Case : Match->cases) {
+				storage.add(Case.body);
+			}
+			for (auto &value : storage) {
+				vals.add(&value);
+			}
+
+			Match->type = set_common_type(state, vals);
+
+			for (umm i = 0; i < storage.count; ++i) {
+				assert(storage[i] == Match->cases[i].body);
+			}
+
 			break;
 		}
 		default:
@@ -6805,6 +6848,10 @@ void typecheck(TypecheckState *state, Scope *scope) {
 	push_scope(scope);
 	for (auto &statement : scope->statement_list) {
 		typecheck(state, statement);
+
+		if (&statement != &scope->statement_list.back())
+			if (auto ExpressionStatement = as<AstExpressionStatement>(statement))
+				make_concrete(state, &ExpressionStatement->expression, 0, true);
 	}
 }
 
@@ -8681,7 +8728,7 @@ bool is_hardenable(AstExpression *type) {
 	return false;
 }
 
-AstExpression *set_common_return_type(TypecheckState *state, Span<AstExpression **> expressions) {
+AstExpression *set_common_type(TypecheckState *state, Span<AstExpression **> expressions) {
 	if (expressions.count == 0)
 		return compiler->builtin_void.ident;
 
@@ -8717,6 +8764,10 @@ AstExpression *set_common_return_type(TypecheckState *state, Span<AstExpression 
 	}
 
 	if (concretes.count == 0) {
+		if (all(inconcretes, [](auto e) { return types_match((*e)->type, compiler->builtin_void) || types_match((*e)->type, compiler->builtin_unreachable); })) {
+			return compiler->builtin_void.ident;
+		}
+
 		for (umm i = 0; i < inconcretes.count; ++i) {
 			if (is_hardenable((*inconcretes[i])->type)) {
 				auto &expression = *inconcretes[i];
@@ -8856,7 +8907,7 @@ void typecheck_body(TypecheckState *state, AstLambda *lambda) {
 			}
 		}
 
-		auto return_type = set_common_return_type(state, return_expressions);
+		auto return_type = set_common_type(state, return_expressions);
 		lambda->return_parameter = state->make_retparam(return_type, lambda);
 	}
 
@@ -12101,6 +12152,7 @@ AstExpression *typecheck(TypecheckState *state, AstBlock *Block) {
 }
 AstExpression *typecheck(TypecheckState *state, AstMatch *Match) {
 	typecheck(state, Match->expression);
+	make_concrete(state, &Match->expression);
 
 	bool has_default_case = false;
 	u32 n_cases_handled = 0;
@@ -12121,10 +12173,10 @@ AstExpression *typecheck(TypecheckState *state, AstMatch *Match) {
 
 			switch (case_value->literal_kind) {
 				case LiteralKind::integer:
-					Case.value = (u64)case_value->integer;
+					Case.value = (s64)case_value->integer;
 					break;
 				case LiteralKind::character:
-					Case.value = (u64)case_value->character;
+					Case.value = case_value->character;
 					break;
 				default:
 					state->reporter.error(Case.expression->location, "Currently only integers and characters are supported in match cases.");
@@ -12135,7 +12187,7 @@ AstExpression *typecheck(TypecheckState *state, AstMatch *Match) {
 		} else {
 			has_default_case = true;
 		}
-		typecheck(state, Case.block);
+		typecheck(state, Case.body);
 	}
 
 	if (!has_default_case) {
@@ -12182,12 +12234,12 @@ AstExpression *typecheck(TypecheckState *state, AstMatch *Match) {
 	}
 
 	if (Match->cases.count) {
-		auto result_type = Match->cases[0].block->type;
+		auto result_type = Match->cases[0].body->type;
 		for (auto &Case : Match->cases) {
 			if (&Case == &Match->cases[0])
 				continue;
 
-			if (!types_match(result_type, Case.block->type)) {
+			if (!types_match(result_type, Case.body->type)) {
 				result_type = compiler->builtin_void.ident;
 				break;
 			}
@@ -12650,7 +12702,7 @@ void mark_referenced_definitions(AstMatch *Match) {
 	for_each(Match->cases, [&](MatchCase &Case) {
 		if (Case.expression)
 			mark_referenced_definitions(Case.expression);
-		mark_referenced_definitions(raw(Case.block));
+		mark_referenced_definitions(raw(Case.body));
 	});
 }
 void mark_referenced_definitions(AstUsing *Using) {

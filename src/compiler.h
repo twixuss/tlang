@@ -971,8 +971,8 @@ struct AstLoopControl : AstStatement, StatementPool<AstLoopControl> {
 
 struct MatchCase {
 	AstExpression *expression = 0; // will be null for default case
-	u64 value = 0;
-	Expression<AstBlock> block = AstBlock::create();
+	AstBlock *body = 0;
+	s64 value = 0;
 };
 
 struct AstMatch : AstExpression, ExpressionPool<AstMatch> {
@@ -981,8 +981,7 @@ struct AstMatch : AstExpression, ExpressionPool<AstMatch> {
 	}
 
 	Expression<> expression = {};
-	BlockList<MatchCase> cases;
-	MatchCase *default_case = 0;
+	List<MatchCase> cases;
 	String default_case_location = {};
 };
 

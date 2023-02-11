@@ -303,6 +303,15 @@ inline umm append_instruction(StringBuilder &builder, s64 idx, Instruction i) {
 "pop rdx", i.mods_rr.d, i.mods_rr.s, i.mods_rr.d);
 			break;
 
+		case divu_rc:
+			return append_format(builder,
+"push rdx\n"
+"xor rdx,rdx\n"
+"mov rax,{}\n"
+"div {}\n"
+"mov {},rax\n"
+"pop rdx", i.divu_rc.d, i.divu_rc.s, i.divu_rc.d);
+			break;
 
 		case or_rc: return append_format(builder, "or {},{}", i.or_rc.d, i.or_rc.s);
 		case or_rr: return append_format(builder, "or {},{}", i. or_rr.d, i. or_rr.s);
@@ -345,7 +354,8 @@ inline umm append_instruction(StringBuilder &builder, s64 idx, Instruction i) {
 		case jlef_c: { return append_format(builder, "jle i{}", idx + i.jlef_c.offset); }
 		case jgef_c: { return append_format(builder, "jge i{}", idx + i.jgef_c.offset); }
 
-		case jmp: return append_format(builder, "jmp i{}", idx + i.jmp.offset);
+		case jmp_c: return append_format(builder, "jmp i{}", idx + i.jmp_c.offset);
+		case jmp_r: return append_format(builder, "jmp {}", i.jmp_r.d);
 
 			// Here move into rcx must be last, because it can be source for rdi or rsi
 		case copyf_mmc:

@@ -449,7 +449,7 @@ void print_lowered(AstMatch * match) {
 			print_tabbed("else");
 		}
 		print(" => ");
-		print_lowered(raw(Case.block));
+		print_lowered(raw(Case.body));
 	}
 
 	tab_count -= 1;

@@ -20,11 +20,11 @@ main :: () {
 	kind := Kind.identifier
 
 	println(match kind {
+		else => "unknown"
 		.literal => "literal"
 		.identifier => "identifier"
 		.\struct => "struct"
 		.\enum => "enum"
-		else => "unknown"
 	})
 
     return 0

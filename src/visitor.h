@@ -116,7 +116,7 @@ void visit_children(AstMatch *node, auto &&visitor) {
 		if (Case.expression) {
 			VISIT(Case.expression);
 		}
-		VISIT(Case.block);
+		VISIT(Case.body);
 	}
 }
 void visit_children(AstUsing *node, auto &&visitor) { VISIT(node->expression); }

@@ -734,9 +734,14 @@ got_breaker_name:;
 						}
 						break;
 					}
-					case jmp: {
-						REDECLARE_REF(i, i.jmp);
+					case jmp_c: {
+						REDECLARE_REF(i, i.jmp_c);
 						rip += i.offset;
+						return;
+					}
+					case jmp_r: {
+						REDECLARE_REF(i, i.jmp_r);
+						jump(_instructions.data + RU8(i.d));
 						return;
 					}
 					case jz_cr: {

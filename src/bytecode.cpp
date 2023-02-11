@@ -73,6 +73,8 @@ inline constexpr bool is_temporary_register(Register r) { return (umm)r < tempor
 #define DEBUG_TEMPORARY_REGISTER_ALLOCATION BYTECODE_DEBUG
 
 struct FrameBuilder {
+	AstLambda *lambda;
+
 	InstructionList instructions;
 
 	RegisterSet available_registers;
@@ -1592,7 +1594,7 @@ void FrameBuilder::append_return(AstLambda *lambda, AstExpression *expression) {
 	}
 
 	auto jump_index = (s64)count_of(instructions);
-	auto return_jump = II(jmp, 0);
+	auto return_jump = II(jmp_c, 0);
 
 	lambda->return_jumps.add({return_jump, jump_index});
 }
@@ -1673,7 +1675,7 @@ void FrameBuilder::append(AstWhile *While) {
 
 	auto count_after_body = count_of(instructions);
 
-	I(jmp, .offset=0)->offset = (s64)count_before_condition - (s64)count_after_body;
+	I(jmp_c, .offset=0)->offset = (s64)count_before_condition - (s64)count_after_body;
 
 	I(jmp_label);
 
@@ -1684,10 +1686,10 @@ void FrameBuilder::append(AstWhile *While) {
 	for (auto jmp : controls) {
 		switch (jmp.control) {
 			case LoopControl::Break:
-				jmp.jmp->jmp.offset = (s64)count_after_body - (s64)jmp.index + 1;
+				jmp.jmp->jmp_c.offset = (s64)count_after_body - (s64)jmp.index + 1;
 				break;
 			case LoopControl::Continue:
-				jmp.jmp->jmp.offset = (s64)count_before_condition - (s64)jmp.index;
+				jmp.jmp->jmp_c.offset = (s64)count_before_condition - (s64)jmp.index;
 				break;
 			default:
 				break;
@@ -1737,7 +1739,7 @@ void FrameBuilder::append(AstLoopControl *LoopControl) {
 		scope = scope->parent;
 	}
 	auto index = count_of(instructions);
-	auto instr = II(jmp);
+	auto instr = II(jmp_c);
 	loop_control_stack.back().add({index, instr, LoopControl->control});
 }
 
@@ -2110,7 +2112,7 @@ void FrameBuilder::append(AstIf *If, RegisterOrAddress destination) {
 	auto true_branch_first_instruction_index = count_of(instructions);
 	append(raw(If->true_block), destination);
 
-	auto jmp = I(jmp, .offset=0);
+	auto jmp = I(jmp_c, .offset=0);
 	I(jmp_label);
 
 	auto false_branch_first_instruction_index = count_of(instructions);
@@ -2126,61 +2128,166 @@ void FrameBuilder::append(AstIf *If, RegisterOrAddress destination) {
 void FrameBuilder::append(AstMatch *Match, RegisterOrAddress destination) {
 	COLLECT_STATS(AstMatch);
 
-	struct Jump {
-		Instruction *instruction;
-		umm index;
+	auto order = [](MatchCase Case) -> umm {
+		return Case.expression ? Case.value : -1;
 	};
 
-	List<Jump> jumps_to_cases;
-	List<Jump> jumps_out;
-	Jump jump_to_default = {};
+	std::sort(Match->cases.begin(), Match->cases.end(), [&](auto a, auto b) {
+		return order(a) < order(b);
+	});
 
-	bool has_default_case = false;
+	auto nondefault_case_count = count(Match->cases, [](auto c) { return c.expression; });
 
-	{
-		APPEND_INTO_REGISTER(matchable_reg, Match->expression);
-		for (auto &Case : Match->cases) {
-			if (Case.expression) {
-				tmpreg(case_reg);
-				tmpreg(cmpresult_reg);
+	bool is_contiguous = false;
+	s64 step = 0;
 
-				I(mov_rc, case_reg, (s64)Case.value);
-
-				switch (compiler->stack_word_size) {
-					case 4: I(cmpu4, cmpresult_reg, matchable_reg, case_reg, Comparison::e); break;
-					case 8: I(cmpu8, cmpresult_reg, matchable_reg, case_reg, Comparison::e); break;
-					default: invalid_code_path(Match->location);
-				}
-				jumps_to_cases.add({II(jnz_cr, 0, cmpresult_reg), instructions.count});
-			} else {
-				has_default_case = true;
+	if (nondefault_case_count >= 2) {
+		is_contiguous = true;
+		step = Match->cases[1].value - Match->cases[0].value;
+		assert(step != 0);
+		for (umm i = 2; i < nondefault_case_count; ++i) {
+			if (Match->cases[i].value - Match->cases[i-1].value != step) {
+				is_contiguous = false;
+				break;
 			}
 		}
 	}
 
-	if (has_default_case) {
-		jump_to_default = {II(jmp), instructions.count};
-	} else {
-		jumps_out.add({II(jmp), instructions.count});
-	}
+	struct IndexedInstruction {
+		umm index;
+		Instruction *instruction;
+	};
 
-	umm case_index = 0;
-	for (auto &Case : Match->cases) {
-		I(jmp_label);
-		if (Case.expression) {
-			jumps_to_cases[case_index].instruction->jnz_cr.offset = instructions.count - jumps_to_cases[case_index].index;
-		} else {
-			jump_to_default.instruction->jmp.offset = instructions.count - jump_to_default.index;
+#define INDEXED(i) IndexedInstruction{.index=instructions.count, .instruction=(i)}
+
+	if (is_contiguous) {
+		List<u64> cases_instruction_indices;
+
+		List<IndexedInstruction> jumps_out;
+		IndexedInstruction jump_to_default = {};
+
+		bool has_default_case = false;
+
+		Instruction *load_jump_table_address_instruction = 0;
+
+		{
+			APPEND_INTO_REGISTER(matchable_reg, Match->expression);
+			I(sub_rc, matchable_reg, Match->cases[0].value);
+			tmpreg(tmp);
+			I(mov_rc, tmp, step);
+			I(divu_rr, matchable_reg, tmp);
+
+			auto &last_nondefault = Match->cases[Match->cases.count - 1];
+			if (!last_nondefault.expression)
+				last_nondefault = Match->cases[Match->cases.count - 2];
+
+			s64 max_value = (last_nondefault.value - Match->cases[0].value) / step;
+
+
+			// TODO: this can be done without branches:
+			//       clamp the value to max_value + 1
+			//       entry at max_value + 1 in jump table points to default case.
+			I(mov_rc, tmp, max_value);
+			I(cmps8, tmp, matchable_reg, tmp, Comparison::g);
+			I(jnz_cr, 3, tmp);
+
+			load_jump_table_address_instruction = II(mov8_rm, tmp, Register::constants + matchable_reg * 8);
+			I(jmp_r, tmp);
 		}
 
-		append(raw(Case.block), destination);
-		jumps_out.add({II(jmp), instructions.count});
-		case_index++;
-	}
-	I(jmp_label);
+		I(jmp_label);
+		if (has_default_case) {
+			jump_to_default = INDEXED(II(jmp_c));
+		} else {
+			jumps_out.add(INDEXED(II(jmp_c)));
+		}
 
-	for (auto &jump_out : jumps_out) {
-		jump_out.instruction->jmp.offset = instructions.count - jump_out.index;
+		umm case_index = 0;
+		for (auto &Case : Match->cases) {
+			if (Case.expression) {
+				cases_instruction_indices.add(instructions.count);
+			} else {
+				jump_to_default.instruction->jmp_c.offset = instructions.count - jump_to_default.index;
+			}
+			I(jmp_label);
+
+			append(Case.body, destination);
+			jumps_out.add({instructions.count, II(jmp_c)});
+			case_index++;
+		}
+
+		auto jump_table_offset = compiler->constant_section.buffer.count;
+		for (auto index : cases_instruction_indices) {
+			compiler->constant_section.relocations.add(Relocation {
+				.section = SectionKind::code,
+				.offset = compiler->constant_section.w8(index),
+				.lambda = lambda,
+			});
+		}
+		load_jump_table_address_instruction->mov8_rm.s.c += jump_table_offset;
+
+
+		for (auto &jump_out : jumps_out) {
+			jump_out.instruction->jmp_c.offset = instructions.count - jump_out.index;
+		}
+		I(jmp_label);
+	} else {
+		struct Jump {
+			Instruction *instruction;
+			umm index;
+		};
+
+		List<Jump> jumps_to_cases;
+		List<Jump> jumps_out;
+		Jump jump_to_default = {};
+
+		bool has_default_case = false;
+
+		{
+			APPEND_INTO_REGISTER(matchable_reg, Match->expression);
+			for (auto &Case : Match->cases) {
+				if (Case.expression) {
+					tmpreg(case_reg);
+					tmpreg(cmpresult_reg);
+
+					I(mov_rc, case_reg, (s64)Case.value);
+
+					switch (compiler->stack_word_size) {
+						case 4: I(cmpu4, cmpresult_reg, matchable_reg, case_reg, Comparison::e); break;
+						case 8: I(cmpu8, cmpresult_reg, matchable_reg, case_reg, Comparison::e); break;
+						default: invalid_code_path(Match->location);
+					}
+					jumps_to_cases.add({II(jnz_cr, 0, cmpresult_reg), instructions.count});
+				} else {
+					has_default_case = true;
+				}
+			}
+		}
+
+		if (has_default_case) {
+			jump_to_default = {II(jmp_c), instructions.count};
+		} else {
+			jumps_out.add({II(jmp_c), instructions.count});
+		}
+
+		umm case_index = 0;
+		for (auto &Case : Match->cases) {
+			I(jmp_label);
+			if (Case.expression) {
+				jumps_to_cases[case_index].instruction->jnz_cr.offset = instructions.count - jumps_to_cases[case_index].index;
+			} else {
+				jump_to_default.instruction->jmp_c.offset = instructions.count - jump_to_default.index;
+			}
+
+			append(raw(Case.body), destination);
+			jumps_out.add({II(jmp_c), instructions.count});
+			case_index++;
+		}
+		I(jmp_label);
+
+		for (auto &jump_out : jumps_out) {
+			jump_out.instruction->jmp_c.offset = instructions.count - jump_out.index;
+		}
 	}
 }
 void FrameBuilder::append(AstBinaryOperator *bin, RegisterOrAddress destination) {
@@ -2346,7 +2453,7 @@ void FrameBuilder::append(AstBinaryOperator *bin, RegisterOrAddress destination)
 				} else {
 					I(mov1_mc, destination.address, 0);
 				}
-				I(jmp, 6);
+				I(jmp_c, 6);
 
 				I(jmp_label);
 				// load pointers
@@ -4522,6 +4629,8 @@ void BytecodeBuilder::append(AstLambda *lambda) {
 	frame.init();
 	defer { frame.free(); };
 
+	frame.lambda = lambda;
+
 	// ls.stack_state.init(get_size(lambda->return_parameter->type));
 
 	scoped_replace(current_node, lambda);
@@ -4616,7 +4725,7 @@ frame.add_instruction(MI(_kind, __VA_ARGS__))
 		if (offset == 1) {
 			i.jmp->kind = InstructionKind::noop;
 		} else {
-			i.jmp->jmp.offset = offset;
+			i.jmp->jmp_c.offset = offset;
 		}
 	}
 

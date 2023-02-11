@@ -374,7 +374,7 @@ DECLARE_OUTPUT_BUILDER {
 						case SectionKind::data_readonly: append_format(builder, "constants+{}"s, offset); break;
 						case SectionKind::data_readwrite: append_format(builder, "rwdata+{}"s, offset); break;
 						case SectionKind::data_zero: append_format(builder, "zeros+{}"s, offset); break;
-						case SectionKind::code: append_format(builder, "i{}"s, relocation->lambda->location_in_bytecode); break;
+						case SectionKind::code: append_format(builder, "i{}"s, relocation->lambda->location_in_bytecode + offset); break;
 					}
 
 					i += 8;
@@ -422,7 +422,7 @@ DECLARE_OUTPUT_BUILDER {
 
 		append(bat_builder, "if %errorlevel% neq 0 exit /b %errorlevel%\n");
 		append_format(bat_builder,
-			R"("{}\bin\Hostx64\x64\link" /nologo "{}.obj" /out:"{}" /nodefaultlib /entry:"main" /subsystem:console /DEBUG:FULL /LIBPATH:"{}\um\x64" /LIBPATH:"{}\libs" /LIBPATH:"{}\lib\x64" kernel32.lib)",
+			R"("{}\bin\Hostx64\x64\link" /LARGEADDRESSAWARE:NO /nologo "{}.obj" /out:"{}" /nodefaultlib /entry:"main" /subsystem:console /DEBUG:FULL /LIBPATH:"{}\um\x64" /LIBPATH:"{}\libs" /LIBPATH:"{}\lib\x64" kernel32.lib)",
 			msvc_directory,
 			output_path_base,
 			compiler->output_path,

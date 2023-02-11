@@ -29,6 +29,11 @@ struct Address {
 	forceinline explicit Address(Register base) : base(base) {}
 };
 
+struct ScaledRegister {
+	Register r = {};
+	u8 scale_index = {};
+};
+
 forceinline Address operator+(Register r, s64 c) {
 	assert(c == (s64)(s32)c);
 
@@ -37,13 +42,39 @@ forceinline Address operator+(Register r, s64 c) {
 	a.c = (s32)c;
 	return a;
 }
+forceinline Address operator+(Register r, ScaledRegister b) {
+	Address a;
+	a.base = r;
+	a.r1 = b.r;
+	a.r1_scale_index = b.scale_index;
+	return a;
+}
 forceinline Address operator+(Address a, s64 c) {
 	assert((s64)(a.c + (s32)c) == ((s64)a.c + c));
 	a.c += c;
 	return a;
 }
+forceinline Address operator+(Address a, ScaledRegister b) {
+	assert(a.r1_scale_index == 0);
+	a.r1 = b.r;
+	a.r1_scale_index = b.scale_index;
+	return a;
+}
 forceinline Address operator-(Register r, s64 c) { return r + (-c); }
 forceinline Address operator-(Address a, s64 c) { return a + (-c); }
+forceinline ScaledRegister operator*(Register r, s64 c) {
+	ScaledRegister result;
+	result.r = r;
+	switch (c) {
+		case 0: result.scale_index = 0; break;
+		case 1: result.scale_index = 1; break;
+		case 2: result.scale_index = 2; break;
+		case 4: result.scale_index = 3; break;
+		case 8: result.scale_index = 4; break;
+		default: invalid_code_path();
+	}
+	return result;
+}
 
 // enum class ValueLocation {
 // 	Register,       // value is in a register
@@ -224,7 +255,8 @@ e(jlf, c              , m(s64, offset)) \
 e(jgf, c              , m(s64, offset)) \
 e(jlef, c             , m(s64, offset)) \
 e(jgef, c             , m(s64, offset)) \
-w(jmp                 , m(s64, offset)) \
+e(jmp, c              , m(s64, offset)) \
+e(jmp, r              , m(Register, d)) \
 e(call, c             , m(s64, constant) m(AstLambda *, lambda)) \
 e(call, r             , m(Register, s)   m(AstLambda *, lambda)) \
 e(call, m             , m(Address, s)    m(AstLambda *, lambda)) \
