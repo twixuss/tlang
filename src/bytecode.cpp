@@ -1,6 +1,7 @@
 #include "bytecode.h"
 #include "compiler.h"
 #include "interpret.h"
+#include "visitor.h"
 // #include "x86_64.h"
 
 #include <algorithm>
@@ -56,8 +57,9 @@ struct DefinitionAddress {
 	};
 };
 
+#define GET_LINE __LINE__
 #if BYTECODE_DEBUG
-#define MI(_kind, ...) (Instruction{._kind={__VA_ARGS__}, .kind = InstructionKind::_kind, .line=(u64)__LINE__,})
+#define MI(_kind, ...) (Instruction{._kind={__VA_ARGS__}, .kind = InstructionKind::_kind, .line=((u64)GET_LINE),})
 #else
 #define MI(_kind, ...) {._kind={__VA_ARGS__}, .kind = InstructionKind::_kind}
 #endif
@@ -73,7 +75,7 @@ inline constexpr bool is_temporary_register(Register r) { return (umm)r < tempor
 #define DEBUG_TEMPORARY_REGISTER_ALLOCATION BYTECODE_DEBUG
 
 struct FrameBuilder {
-	AstLambda *lambda;
+	AstLambda *current_lambda;
 
 	InstructionList instructions;
 
@@ -363,7 +365,7 @@ struct FrameBuilder {
 	inline void not_m(Address d, s64 size) { tmpreg(t); mov_rm(t, d, size); I(not_r, t); mov_mr(d, t, size); }
 	inline void negi_m(Address d, s64 size) { tmpreg(t); mov_rm(t, d, size); I(negi_r, t); mov_mr(d, t, size); }
 
-	void copy(RegisterOrAddress dst, RegisterOrAddress src, s64 size, bool reverse);
+	void copy(RegisterOrAddress dst, RegisterOrAddress src, s64 size, bool reverse, std::source_location location = std::source_location::current());
 
 	void with_definition_address_of(AstDefinition *definition, auto &&fn);
 
@@ -371,6 +373,8 @@ struct FrameBuilder {
 	void append_cast(AstExpression *src, RegisterOrAddress dst, AstExpression *dst_type);
 
 	void check_null(Register pointer_reg, String location);
+
+	Address get_known_address_of(AstDefinition *definition);
 
 #if BYTECODE_DEBUG
 
@@ -510,7 +514,10 @@ void remove_last_instruction(BytecodeBuilder &builder) {
 		mov_rm(name2, CONCAT(_2, __LINE__).address, #append2##s == "append"s ? get_size(source2->type) : compiler->stack_word_size); \
 	}
 
-void FrameBuilder::copy(RegisterOrAddress dst, RegisterOrAddress src, s64 size, bool reverse) {
+void FrameBuilder::copy(RegisterOrAddress dst, RegisterOrAddress src, s64 size, bool reverse, std::source_location location) {
+#undef GET_LINE
+#define GET_LINE (location.line())
+
 	if (size == 0)
 		return;
 
@@ -557,6 +564,8 @@ void FrameBuilder::copy(RegisterOrAddress dst, RegisterOrAddress src, s64 size, 
 			}
 		}
 	}
+#undef GET_LINE
+#define GET_LINE __LINE__
 }
 
 thread_local AstNode *current_node;
@@ -1144,7 +1153,7 @@ Instruction *FrameBuilder::add_instruction(Instruction next) {
 	return &instructions.add(next);
 }
 
-Address get_known_address_of(AstDefinition *definition) {
+Address FrameBuilder::get_known_address_of(AstDefinition *definition) {
 
 	auto origin = get_definition_origin(definition);
 
@@ -1183,7 +1192,6 @@ void FrameBuilder::load_address_of(AstDefinition *definition, RegisterOrAddress 
 	auto addr = get_known_address_of(definition);
 
 	switch (get_definition_origin(definition)) {
-		case DefinitionOrigin::parameter:
 		case DefinitionOrigin::return_parameter: {
 			if (get_size(definition->type) > compiler->stack_word_size) {
 				// One layer of indirection
@@ -1442,7 +1450,6 @@ DefinitionAddress FrameBuilder::get_address_of(AstDefinition *definition) {
 	auto addr = get_known_address_of(definition);
 
 	switch (get_definition_origin(definition)) {
-		case DefinitionOrigin::parameter:
 		case DefinitionOrigin::return_parameter: {
 			if (get_size(definition->type) > compiler->stack_word_size) {
 				auto destination = allocate_register_or_temporary(compiler->stack_word_size);
@@ -1477,17 +1484,17 @@ void FrameBuilder::append_memory_set(Address d, s64 s, s64 size) {
 	s |= s << 8;
 
 	switch (size) {
-		case 1: instructions.add(MI(mov1_mc, d, s)); break;
-		case 2: instructions.add(MI(mov2_mc, d, s)); break;
-		case 4: instructions.add(MI(mov4_mc, d, s)); break;
+		case 1: I(mov1_mc, d, s); break;
+		case 2: I(mov2_mc, d, s); break;
+		case 4: I(mov4_mc, d, s); break;
 		case 8:
 			if (compiler->stack_word_size == 8) {
-				instructions.add(MI(mov8_mc, d, s));
+				I(mov8_mc, d, s);
 				break;
 			}
 			// fallthrough
 		default:
-			instructions.add(MI(set_mcc, d, (s8)s, (s32)size));
+			I(set_mcc, d, (s8)s, (s32)size);
 			break;
 	}
 }
@@ -2221,7 +2228,7 @@ void FrameBuilder::append(AstMatch *Match, RegisterOrAddress destination) {
 			compiler->constant_section.relocations.add(Relocation {
 				.section = SectionKind::code,
 				.offset = compiler->constant_section.w8(index),
-				.lambda = lambda,
+				.lambda = current_lambda,
 			});
 		}
 		load_jump_table_address_instruction->mov8_rm.s.c += jump_table_offset;
@@ -2859,11 +2866,22 @@ void FrameBuilder::append(AstCall *call, RegisterOrAddress destination) {
 
 	push_comment(format(u8"call {}", call->callable->location));
 
-	//if (call->callable->location == "foo")
-	//	debug_break();
-
 	if (call->lambda_type) {
 		auto lambda = call->lambda_type->lambda;
+
+		auto return_value_size = get_size(lambda->return_parameter->type);
+
+		// NOTE: We can't use destination directly if it's an address, because there's a chance that it aliases an argument
+		// RegisterOrAddress original_destination = destination;
+		// if (!original_destination.is_in_register) {
+		// 	auto temporary_destination = allocate_temporary_space(return_value_size);
+		// 	destination = temporary_destination;
+		// }
+		// defer {
+		// 	if (!original_destination.is_in_register) {
+		// 		copy(original_destination, destination, return_value_size, false);
+		// 	}
+		// };
 
 		struct ParamArg {
 			AstDefinition *param;
@@ -2886,10 +2904,14 @@ void FrameBuilder::append(AstCall *call, RegisterOrAddress destination) {
 		// NOTE:
 		// arguments with size <= compiler->stack_word_size are passed by value,
 		// otherwise they are passed by pointer
-		s64 parameters_bytes = param_args.count * word_size;
+		s64 parameters_bytes = [&] () -> s64 {
+			switch (lambda->convention) {
+				case CallingConvention::stdcall: return param_args.count * word_size;
+				case CallingConvention::tlang:   return lambda->parameters_size;
+				default: invalid_code_path();
+			}
+		}();
 		s32 return_parameter_bytes = word_size;
-
-		auto return_value_size = get_size(lambda->return_parameter->type);
 
 		auto stack_space_used_for_call = parameters_bytes + return_parameter_bytes;
 		if (lambda->convention == CallingConvention::stdcall)
@@ -2899,47 +2921,88 @@ void FrameBuilder::append(AstCall *call, RegisterOrAddress destination) {
 		auto return_value_address = Register::rs + parameters_bytes;
 
 		auto append_arguments = [&] {
-			// TODO: implement for 32-bit
-			assert(word_size == 8);
+			switch (lambda->convention) {
+				case CallingConvention::stdcall: {
+					// Arguments which are not more than 8 bytes are passed by value.
+					// Everyting else is passed by pointer.
 
-			// We need to first append all the arguments into temporary space, then put them on the stack, because
-			// nested function calls can overwrite the arguments.
+					// TODO: implement for 32-bit
+					assert(word_size == 8);
 
-			auto args_tmp = allocate_temporary_space(parameters_bytes);
+					// We need to first append all the arguments into temporary space, then put them on the stack, because
+					// nested function calls can overwrite the arguments.
 
-			for (umm i = 0; i < param_args.count; ++i) {
-				auto arg = param_args[i].arg;
-				auto param = param_args[i].param;
+					auto args_tmp = allocate_temporary_space(parameters_bytes);
 
-				auto arg_addr = args_tmp + (param_args.count-1-i)*8;
+					for (umm i = 0; i < param_args.count; ++i) {
+						auto arg = param_args[i].arg;
+						auto param = param_args[i].param;
 
-				auto size = ceil(get_size(arg->type), word_size);
-				if (size > word_size) {
-					// Put argument into temporary space and pass a pointer to it
-					auto tmp = allocate_temporary_space(size);
-					append(arg, tmp);
+						auto arg_addr = args_tmp + (param_args.count-1-i)*8;
 
-					tmpreg(r0);
-					I(lea, r0, tmp);
-					I(mov8_mr, arg_addr, r0);
-				} else {
-					// leave small argument on the stack.
-					append(arg, arg_addr);
+						auto size = ceil(get_size(arg->type), word_size);
+						if (size > word_size) {
+							// Put argument into temporary space and pass a pointer to it
+							auto tmp = allocate_temporary_space(size);
+							append(arg, tmp);
+
+							tmpreg(r0);
+							I(lea, r0, tmp);
+							I(mov8_mr, arg_addr, r0);
+						} else {
+							// leave small argument on the stack.
+							append(arg, arg_addr);
+						}
+					}
+
+					if (return_value_size > word_size) {
+						tmpreg(r0);
+						I(lea, r0, destination.address);
+						I(mov8_mr, return_value_address, r0);
+					}
+
+					for (umm i = 0; i < param_args.count; ++i) {
+						auto src = args_tmp + (param_args.count-1-i)*word_size;
+						tmpreg(r0);
+						auto dst = Register::rs + (param_args.count-1-i)*word_size;
+						I(mov8_rm, r0, src);
+						I(mov8_mr, dst, r0);
+					}
+					break;
 				}
-			}
+				case CallingConvention::tlang: {
+					// Everyting is passed by value
 
-			if (return_value_size > word_size) {
-				tmpreg(r0);
-				I(lea, r0, destination.address);
-				I(mov8_mr, return_value_address, r0);
-			}
+					// TODO: implement for 32-bit
+					assert(word_size == 8);
 
-			for (umm i = 0; i < param_args.count; ++i) {
-				auto src = args_tmp + (param_args.count-1-i)*word_size;
-				tmpreg(r0);
-				auto dst = Register::rs + (param_args.count-1-i)*word_size;
-				I(mov8_rm, r0, src);
-				I(mov8_mr, dst, r0);
+					// We need to first append all the arguments into temporary space, then put them on the stack, because
+					// nested function calls can overwrite the arguments.
+
+					auto args_tmp = allocate_temporary_space(parameters_bytes);
+
+					auto arg_addr = args_tmp;
+
+					for (umm i = 0; i < param_args.count; ++i) {
+						auto arg = param_args[i].arg;
+						auto param = param_args[i].param;
+
+						append(arg, arg_addr);
+
+						arg_addr.c += ceil(get_size(arg->type), word_size);
+
+					}
+
+					if (return_value_size > word_size) {
+						tmpreg(r0);
+						I(lea, r0, destination.address);
+						I(mov8_mr, return_value_address, r0);
+					}
+
+					copy(Address(Register::rs), args_tmp, parameters_bytes, false);
+					break;
+				}
+				default: invalid_code_path();
 			}
 		};
 
@@ -2947,6 +3010,7 @@ void FrameBuilder::append(AstCall *call, RegisterOrAddress destination) {
 			append_arguments();
 
 			assert(compiler->stack_word_size == 8);
+			assert(lambda->convention == CallingConvention::tlang);
 			auto name = lambda->definition->name;
 			if (name == "debug_break") {
 				I(debug_break);
@@ -2954,9 +3018,9 @@ void FrameBuilder::append(AstCall *call, RegisterOrAddress destination) {
 				tmpreg(rdst);
 				tmpreg(rsrc);
 				tmpreg(rsize);
-				I(mov8_rm, rsize, Address(Register::rs));
+				I(mov8_rm, rsize, Register::rs + 16);
 				I(mov8_rm, rsrc, Register::rs + 8);
-				I(mov8_rm, rdst, Register::rs + 16);
+				I(mov8_rm, rdst, Register::rs + 0);
 				I(copyf_mmr, Address(rdst), Address(rsrc), rsize);
 			} else if (name == "debug_print_int") {
 				tmpreg(r0);
@@ -4629,7 +4693,7 @@ void BytecodeBuilder::append(AstLambda *lambda) {
 	frame.init();
 	defer { frame.free(); };
 
-	frame.lambda = lambda;
+	frame.current_lambda = lambda;
 
 	// ls.stack_state.init(get_size(lambda->return_parameter->type));
 
@@ -4663,13 +4727,21 @@ void BytecodeBuilder::append(AstLambda *lambda) {
 	//	debug_break();
 
 
-	if (lambda->definition) {
-		frame.push_comment(format(u8"lambda {} {}", lambda->definition->name, lambda->location));
-	} else {
-		frame.push_comment(format(u8"lambda {} {}", where(lambda->location.data), lambda->location));
-	}
-	for (auto param : lambda->parameters) {
-		frame.push_comment(format("{} (__int64*)(rbp+{}),{}"str, param->name, compiler->stack_word_size + lambda->parameters_size - param->offset, ceil(get_size(param->type), 8ll)/8ll));
+	{
+		scoped_allocator(temporary_allocator);
+		StringBuilder comment_builder;
+		tl::append(comment_builder, "lambda ");
+		if (lambda->definition) {
+			tl::append(comment_builder, lambda->definition->name);
+		} else {
+			tl::append(comment_builder, where(lambda->location.data));
+		}
+		tl::append(comment_builder, type_to_string(lambda->type));
+		tl::append_format(comment_builder, "\nparameters_size={} locals_size={}\n", lambda->parameters_size, lambda->locals_size);
+		for (auto parameter : lambda->parameters) {
+			tl::append_format(comment_builder, "{}: size={} offset={}\n", parameter->name, get_size(parameter->type), parameter->offset);
+		}
+		frame.push_comment((String)to_string(comment_builder));
 	}
 
 
@@ -4680,7 +4752,24 @@ frame.add_instruction(MI(_kind, __VA_ARGS__))
 
 	BI(begin_lambda, lambda);
 
-	if (return_value_size) {
+	auto should_zero_out_return_value = [&] {
+		if (return_value_size == 0)
+			return false;
+
+		bool result = !visit(lambda->body, Combine {
+			[](auto){},
+			[&](AstIdentifier *identifier) {
+				return identifier->definition() != lambda->return_parameter;
+			},
+			[&](AstReturn *ret) {
+				return ret->expression;
+			}
+		});
+
+		return result;
+	};
+
+	if (return_value_size && should_zero_out_return_value()) {
 		frame.with_definition_address_of(lambda->return_parameter, [&](Address address) {
 			frame.push_comment(u8"zero out the return value"s);
 			frame.append_memory_set(address, 0, return_value_size);

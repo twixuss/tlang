@@ -551,8 +551,7 @@ struct AstStruct : AstExpression, ExpressionPool<AstStruct> {
 		SmallList<AstExpression *> arguments;
 	};
 
-	// NOTE: caching code relies on this to be non-moving
-	BlockList<Instantiation> instantiations;
+	List<Instantiation> instantiations;
 
 	Expression<AstLiteral> default_value = {};
 	s64 default_value_offset = -1;
@@ -1303,7 +1302,6 @@ struct Compiler {
 	BuiltinStruct builtin_template;    // assigned to $T
 
 	HashMap<AstExpression *, AstStruct *> span_instantiations;
-	HashMap<AstExpression *, AstStruct *> range_instantiations;
 
 	BuiltinStruct *builtin_default_signed_integer;
 	BuiltinStruct *builtin_default_unsigned_integer;
@@ -1314,6 +1312,8 @@ struct Compiler {
 	AstIdentifier *type_sint;
 	AstIdentifier *type_uint;
 	AstIdentifier *type_float;
+
+	AstStruct *builtin_range = 0;
 
 	Scope global_scope;
 
@@ -1856,7 +1856,7 @@ inline bool is_span(AstStruct *Struct) {
 	return find_if(compiler->span_instantiations, [&] (auto kv) { return kv.value == Struct; });
 }
 inline bool is_range(AstStruct *Struct) {
-	return find_if(compiler->range_instantiations, [&] (auto kv) { return kv.value == Struct; });
+	return find_if(compiler->builtin_range->instantiations, [&] (auto i) { return i.Struct == Struct; });
 }
 
 inline AstExpression *get_span_subtype(AstExpression *span) {

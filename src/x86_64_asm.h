@@ -7,6 +7,7 @@ s64 saved_registers_size;
 s64 temporary_offset;
 s64 locals_offset;
 s64 parameters_size;
+CallingConvention calling_convention;
 
 static Span<utf8> cmov_string(Comparison c) {
 	using enum Comparison;
@@ -328,16 +329,17 @@ inline umm append_instruction(StringBuilder &builder, s64 idx, Instruction i) {
 		case not_r: return append_format(builder, "not {}", i.not_r.d);
 		case negi_r: return append_format(builder, "neg {}", i.negi_r.d);
 
-		case cmps1: return append_format(builder, "xor {},{}\ncmp {},{}\nset{} {}", i.cmps1.d, i.cmps1.d, part1b(i.cmps1.a), part1b(i.cmps1.b), cmps_string(i.cmps1.c), part1b(i.cmps1.d));
-		case cmps2: return append_format(builder, "xor {},{}\ncmp {},{}\nset{} {}", i.cmps2.d, i.cmps2.d, part2b(i.cmps2.a), part2b(i.cmps2.b), cmps_string(i.cmps2.c), part1b(i.cmps2.d));
-		case cmps4: return append_format(builder, "xor {},{}\ncmp {},{}\nset{} {}", i.cmps4.d, i.cmps4.d, part4b(i.cmps4.a), part4b(i.cmps4.b), cmps_string(i.cmps4.c), part1b(i.cmps4.d));
-		case cmps8: return append_format(builder, "xor {},{}\ncmp {},{}\nset{} {}", i.cmps8.d, i.cmps8.d, part8b(i.cmps8.a), part8b(i.cmps8.b), cmps_string(i.cmps8.c), part1b(i.cmps8.d));
-		case cmpu1: return append_format(builder, "xor {},{}\ncmp {},{}\nset{} {}", i.cmpu1.d, i.cmpu1.d, part1b(i.cmpu1.a), part1b(i.cmpu1.b), cmpu_string(i.cmpu1.c), part1b(i.cmpu1.d));
-		case cmpu2: return append_format(builder, "xor {},{}\ncmp {},{}\nset{} {}", i.cmpu2.d, i.cmpu2.d, part2b(i.cmpu2.a), part2b(i.cmpu2.b), cmpu_string(i.cmpu2.c), part1b(i.cmpu2.d));
-		case cmpu4: return append_format(builder, "xor {},{}\ncmp {},{}\nset{} {}", i.cmpu4.d, i.cmpu4.d, part4b(i.cmpu4.a), part4b(i.cmpu4.b), cmpu_string(i.cmpu4.c), part1b(i.cmpu4.d));
-		case cmpu8: return append_format(builder, "xor {},{}\ncmp {},{}\nset{} {}", i.cmpu8.d, i.cmpu8.d, part8b(i.cmpu8.a), part8b(i.cmpu8.b), cmpu_string(i.cmpu8.c), part1b(i.cmpu8.d));
-		case cmpf4: return append_format(builder, "xor {},{}\nmovd xmm6,{}\nmovd xmm7,{}\ncomiss xmm6,xmm7\nset{} {}", i.cmpf4.d, i.cmpf4.d, part4b(i.cmpf4.a), part4b(i.cmpf4.b), cmpu_string(i.cmpf4.c), part1b(i.cmpf4.d));
-		case cmpf8: return append_format(builder, "xor {},{}\nmovq xmm6,{}\nmovq xmm7,{}\ncomisd xmm6,xmm7\nset{} {}", i.cmpf8.d, i.cmpf8.d, part8b(i.cmpf8.a), part8b(i.cmpf8.b), cmpu_string(i.cmpf8.c), part1b(i.cmpf8.d));
+			// Speed: xor x,x modifies flags, what we don't want
+		case cmps1: return append_format(builder, "cmp {},{}\nmov {},0\nset{} {}", part1b(i.cmps1.a), part1b(i.cmps1.b), i.cmps1.d, cmps_string(i.cmps1.c), part1b(i.cmps1.d));
+		case cmps2: return append_format(builder, "cmp {},{}\nmov {},0\nset{} {}", part2b(i.cmps2.a), part2b(i.cmps2.b), i.cmps2.d, cmps_string(i.cmps2.c), part1b(i.cmps2.d));
+		case cmps4: return append_format(builder, "cmp {},{}\nmov {},0\nset{} {}", part4b(i.cmps4.a), part4b(i.cmps4.b), i.cmps4.d, cmps_string(i.cmps4.c), part1b(i.cmps4.d));
+		case cmps8: return append_format(builder, "cmp {},{}\nmov {},0\nset{} {}", part8b(i.cmps8.a), part8b(i.cmps8.b), i.cmps8.d, cmps_string(i.cmps8.c), part1b(i.cmps8.d));
+		case cmpu1: return append_format(builder, "cmp {},{}\nmov {},0\nset{} {}", part1b(i.cmpu1.a), part1b(i.cmpu1.b), i.cmpu1.d, cmpu_string(i.cmpu1.c), part1b(i.cmpu1.d));
+		case cmpu2: return append_format(builder, "cmp {},{}\nmov {},0\nset{} {}", part2b(i.cmpu2.a), part2b(i.cmpu2.b), i.cmpu2.d, cmpu_string(i.cmpu2.c), part1b(i.cmpu2.d));
+		case cmpu4: return append_format(builder, "cmp {},{}\nmov {},0\nset{} {}", part4b(i.cmpu4.a), part4b(i.cmpu4.b), i.cmpu4.d, cmpu_string(i.cmpu4.c), part1b(i.cmpu4.d));
+		case cmpu8: return append_format(builder, "cmp {},{}\nmov {},0\nset{} {}", part8b(i.cmpu8.a), part8b(i.cmpu8.b), i.cmpu8.d, cmpu_string(i.cmpu8.c), part1b(i.cmpu8.d));
+		case cmpf4: return append_format(builder, "movd xmm6,{}\nmovd xmm7,{}\ncomiss xmm6,xmm7\nmov {},0\nset{} {}", part4b(i.cmpf4.a), part4b(i.cmpf4.b), i.cmpf4.d, cmpu_string(i.cmpf4.c), part1b(i.cmpf4.d));
+		case cmpf8: return append_format(builder, "movq xmm6,{}\nmovq xmm7,{}\ncomisd xmm6,xmm7\nmov {},0\nset{} {}", part8b(i.cmpf8.a), part8b(i.cmpf8.b), i.cmpf8.d, cmpu_string(i.cmpf8.c), part1b(i.cmpf8.d));
 
 		case jz_cr:  { auto reg = part1b(i.jz_cr.reg); return append_format(builder, "test {}, {}\njz i{}", reg, reg, idx + i.jz_cr.offset); }
 		case jnz_cr: { auto reg = part1b(i.jnz_cr.reg); return append_format(builder, "test {}, {}\njnz i{}", reg, reg, idx + i.jnz_cr.offset); }
@@ -859,6 +861,7 @@ inline umm append_instruction(StringBuilder &builder, s64 idx, Instruction i) {
 				temporary_offset = -(saved_registers_size + lambda->temporary_size);
 				locals_offset    = -(saved_registers_size + lambda->temporary_size + lambda->locals_size);
 				parameters_size  = lambda->parameters_size;
+				calling_convention = lambda->convention;
 			};
 
 			switch (lambda->convention) {

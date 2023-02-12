@@ -987,3 +987,7 @@ add :: (using list: *List($T), value: T) {
     data.data[data.count] = value
     data.count += 1
 }
+
+clear :: (using list: *List) {
+    data.count = 0
+}

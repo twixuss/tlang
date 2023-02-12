@@ -5697,7 +5697,12 @@ int argument_distance(ArgumentDistance distance) {
 	return (int)distance.type_distance * 2 + distance.const_distance;
 }
 
-// TODO: FIXME: this is a mess. need to clean up.
+
+
+// TODO: FIXME: implicitly_cast is a mess. need to clean up.
+
+// Cleanup: Currently this is called twice: first to check, then to apply,
+// Maybe this should return a lambda that would apply the cast without extra checks?
 bool implicitly_cast(TypecheckState *state, Reporter *reporter, CExpression auto *_expression, AstExpression *dst_type, TypeDistance *conversion_distance = 0, bool apply = true) {
 	auto expression = *_expression;
 	defer { *_expression = expression; };
@@ -6193,7 +6198,7 @@ bool implicitly_cast(TypecheckState *state, Reporter *reporter, CExpression auto
 	return false;
 }
 
-AstExpression *set_common_type(TypecheckState *state, Span<AstExpression **> expressions);
+AstExpression *set_common_type(TypecheckState *state, Span<AstExpression **> expressions, String location);
 
 bool is_concrete_type(AstExpression *type) {
 	assert(is_type(type), "is_concrete_type accepts a type, but got an expression");
@@ -6382,7 +6387,7 @@ void make_concrete(TypecheckState *state, AstExpression **_expression, AstExpres
 				vals.add(&value);
 			}
 
-			Match->type = set_common_type(state, vals);
+			Match->type = set_common_type(state, vals, Match->location);
 
 			for (umm i = 0; i < storage.count; ++i) {
 				assert(storage[i] == Match->cases[i].body);
@@ -6463,20 +6468,53 @@ void ensure_return_types_match(TypecheckState *state, AstLambda *lambda) {
 	}
 }
 
-void calculate_parameters_size(AstLambda *lambda) {
+void calculate_parameters_size(TypecheckState *state, AstLambda *lambda) {
 	if (lambda->parameters_size != -1) {
 		immediate_info(lambda->location, "FIXME: Redundant parameter size calculation");
 	}
-	s64 parameter_size_accumulator = 0;
 
-	for (auto parameter : lambda->parameters) {
-		if (parameter->is_constant)
-			continue;
+	switch (lambda->convention) {
+		case CallingConvention::tlang: {
+			s64 parameter_size_accumulator = 0;
 
-		parameter->offset = parameter_size_accumulator;
-		parameter_size_accumulator += compiler->stack_word_size;
+			for (auto parameter : lambda->parameters) {
+				if (parameter->is_constant)
+					continue;
+
+				parameter->offset = parameter_size_accumulator;
+				parameter_size_accumulator += ceil(get_size(parameter->type), 8ll);
+			}
+			lambda->parameters_size = parameter_size_accumulator;
+			break;
+		}
+		case CallingConvention::stdcall: {
+			s64 parameter_size_accumulator = 0;
+
+			for (auto parameter : lambda->parameters) {
+				if (parameter->is_constant)
+					continue;
+
+				auto size = ceil(get_size(parameter->type), 8ll);
+				if (size > 8) {
+					state->reporter.error(parameter->location, "stdcall lambda can not have arguments with size greater than 8");
+				}
+
+				parameter->offset = parameter_size_accumulator;
+				parameter_size_accumulator += size;
+			}
+
+			//auto last_size = lambda->parameters.count ? ceil(get_size(lambda->parameters.back()->type), 8ll) : 0;
+			//
+			//for (auto parameter : lambda->parameters) {
+			//	parameter->offset = parameter_size_accumulator - parameter->offset - last_size;
+			//}
+
+			lambda->parameters_size = parameter_size_accumulator;
+			break;
+		}
+		default: invalid_code_path();
 	}
-	lambda->parameters_size = parameter_size_accumulator;
+
 }
 
 // FIXME: ensure 'directed' member on expressions is set properly after copying.
@@ -8080,6 +8118,13 @@ AstStatement *typecheck(TypecheckState *state, AstFor *For) {
 				While->scope->parent = replacement_block->scope;
 				replacement_block->scope->add(While);
 
+				auto Defer = AstDefer::create();
+				Defer->scope->parent = While->scope;
+				While->scope->add(Defer);
+
+				auto inc = make_binop(BinaryOperation::addass, make_identifier(it1->name), make_integer(1ll));
+				Defer->scope->add(make_statement(inc));
+
 				auto it2 = AstDefinition::create();
 				it2->name = For->iterator_name;
 				it2->container_node = state->container_node;
@@ -8090,9 +8135,6 @@ AstStatement *typecheck(TypecheckState *state, AstFor *For) {
 				inner->scope = For->scope;
 				inner->scope->parent = While->scope;
 				While->scope->add(make_statement(inner));
-
-				auto inc = make_binop(BinaryOperation::addass, make_identifier(it1->name), make_integer(1ll));
-				While->scope->add(make_statement(inc));
 
 				typecheck(state, replacement_block);
 				return make_statement(replacement_block);
@@ -8134,6 +8176,13 @@ AstStatement *typecheck(TypecheckState *state, AstFor *For) {
 				While->scope->parent = replacement_block->scope;
 				replacement_block->scope->add(While);
 
+				auto Defer = AstDefer::create();
+				Defer->scope->parent = While->scope;
+				While->scope->add(Defer);
+
+				auto inc = make_binop(BinaryOperation::addass, make_identifier(it1->name), make_integer(1ll));
+				Defer->scope->add(make_statement(inc));
+
 				auto it2 = AstDefinition::create();
 				it2->name = For->iterator_name;
 				it2->container_node = state->container_node;
@@ -8144,9 +8193,6 @@ AstStatement *typecheck(TypecheckState *state, AstFor *For) {
 				inner->scope = For->scope;
 				inner->scope->parent = While->scope;
 				While->scope->add(make_statement(inner));
-
-				auto inc = make_binop(BinaryOperation::addass, make_identifier(it1->name), make_integer(1ll));
-				While->scope->add(make_statement(inc));
 
 				typecheck(state, replacement_block);
 				return make_statement(replacement_block);
@@ -8169,6 +8215,13 @@ AstStatement *typecheck(TypecheckState *state, AstFor *For) {
 				While->scope->parent = replacement_block->scope;
 				replacement_block->scope->add(While);
 
+				auto Defer = AstDefer::create();
+				Defer->scope->parent = While->scope;
+				While->scope->add(Defer);
+
+				auto inc = make_binop(BinaryOperation::addass, make_binop(BinaryOperation::dot, make_identifier(range_definition->name), make_identifier("min"str)), make_integer(1ll));
+				Defer->scope->add(make_statement(inc));
+
 				auto it2 = AstDefinition::create();
 				it2->name = For->iterator_name;
 				it2->container_node = state->container_node;
@@ -8179,9 +8232,6 @@ AstStatement *typecheck(TypecheckState *state, AstFor *For) {
 				inner->scope = For->scope;
 				inner->scope->parent = While->scope;
 				While->scope->add(make_statement(inner));
-
-				auto inc = make_binop(BinaryOperation::addass, make_binop(BinaryOperation::dot, make_identifier(range_definition->name), make_identifier("min"str)), make_integer(1ll));
-				While->scope->add(make_statement(inc));
 
 				typecheck(state, replacement_block);
 				return make_statement(replacement_block);
@@ -8217,6 +8267,13 @@ AstStatement *typecheck(TypecheckState *state, AstFor *For) {
 				While->scope->parent = replacement_block->scope;
 				replacement_block->scope->add(While);
 
+				auto Defer = AstDefer::create();
+				Defer->scope->parent = While->scope;
+				While->scope->add(Defer);
+
+				auto inc = make_binop(BinaryOperation::addass, make_identifier(it1->name), make_integer(1ll));
+				Defer->scope->add(make_statement(inc));
+
 				auto it2 = AstDefinition::create();
 				it2->name = For->iterator_name;
 				it2->container_node = state->container_node;
@@ -8227,9 +8284,6 @@ AstStatement *typecheck(TypecheckState *state, AstFor *For) {
 				inner->scope = For->scope;
 				inner->scope->parent = While->scope;
 				While->scope->add(make_statement(inner));
-
-				auto inc = make_binop(BinaryOperation::addass, make_identifier(it1->name), make_integer(1ll));
-				While->scope->add(make_statement(inc));
 
 				typecheck(state, replacement_block);
 				return make_statement(replacement_block);
@@ -8270,6 +8324,13 @@ AstStatement *typecheck(TypecheckState *state, AstFor *For) {
 				While->scope->parent = replacement_block->scope;
 				replacement_block->scope->add(While);
 
+				auto Defer = AstDefer::create();
+				Defer->scope->parent = While->scope;
+				While->scope->add(Defer);
+
+				auto inc = make_binop(BinaryOperation::addass, make_identifier(it1->name), make_integer(1ll));
+				Defer->scope->add(make_statement(inc));
+
 				auto it2 = AstDefinition::create();
 				it2->name = For->iterator_name;
 				it2->container_node = state->container_node;
@@ -8280,9 +8341,6 @@ AstStatement *typecheck(TypecheckState *state, AstFor *For) {
 				inner->scope = For->scope;
 				inner->scope->parent = While->scope;
 				While->scope->add(make_statement(inner));
-
-				auto inc = make_binop(BinaryOperation::addass, make_identifier(it1->name), make_integer(1ll));
-				While->scope->add(make_statement(inc));
 
 				typecheck(state, replacement_block);
 				return make_statement(replacement_block);
@@ -8728,7 +8786,7 @@ bool is_hardenable(AstExpression *type) {
 	return false;
 }
 
-AstExpression *set_common_type(TypecheckState *state, Span<AstExpression **> expressions) {
+AstExpression *set_common_type(TypecheckState *state, Span<AstExpression **> expressions, String parent_location) {
 	if (expressions.count == 0)
 		return compiler->builtin_void.ident;
 
@@ -8808,17 +8866,14 @@ AstExpression *set_common_type(TypecheckState *state, Span<AstExpression **> exp
 	}
 
 	if (matches.count == 0) {
-
-		// FIXME: location isn't great
-		state->reporter.error((*expressions[0])->location, "Could not deduce common return type.");
-
+		state->reporter.error(parent_location, "Could not deduce common type.");
 		yield(TypecheckResult::fail);
 	}
 
 	auto match = matches[0];
 	for (auto other : matches.skip(1)) {
 		if (!types_match((*match)->type, (*other)->type)) {
-			state->reporter.error((*other)->location, "Ambiguous common return type. {} deduced here:", type_to_string((*other)->type));
+			state->reporter.error((*other)->location, "Ambiguous common type. {} deduced here:", type_to_string((*other)->type));
 			state->reporter.info((*match)->location, "And {} deduced here:", type_to_string((*match)->type));
 			yield(TypecheckResult::fail);
 		}
@@ -8907,7 +8962,7 @@ void typecheck_body(TypecheckState *state, AstLambda *lambda) {
 			}
 		}
 
-		auto return_type = set_common_type(state, return_expressions);
+		auto return_type = set_common_type(state, return_expressions, lambda->location);
 		lambda->return_parameter = state->make_retparam(return_type, lambda);
 	}
 
@@ -9426,7 +9481,7 @@ void instantiate_body(TypecheckState *state, AstLambda *hardened_lambda) {
 
 		typecheck_body(state, hardened_lambda);
 
-		calculate_parameters_size(hardened_lambda);
+		calculate_parameters_size(state, hardened_lambda);
 	}
 
 	hardened_lambda->return_parameter->container_node = hardened_lambda;
@@ -9461,6 +9516,8 @@ inline umm append(StringBuilder &builder, BinaryTypecheckerKey k) {
 
 Map<BinaryTypecheckerKey, AstExpression *(*)(TypecheckState *, AstBinaryOperator *)> binary_typecheckers;
 
+// NOTE: Spans have to be instantiated before typechecking starts.
+//       Maybe there is a way to get rid of this manual stuff.
 AstIdentifier *instantiate_span(AstExpression *subtype, String location) {
 	auto direct_subtype = direct(subtype);
 	auto &instantiation = compiler->span_instantiations.get_or_insert(direct_subtype);
@@ -9506,52 +9563,21 @@ AstIdentifier *instantiate_span(AstExpression *subtype, String location) {
 	return ident;
 }
 
-AstIdentifier *instantiate_range(AstExpression *subtype, String location) {
-	auto direct_subtype = direct(subtype);
-	auto &instantiation = compiler->range_instantiations.get_or_insert(direct_subtype);
-	if (!instantiation) {
-		auto instantiation_definition = AstDefinition::create();
-		instantiation = AstStruct::create();
+AstExpression *instantiate_range(TypecheckState *state, AstExpression *subtype, String location) {
+	auto definition = compiler->builtin_range->definition;
 
-		instantiation_definition->expression = instantiation;
-		instantiation_definition->name = format("Range({})"str, direct_subtype);
-		instantiation_definition->parent_scope = &compiler->global_scope;
-		instantiation_definition->is_constant = true;
-		instantiation_definition->type = compiler->builtin_type.ident;
+	auto callable = AstIdentifier::create();
+	callable->name = definition->name;
+	callable->location = location;
+	callable->possible_definitions.set(definition);
+	callable->type = definition->type;
 
-		auto subtype_size = get_size(direct_subtype);
-		auto subtype_align = get_size(direct_subtype);
+	auto call = AstCall::create();
+	call->location = location;
+	call->callable = callable;
+	call->unsorted_arguments.add({.expression = subtype});
 
-		instantiation->layout = StructLayout::tlang;
-		instantiation->definition = instantiation_definition;
-		instantiation->alignment = subtype_align;
-		instantiation->size = subtype_size * 2;
-		instantiation->type = compiler->builtin_type.ident;
-
-		auto min = AstDefinition::create();
-		min->name = "min"str;
-		min->type = subtype;
-		min->offset = 0;
-		min->container_node = instantiation;
-		instantiation->member_scope->add(raw(min));
-		instantiation->data_members.add(min);
-
-		auto max = AstDefinition::create();
-		max->name = "max"str;
-		max->type = subtype;
-		max->offset = subtype_size;
-		max->container_node = instantiation;
-		instantiation->member_scope->add(raw(max));
-		instantiation->data_members.add(max);
-	}
-
-	auto ident = AstIdentifier::create();
-	ident->possible_definitions.set(instantiation->definition);
-	ident->location = location;
-	ident->type = instantiation->definition->type;
-	ident->name = instantiation->definition->name;
-	ident->directed = instantiation;
-	return ident;
+	return typecheck(state, call);
 }
 
 void get_overloads(TypecheckState *state, AstCall *call, List<Overload> &overloads) {
@@ -10212,7 +10238,7 @@ AstExpression *typecheck(TypecheckState *state, AstLambda *lambda) {
 		typecheck(state, lambda->return_parameter);
 	}
 
-	calculate_parameters_size(lambda);
+	calculate_parameters_size(state, lambda);
 
 	// lambda->definition can be null in case the lambda is a type pointer to lambda
 	if (lambda->definition)
@@ -10644,7 +10670,6 @@ AstExpression *typecheck(TypecheckState *state, AstBinaryOperator *bin) {
 			break;
 		}
 		case range: {
-			typecheck(state, bin->left);
 			typecheck(state, bin->right);
 
 			if (!is_concrete_type(bin->left->type) && !is_concrete_type(bin->right->type)) {
@@ -10671,7 +10696,7 @@ AstExpression *typecheck(TypecheckState *state, AstBinaryOperator *bin) {
 				}
 			}
 
-			auto range = instantiate_range(bin->left->type, bin->location);
+			auto range = instantiate_range(state, bin->left->type, bin->location);
 
 			return make_struct_initializer(range, {bin->left, bin->right}, bin->location);
 		}
@@ -12932,9 +12957,6 @@ auto slab_allocator_func(AllocatorMode mode, void *data, umm old_size, umm new_s
 
 void init_strings();
 
-// :type_offset:
-//
-// TODO: explain
 void init_compiler_builtin_types() {
 	// Builtin type creation is done in 4 steps:
 	// 1. Create all necessary nodes for structs, enums and aliases.
@@ -13003,7 +13025,7 @@ void init_compiler_builtin_types() {
 		defn->location = name;
 		defn->name = name;
 		defn->is_constant = true;
-		defn->offset = 0; // :type_offset:
+		defn->offset = 0;
 		// defn->add_to_scope(&compiler->global_scope);
 		compiler->global_scope.add(raw(defn));
 
@@ -13044,10 +13066,9 @@ void init_compiler_builtin_types() {
 		definition->location = name;
 		definition->name = name;
 		definition->type = thing->type;
-		definition->offset = 0; // :type_offset:
+		definition->offset = 0;
 
 		compiler->global_scope.add(raw(definition));
-		//typechecked_globals.get_or_insert(name) = definition;
 
 		ident->location = name;
 		ident->name = name;
@@ -13267,6 +13288,52 @@ void init_compiler_builtin_types() {
 	// any
 	append_member(compiler->builtin_any, "pointer"str, compiler->builtin_u8      .pointer);
 	append_member(compiler->builtin_any, "type"str,    compiler->builtin_typeinfo.pointer);
+
+
+
+	{
+		// Range
+		auto name ="Range"str;
+		auto Struct = AstStruct::create();
+		Struct->location = name;
+		Struct->parameter_scope->parent = &compiler->global_scope;
+		Struct->layout = StructLayout::tlang;
+		Struct->type = compiler->builtin_template.ident;
+		Struct->is_template = true;
+
+		auto parameter_name = "T"str;
+		auto parameter = AstDefinition::create();
+		parameter->name = parameter_name;
+		parameter->location = parameter_name;
+		parameter->parsed_type = parameter->type = compiler->builtin_type.ident;
+		Struct->parameter_scope->add(parameter);
+
+		auto min = AstDefinition::create();
+		min->name = min->location = "min"str;
+		min->container_node = Struct;
+		min->parsed_type = make_identifier(parameter_name);
+		Struct->member_scope->add(min);
+
+		auto max = AstDefinition::create();
+		max->name = max->location = "max"str;
+		max->container_node = Struct;
+		max->parsed_type = make_identifier(parameter_name);
+		Struct->member_scope->add(max);
+
+		auto definition = AstDefinition::create();
+		definition->is_constant = true;
+		definition->expression = Struct;
+		definition->location = name;
+		definition->name = name;
+		definition->type = Struct->type;
+		definition->offset = 0;
+
+		Struct->definition = definition;
+
+		compiler->global_scope.add(raw(definition));
+
+		compiler->builtin_range = Struct;
+	}
 }
 
 void init_binary_typecheckers() {

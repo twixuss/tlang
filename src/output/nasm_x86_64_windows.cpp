@@ -26,7 +26,11 @@ inline umm append(StringBuilder &builder, ::Address a) {
 			break;
 		case parameters:
 			a.base = rb;
-			a.c = parameters_size - a.c + 8;
+			switch (calling_convention) {
+				case CallingConvention::tlang: a.c += 16; break;
+				case CallingConvention::stdcall: a.c = parameters_size - a.c + 8; break;
+				default:invalid_code_path();
+			};
 			break;
 		case return_parameters:
 			a.base = rb;

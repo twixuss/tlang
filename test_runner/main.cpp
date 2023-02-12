@@ -70,6 +70,8 @@ s32 tl_main(Span<String> arguments) {
 
 	set_current_directory(format(u8"{}\\..\\tests", executable_directory));
 
+	// Don't show error box if test crashes
+	SetErrorMode(SEM_NOGPFAULTERRORBOX);
 
 	List<String> test_filenames;
 	bool all = true;
@@ -131,7 +133,7 @@ s32 tl_main(Span<String> arguments) {
 
 			String expected_compiler_output = find_param(u8"// COMPILER OUTPUT "s);
 			String expected_program_output = find_param(u8"// PROGRAM OUTPUT "s);
-			auto expected_program_exit_code = parse_u64(find_param(u8"// PROGRAM CODE "s)).value_or(0);
+			auto expected_program_exit_code = parse_u64(find_param(u8"// PROGRAM CODE "s));
 
 			auto actual_compiler = run_process(format(u8"tlang.exe {}"s, test_filename));
 
@@ -181,6 +183,7 @@ s32 tl_main(Span<String> arguments) {
 
 				return;
 			}
+			defer { delete_file(program_path); };
 
 			auto actual_program = run_process(program_path);
 
@@ -203,12 +206,21 @@ s32 tl_main(Span<String> arguments) {
 				return;
 			}
 
-			if (expected_program_exit_code != actual_program.exit_code) {
-				do_fail([&]{
-					with(ConsoleColor::red, println("Program should have returned {} exit code. But actual is {}", expected_program_exit_code, actual_program.exit_code));
-				});
+			if (expected_program_exit_code.has_value()) {
+				if (actual_program.exit_code != expected_program_exit_code.value()) {
+					do_fail([&]{
+						with(ConsoleColor::red, println("Program should have returned {} exit code. But actual is {}", expected_program_exit_code.value(), actual_program.exit_code));
+					});
+					return;
+				}
+			} else {
+				if (actual_program.exit_code == 0xC0000005) {
+					do_fail([&]{
+						with(ConsoleColor::red, println("Program crashed"));
+					});
 
-				return;
+					return;
+				}
 			}
 		};
 	}
@@ -217,28 +229,6 @@ s32 tl_main(Span<String> arguments) {
 
 	if (n_failed) with(ConsoleColor::red,   print("{}/{} tests failed.\n", n_failed, test_filenames.count));
 	else          with(ConsoleColor::green, print("All {} tests succeeded.\n", test_filenames.count));
-
-//retry:
-//	print("Remove temporary files? (y/n)\n");
-//	switch (_getch()) {
-//		case 'y': break;
-//		case 'n': return 0;
-//		default: goto retry;
-//	}
-
-	//for (auto item : get_items_in_directory(u8"."s)) {
-	//	if (item.kind == FileItem_file) {
-	//		if (ends_with(item.name, u8".pdb"s) ||
-	//			ends_with(item.name, u8".ilk"s) ||
-	//			ends_with(item.name, u8".obj"s) ||
-	//			ends_with(item.name, u8".asm"s) ||
-	//			ends_with(item.name, u8".exe"s) ||
-	//			item.name == u8"compile_log.txt"s
-	//		) {
-	//			delete_file(item.name);
-	//		}
-	//	}
-	//}
 
 	return 0;
 }
