@@ -1,0 +1,19 @@
+{
+	"name": "tlang-lsp",
+	"description": "language server for tlang",
+	"author": "twixuss",
+	"version": "0.0.1",
+	"license": "MIT",
+	"engines": {
+		"node": "*"
+	},
+	"repository": {
+		"type": "git",
+		"url": "https://github.com/twixuss/tlang"
+	},
+	"dependencies": {
+		"vscode-languageserver": "^7.0.0",
+		"vscode-languageserver-textdocument": "^1.0.4"
+	},
+	"scripts": {}
+}

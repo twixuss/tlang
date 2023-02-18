@@ -1,0 +1,22 @@
+{
+	"name": "tlang-lsp-client",
+	"description": "client part of tlang language server",
+	"author": "twixuss",
+	"license": "MIT",
+	"version": "0.0.1",
+	"publisher": "twixuss",
+	"repository": {
+		"type": "git",
+		"url": "https://github.com/twixuss/tlang"
+	},
+	"engines": {
+		"vscode": "^1.63.0"
+	},
+	"dependencies": {
+		"vscode-languageclient": "^7.0.0"
+	},
+	"devDependencies": {
+		"@types/vscode": "^1.63.0",
+		"@vscode/test-electron": "^2.1.2"
+	}
+}

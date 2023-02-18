@@ -280,16 +280,21 @@ bool lexer_function(Lexer *lexer) {
 				break;
 			}
 			case '"': {
+				token.string.count = 1;
 				while (1) {
 					auto prev = c;
-					next_char();
+					if (!next_char()) {
+						lexer->reporter->error(token.string, "Unclosed string literal");
+						return false;
+					}
 					if (c == '"') {
 						if (prev != '\\') {
-							next_char();
 							break;
 						}
 					}
 				}
+
+				next_char();
 
 				token.kind = Token_string_literal;
 				token.string.count = current_p - token.string.data;
@@ -4075,6 +4080,94 @@ String normalize_path(String path) {
 	return (String)to_string(builder, prev_allocator);
 }
 
+// Cleanup: Copypasted from parse_file
+SourceFileContext *parse_text(String current_directory, String fenced_text, String import_location) {
+	timed_function(compiler->profiler);
+
+	auto context = default_allocator.allocate<SourceFileContext>();
+
+	String source = fenced_text;
+	source.data += 1;
+	source.count -= 2;
+
+	{
+		auto s = source.begin();
+		auto d = s;
+		while (s < source.end()) {
+			if (Span(s, 2) == "\r\n"str) {
+				*d++ = '\n';
+				s += 2;
+			} else if (*s == '\r') {
+				*d++ = '\n';
+				s++;
+			} else {
+				*d++ = *s++;
+			}
+		}
+		source.set_end(d);
+		source.data[-1] = 0;
+		*source.end() = 0;
+	}
+
+	context->lexer.source = source;
+
+	context->parser.lexer = &context->lexer;
+	context->parser.reporter = context->lexer.reporter = &context->reporter;
+
+	auto source_info = &::compiler->sources.add({{}, source});
+
+	{
+		utf8 *line_start = source.data;
+		List<String> lines;
+		lines.allocator = context->parser.temporary_allocator;
+		lines.reserve(source.count / 16); // Guess 16 bytes per line on average
+
+		for (auto c = source.begin(); c < source.end(); ++c) {
+			if (*c == '\n') {
+				lines.add({line_start, c});
+				line_start = c + 1;
+			}
+		}
+		lines.add({line_start, source.end()});
+
+
+		source_info->lines = lines;
+	}
+
+	context->lexer.source_info = source_info;
+
+	umm max_token_count = source.count;
+
+	context->lexer.tokens_start = (Token *)VirtualAlloc(0, max_token_count * sizeof(Token), MEM_COMMIT|MEM_RESERVE, PAGE_READWRITE);
+	if (!context->lexer.tokens_start) {
+		context->reporter.error("Not enough memory.");
+		context->result = ParseResult::alloc_error;
+		return context;
+	}
+	context->lexer.tokens_end = context->lexer.tokens_start + max_token_count;
+	context->lexer.token_cursor = context->lexer.tokens_start;
+
+	defer {
+		context->reporter.print_all();
+	};
+
+	if (!lexer_function(&context->lexer)) {
+		atomic_set_if_equals(failed_lexer, &context->lexer, (Lexer *)0);
+		context->result = ParseResult::syntax_error;
+		return context;
+	}
+	auto parse_result = parser_function(&context->parser);
+	if (parse_result != ParseResult::ok) {
+		atomic_set_if_equals(failed_parser, &context->parser, (Parser *)0);
+		context->result = parse_result;
+		return context;
+	}
+
+	atomic_add(&total_tokens_parsed, context->lexer.token_cursor - context->lexer.tokens_start);
+
+	return context;
+}
+
 SourceFileContext *parse_file(String current_directory, String import_path, String import_location) {
 	timed_function(compiler->profiler);
 
@@ -5691,10 +5784,11 @@ enum class TypeDistance {
 struct ArgumentDistance {
 	TypeDistance type_distance;
 	u8 const_distance; // 1 if passing const value to non-const parameter, otherwise 0
+	u8 template_depth; // bigger for more specialized overloads
 };
 
 int argument_distance(ArgumentDistance distance) {
-	return (int)distance.type_distance * 2 + distance.const_distance;
+	return (int)distance.type_distance * 512 + distance.const_distance * 256 + (255 - distance.template_depth);
 }
 
 
@@ -8983,13 +9077,17 @@ void typecheck_body(TypecheckState *state, AstLambda *lambda) {
 }
 
 struct MatchTemplatesResult {
-	bool implicit_address_of = false;
-	bool implicit_dereference = false;
 	AstExpression *mismatch_poly = 0;
 	AstExpression *mismatch_matching = 0;
+	u8 depth = 0;
+	bool implicit_address_of = false;
+	bool implicit_dereference = false;
 };
 
 bool match_templates(TypecheckState *state, Reporter *reporter, AstLambda *hardened_lambda, AstDefinition *matching_parameter, AstExpression *template_expression, AstExpression *matching_expression, MatchTemplatesResult *result) {
+	if (result) {
+		++result->depth;
+	}
 	switch (template_expression->kind) {
 		case Ast_Identifier: {
 			auto p = (AstIdentifier *)template_expression;
@@ -9178,13 +9276,16 @@ AstLambda *instantiate_head(TypecheckState *state, Reporter *reporter, Overload 
 
 	auto &sorted_arguments = overload.sorted_arguments_lambda;
 
-	auto match_poly_param = [&](AstDefinition *parameter, AstExpression *argument) {
+	auto match_poly_param = [&](AstDefinition *parameter, AstExpression *argument, u8 *match_depth) {
 		MatchTemplatesResult result;
 		if (!match_templates(state, reporter, hardened_lambda, parameter, parameter->parsed_type, argument->type, &result)) {
 			reporter->error(argument->location, "Could not match the type {} to {}", type_to_string(argument->type), type_to_string(parameter->parsed_type));
 			reporter->info(parameter->location, "Because {} doesn't match {}", result.mismatch_matching, result.mismatch_poly);
 			return false;
 		}
+
+		if (match_depth)
+			*match_depth = result.depth;
 
 		parameter->type = get_concrete_type(argument->type);
 
@@ -9232,7 +9333,7 @@ AstLambda *instantiate_head(TypecheckState *state, Reporter *reporter, Overload 
 		sorted_arguments[parameter_index].set(argument.expression);
 
 		if (parameter->is_poly) {
-			if (!match_poly_param(parameter, argument.expression))
+			if (!match_poly_param(parameter, argument.expression, 0))
 				return 0;
 		}
 
@@ -9306,7 +9407,8 @@ AstLambda *instantiate_head(TypecheckState *state, Reporter *reporter, Overload 
 			if (parameter->is_poly) {
 				if (parameter->is_pack) invalid_code_path("Not implemented");
 
-				if (!match_poly_param(parameter, argument))
+				u8 match_depth = 0;
+				if (!match_poly_param(parameter, argument, &match_depth))
 					return 0;
 
 				assert(sorted_arguments[parameter_index].count == 0);
@@ -9316,7 +9418,7 @@ AstLambda *instantiate_head(TypecheckState *state, Reporter *reporter, Overload 
 					hardened_lambda->parameter_scope->usings.add(UsingAndDefinition{.definition = parameter});
 				}
 
-				overload.distance += argument_distance({.type_distance = TypeDistance::Template, .const_distance = is_constant(argument) && !parameter->is_constant});
+				overload.distance += argument_distance({.type_distance = TypeDistance::Template, .const_distance = is_constant(argument) && !parameter->is_constant, .template_depth = match_depth});
 			} else {
 				if (parameter->is_pack) {
 					assert(!parameter->is_constant, "Not implemented");
@@ -9673,9 +9775,6 @@ void get_overloads(TypecheckState *state, AstCall *call, List<Overload> &overloa
 
 				wait_for(state, call->callable->location, "methods",
 					[&] {
-						//if (ident->name == "is_nan")
-						//	debug_break();
-
 						ready_methods.clear();
 
 						for (auto &method : all_methods) {
@@ -12758,6 +12857,7 @@ struct ParsedArguments {
 
 	List<String> source_files;
 
+	bool should_read_from_stdin = false;
 	bool no_typecheck = false;
 	bool debug_paths = false;
 	bool track_allocations = false;
@@ -12831,6 +12931,10 @@ ParsedArguments parse_arguments(Span<Span<utf8>> arguments) {
 			compiler->print_yields = true;
 		} else if (arguments[i] == "--no_dce"str) {
 			compiler->enable_dce = false;
+		} else if (arguments[i] == "--stdin"str) {
+			result.should_read_from_stdin = true;
+		} else if (arguments[i] == "--diagnostics=json"str) {
+			compiler->diagnostics_are_json = true;
 		} else if (arguments[i] == "--passes"str) {
 			++i;
 			if (i >= arguments.count) {
@@ -13538,6 +13642,8 @@ BINOP(operation, unsized_integer, unsized_float) = unsized_float_and_unsized_int
 #undef BINOP
 }
 
+#include <iostream>
+
 s32 tl_main(Span<Span<utf8>> arguments) {
 	Mutex mutex;
 	withs(mutex) {};
@@ -13640,6 +13746,13 @@ restart_main:
 
 	auto args = parse_arguments(arguments);
 
+	if (compiler->diagnostics_are_json) {
+		println("{\"reports\":[{}");
+	}
+	defer { if (compiler->diagnostics_are_json) {
+		println("]}");
+	}};
+
 	if (args.track_allocations) {
 		default_allocator = current_allocator = make_tracking_allocator(current_allocator);
 	}
@@ -13671,28 +13784,30 @@ restart_main:
 
 	if (args.debug_paths) print("current_directory: {}\n", compiler->current_directory);
 
-	if (args.source_files.count == 0) {
+	if (args.source_files.count == 0 && !args.should_read_from_stdin) {
 		immediate_error(compiler->strings.no_source_path_received);
 		return 1;
 	}
 
-	compiler->source_path = args.source_files[0];
-	if (!is_absolute_path(compiler->source_path)) {
-		compiler->source_path = make_absolute_path(compiler->source_path);
-	}
-
-	if (args.debug_paths) print("source_path: {}\n", compiler->source_path);
-
-	compiler->source_path_without_extension = parse_path(compiler->source_path).path_without_extension();
-	if (args.debug_paths) print("source_path_without_extension: {}\n", compiler->source_path_without_extension);
-
-	if (args.output.count) {
-		compiler->output_path = args.output;
-		if (!is_absolute_path(compiler->output_path)) {
-			compiler->output_path = make_absolute_path(compiler->output_path);
+	if (args.source_files.count != 0) {
+		compiler->source_path = args.source_files[0];
+		if (!is_absolute_path(compiler->source_path)) {
+			compiler->source_path = make_absolute_path(compiler->source_path);
 		}
-	} else {
-		compiler->output_path = (String)format("{}\\{}.exe", get_current_directory(), parse_path(compiler->source_path).name);
+
+		if (args.debug_paths) print("source_path: {}\n", compiler->source_path);
+
+		compiler->source_path_without_extension = parse_path(compiler->source_path).path_without_extension();
+		if (args.debug_paths) print("source_path_without_extension: {}\n", compiler->source_path_without_extension);
+
+		if (args.output.count) {
+			compiler->output_path = args.output;
+			if (!is_absolute_path(compiler->output_path)) {
+				compiler->output_path = make_absolute_path(compiler->output_path);
+			}
+		} else {
+			compiler->output_path = (String)format("{}\\{}.exe", get_current_directory(), parse_path(compiler->source_path).name);
+		}
 	}
 
 	construct(parsed_files);
@@ -13743,13 +13858,13 @@ restart_main:
 		with(temporary_allocator, lib = LoadLibraryW((wchar *)to_utf16(format("{}\\targets\\{}\\target.dll"str, compiler->compiler_directory, args.target), true).data));
 
 		if (!lib) {
-			print("Failed to load target code generator '{}'. Check \"tlang\\bin\\targets\" directory\n", args.target);
+			immediate_error("Failed to load target code generator '{}'. Check \"tlang\\bin\\targets\" directory\n", args.target);
 			return 1;
 		}
 
 		auto get_target_information = (TargetInformationGetter)GetProcAddress(lib, "tlang_get_target_information");
 		if (!get_target_information) {
-			print("Failed to load target code generator '{}'. There is no `tlang_get_target_information` function\n", args.target);
+			immediate_error("Failed to load target code generator '{}'. There is no `tlang_get_target_information` function\n", args.target);
 			return 1;
 		}
 
@@ -13928,8 +14043,6 @@ restart_main:
 			immediate_error("Unable to read preload.tl");
 			return 1;
 		}
-		// compiler->global_scope.append(parsed->scope);
-
 
 		for (auto path : args.source_files) {
 			parsed = parse_file(compiler->current_directory, path, {});
@@ -13938,8 +14051,28 @@ restart_main:
 				case ParseResult::alloc_error:
 					return 1;
 			}
+		}
 
-			// compiler->global_scope.append(parsed->scope);
+		if (args.should_read_from_stdin) {
+			StringBuilder builder;
+			builder.allocator = temporary_allocator;
+
+			append(builder, '\0');
+
+			std::string line;
+			while (std::getline(std::cin, line)) {
+				append(builder, Span(line.data(), line.size()));
+				append(builder, '\n');
+			}
+
+			append(builder, '\0');
+
+			parsed = parse_text(compiler->current_directory, (String)to_string(builder), {});
+			switch (parsed->result) {
+				case ParseResult::read_error:
+				case ParseResult::alloc_error:
+					return 1;
+			}
 		}
 
 		if (failed_lexer) {
@@ -14042,9 +14175,16 @@ restart_main:
 		}
 
 		if (fail) {
-			with(ConsoleColor::red, print("Typechecking failed.\n"));
 			return 1;
 		}
+	}
+
+	if (compiler->output_path.count == 0) {
+		if (args.target == "none"str) {
+			return 0;
+		}
+		immediate_error("No output path provided");
+		return 1;
 	}
 
 	if (args.no_typecheck) {

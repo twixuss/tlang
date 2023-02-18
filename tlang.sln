@@ -28,7 +28,7 @@ Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "interpret", "interpret.vcxp
 EndProject
 Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "stb", "stb\stb.vcxproj", "{F316C538-5CC7-4068-ABBB-54F19025A2EF}"
 EndProject
-Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "cpp_x86_64_windows", "cpp_x86_64_windows.vcxproj", "{998E8C72-A43D-4569-ABB6-9B6830B17AA5}"
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "c_x86_64_windows", "cpp_x86_64_windows.vcxproj", "{998E8C72-A43D-4569-ABB6-9B6830B17AA5}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
@@ -85,8 +85,7 @@ Global
 		{F316C538-5CC7-4068-ABBB-54F19025A2EF}.Release|x64.Build.0 = Release|x64
 		{998E8C72-A43D-4569-ABB6-9B6830B17AA5}.Debug|x64.ActiveCfg = Debug|x64
 		{998E8C72-A43D-4569-ABB6-9B6830B17AA5}.Debug|x64.Build.0 = Debug|x64
-		{998E8C72-A43D-4569-ABB6-9B6830B17AA5}.DebugFast|x64.ActiveCfg = UltraSpeed|x64
-		{998E8C72-A43D-4569-ABB6-9B6830B17AA5}.DebugFast|x64.Build.0 = UltraSpeed|x64
+		{998E8C72-A43D-4569-ABB6-9B6830B17AA5}.DebugFast|x64.ActiveCfg = DebugFast|x64
 		{998E8C72-A43D-4569-ABB6-9B6830B17AA5}.Release|x64.ActiveCfg = Release|x64
 		{998E8C72-A43D-4569-ABB6-9B6830B17AA5}.Release|x64.Build.0 = Release|x64
 	EndGlobalSection

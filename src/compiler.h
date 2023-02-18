@@ -1041,15 +1041,6 @@ void unlock(Scope *scope);
 AstStruct &get_built_in_type_from_token(TokenKind t);
 AstStruct *find_built_in_type_from_token(TokenKind t);
 
-void append_type(StringBuilder &builder, AstExpression *type, bool silent_error);
-
-// Returns a human readable string.
-// For example for type `int` it will return "int (aka s64)"
-HeapString type_to_string(AstExpression *type, bool silent_error = false);
-
-// Returns just the name of the type without synonyms
-HeapString type_name     (AstExpression *type, bool silent_error = false);
-
 s64 get_size(AstExpression *type, bool check_struct = true);
 s64 get_align(AstExpression *type, bool check_struct = true);
 
@@ -1244,6 +1235,7 @@ struct Compiler {
 	bool print_yields = false;
 	bool enable_dce = true;
 	bool should_print_stats = false;
+	bool diagnostics_are_json = false;
 
 	String print_lowered_filter = {};
 
@@ -1395,6 +1387,13 @@ struct Compiler {
 			from -= 1;
 		}
 		return result;
+	}
+
+	u32 get_offset(utf8 *from) {
+		u32 result = 0;
+		while (*from-- != '\0')
+			++result;
+		return result - 1;
 	}
 
 	void print_replacing_tabs_with_4_spaces(Span<utf8> string) {
@@ -1587,34 +1586,52 @@ struct Compiler {
 	}
 
 	void print_report(Report r) {
-		auto source_info = r.location.data ? get_source_info(r.location.data) : 0;
-		if (source_info) {
-			if (r.location.data) {
-				print("{}: ", where(source_info, r.location.data));
+		auto info = r.location.data ? get_source_info(r.location.data) : 0;
+		if (diagnostics_are_json) {
+			print(",{");
+			if (info && r.location.data) {
+				print("\"path\":\"{}\",\"line\":{},\"column\":{},", escape_string(info->path), get_line_number(info->lines, r.location.data), get_column_number(r.location.data));
+			}
+			if (r.location.count) {
+				print("\"offset\":{},\"length\":{},", get_offset(r.location.data), r.location.count);
+			}
+			print("\"kind\":");
+			switch (r.kind) {
+				case ReportKind::info:    print("\"info\""); break;
+				case ReportKind::warning: print("\"warning\""); break;
+				case ReportKind::error:	  print("\"error\""); break;
+				default: invalid_code_path();
+			}
+			print(",\"message\":\"{}\"}", escape_string(r.message));
+		} else {
+			if (info) {
+				if (r.location.data) {
+					print("{}: ", where(info, r.location.data));
+				} else {
+					print(" ================ ");
+				}
+				withs(get_console_color(r.kind)) {
+					switch (r.kind) {
+						case ReportKind::info:    print(strings.info   ); break;
+						case ReportKind::warning: print(strings.warning); break;
+						case ReportKind::error:	  print(strings.error  ); break;
+						default: invalid_code_path();
+					}
+				};
+				print(": {}\n", r.message);
+				print_source_line(info, r.kind, r.location);
 			} else {
 				print(" ================ ");
+				withs(get_console_color(r.kind)) {
+					switch (r.kind) {
+						case ReportKind::info:    print(strings.info   ); break;
+						case ReportKind::warning: print(strings.warning); break;
+						case ReportKind::error:	  print(strings.error  ); break;
+						default: invalid_code_path();
+					}
+				};
+				print(": {}\n", r.message);
 			}
-			withs(get_console_color(r.kind)) {
-				switch (r.kind) {
-					case ReportKind::info:    print(strings.info   ); break;
-					case ReportKind::warning: print(strings.warning); break;
-					case ReportKind::error:	  print(strings.error  ); break;
-					default: invalid_code_path();
-				}
-			};
-			print(": {}\n", r.message);
-			print_source_line(source_info, r.kind, r.location);
-		} else {
-			print(" ================ ");
-			withs(get_console_color(r.kind)) {
-				switch (r.kind) {
-					case ReportKind::info:    print(strings.info   ); break;
-					case ReportKind::warning: print(strings.warning); break;
-					case ReportKind::error:	  print(strings.error  ); break;
-					default: invalid_code_path();
-				}
-			};
-			print(": {}\n", r.message);
 		}
 	}
 
@@ -1896,6 +1913,160 @@ inline AstUnaryOperator *as_pointer(AstExpression *type) {
 		}
 	}
 	return 0;
+}
+
+inline void append_type(StringBuilder &builder, AstExpression *type, bool silent_error = false) {
+	if (!type) {
+		append(builder, "(null)");
+		return;
+	}
+
+#define ensure(x) \
+	if (silent_error) { \
+		if (!(x)) { \
+			append(builder, u8"!error!"s); \
+			return; \
+		} \
+	} else { \
+		assert(x); \
+	}
+
+	// ensure(is_type(type));
+	switch (type->kind) {
+		case Ast_Struct: {
+			auto Struct = (AstStruct *)type;
+			assert(Struct->definition);
+			append(builder, Struct->definition->name);
+			break;
+		}
+		case Ast_LambdaType: {
+			auto lambda = ((AstLambdaType *)type)->lambda;
+
+			append(builder, "(");
+			for (auto &parameter : lambda->parameters) {
+				if (&parameter != lambda->parameters.data) {
+					append(builder, ", ");
+				}
+				append(builder, parameter->name);
+				append(builder, ": ");
+				append_type(builder, parameter->type, silent_error);
+			}
+			if (lambda->return_parameter) {
+				append(builder, ") ");
+				append_type(builder, lambda->return_parameter->type, silent_error);
+			} else {
+				append(builder, ")");
+			}
+			switch (lambda->convention) {
+				case CallingConvention::stdcall: append(builder, " #stdcall"); break;
+			}
+			break;
+		}
+		case Ast_Identifier: {
+			auto identifier = (AstIdentifier *)type;
+			// ensure(identifier->definition);
+			// ensure(types_match(identifier->definition->expression->type, type_type));
+			append(builder, identifier->name);
+			break;
+		}
+		case Ast_UnaryOperator: {
+			using enum UnaryOperation;
+			auto unop = (AstUnaryOperator *)type;
+			append(builder, unop->operation);
+			append_type(builder, unop->expression, silent_error);
+			break;
+		}
+		case Ast_Array: {
+			auto array = (AstArray *)type;
+			append(builder, '[');
+			append(builder, array->count);
+			append(builder, ']');
+			append_type(builder, array->element_type, silent_error);
+			break;
+		}
+		case Ast_Span: {
+			auto span = (AstSpan *)type;
+			append(builder, "[]");
+			append_type(builder, span->expression, silent_error);
+			break;
+		}
+		case Ast_Enum: {
+			auto Enum = (AstEnum *)type;
+			ensure(Enum->definition);
+			append(builder, Enum->definition->name);
+			break;
+		}
+		case Ast_Call: {
+			auto call = (AstCall *)type;
+			append_type(builder, call->callable, silent_error);
+
+			append(builder, '(');
+			for (auto &argument : call->unsorted_arguments) {
+				if (&argument != call->unsorted_arguments.data)
+					append(builder, ", ");
+				if (argument.expression->type && is_type(argument.expression)) {
+					append_type(builder, argument.expression, silent_error);
+				} else {
+					append(builder, argument.expression->location);
+				}
+			}
+			append(builder, ')');
+			break;
+		}
+		case Ast_Distinct: {
+			auto Distinct = (AstDistinct *)type;
+			append(builder, "#distinct ");
+			append_type(builder, Distinct->expression, silent_error);
+			break;
+		}
+		default: {
+			ensure(false);
+		}
+	}
+#undef ensure
+}
+
+// Returns a human readable string.
+// For example for type `int` it will return "int (aka s64)"
+// TODO FIXME extremely inefficient on allocations.
+inline HeapString type_to_string(AstExpression *type, bool silent_error = false) {
+	// Is this 'aka' thing really useful?
+	// return type_name(type, silent_error);
+
+
+	if (!type)
+		return (HeapString)to_list<MyAllocator>(u8"null"s);
+
+	StringBuilder builder;
+	append_type(builder, type, silent_error);
+	auto type_str = to_string(builder);
+	builder.clear();
+
+	auto d = direct(type);
+	if (d) {
+		append_type(builder, d, silent_error);
+		auto d_str = to_string(builder);
+		builder.clear();
+
+		if (d_str != type_str) {
+			append(builder, type_str);
+			append(builder, " aka "s);
+			append(builder, d_str);
+			return (HeapString)to_string<HeapString::Allocator>(builder);
+		}
+	}
+	append(builder, type_str);
+	return (HeapString)to_string<HeapString::Allocator>(builder);
+}
+
+// Returns just the name of the type without synonyms
+inline HeapString type_name(AstExpression *type, bool silent_error = false) {
+	if (!type)
+		return (HeapString)to_list<HeapString::Allocator>(u8"null"s);
+
+	StringBuilder builder;
+	append_type(builder, type, silent_error);
+	return (HeapString)to_string<HeapString::Allocator>(builder);
 }
 
 inline s64 get_size(AstExpression *_type, bool check_struct) {
