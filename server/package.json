@@ -1,6 +1,7 @@
 {
 	"name": "tlang-lsp",
-	"description": "language server for tlang",
+	"displayName": "tlang",
+	"description": "Editor support for tlang",
 	"author": "twixuss",
 	"license": "MIT",
 	"version": "0.0.1",
@@ -9,12 +10,14 @@
 		"url": "https://github.com/twixuss/tlang"
 	},
 	"publisher": "twixuss",
-	"categories": [],
+	"categories": [
+		"Programming Languages"
+	],
 	"keywords": [
 		"multi-root ready"
 	],
 	"engines": {
-		"vscode": "^1.74.0"
+		"vscode": "^1.75.0"
 	},
 	"activationEvents": [
 		"onLanguage:rust"
@@ -43,7 +46,18 @@
 					"description": "Traces the communication between VS Code and the language server."
 				}
 			}
-		}
+		},
+		"languages": [{
+			"id": "tlang",
+			"aliases": ["tlang", "tl"],
+			"extensions": ["tl"],
+			"configuration": "./language-configuration.json"
+		}],
+		"grammars": [{
+			"language": "tlang",
+			"scopeName": "source.tl",
+			"path": "./syntaxes/tl.tmLanguage.json"
+		}]
 	},
 	"scripts": {
 		"vscode:prepublish": "npm run compile",

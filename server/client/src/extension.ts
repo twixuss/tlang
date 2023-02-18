@@ -4,7 +4,7 @@
  * ------------------------------------------------------------------------------------------ */
 
 import * as path from 'path';
-import { workspace, ExtensionContext } from 'vscode';
+import { workspace, ExtensionContext, SemanticTokensLegend, languages, DocumentSemanticTokensProvider } from 'vscode';
 
 import {
 	LanguageClient,
@@ -13,9 +13,31 @@ import {
 	TransportKind
 } from 'vscode-languageclient/node';
 
+const tokenTypes = new Map<string, number>();
+const tokenModifiers = new Map<string, number>();
+
+const legend = (function() {
+	const tokenTypesLegend = [
+		'comment', 'string', 'keyword', 'number', 'regexp', 'operator', 'namespace',
+		'type', 'struct', 'class', 'interface', 'enum', 'typeParameter', 'function',
+		'method', 'decorator', 'macro', 'variable', 'parameter', 'property', 'label'
+	];
+	tokenTypesLegend.forEach((tokenType, index) => tokenTypes.set(tokenType, index));
+
+	const tokenModifiersLegend = [
+		'declaration', 'documentation', 'readonly', 'static', 'abstract', 'deprecated',
+		'modification', 'async'
+	];
+	tokenModifiersLegend.forEach((tokenModifier, index) => tokenModifiers.set(tokenModifier, index));
+
+	return new SemanticTokensLegend(tokenTypesLegend, tokenModifiersLegend);
+})();
+
 let client: LanguageClient;
 
 export function activate(context: ExtensionContext) {
+	//context.subscriptions.push(languages.registerDocumentSemanticTokensProvider({ language: 'tlang' }, new DocumentSemanticTokensProvider(), legend));
+
 	// The server is implemented in node
 	const serverModule = context.asAbsolutePath(
 		path.join('server', 'out', 'server.js')
@@ -34,7 +56,7 @@ export function activate(context: ExtensionContext) {
 	// Options to control the language client
 	const clientOptions: LanguageClientOptions = {
 		// Register the server for plain text documents
-		documentSelector: [{ scheme: 'file', language: 'rust' }],
+		documentSelector: [{ scheme: 'file', language: 'tlang' }],
 		synchronize: {
 			// Notify the server about file changes to '.clientrc files contained in the workspace
 			fileEvents: workspace.createFileSystemWatcher('**/.clientrc')
