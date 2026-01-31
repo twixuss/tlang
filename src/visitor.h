@@ -9,13 +9,26 @@ struct ExitScope {
 	Scope *scope;
 };
 
+enum class Visit {
+	Continue,
+	Skip,  // don't visit children nodes
+	Break, // stop visiting completely
+};
+
 #define VISIT(x) \
 	do { \
-		if constexpr (is_same<decltype(visitor(&x)), void>) { \
+		using Ret = decltype(visitor(&x)); \
+		if constexpr (is_same<Ret, void>) { \
 			visitor(&x); \
-		} else { \
+		} else if constexpr (is_same<Ret, Visit>) { \
+			switch (visitor(&x)) { \
+				case Visit::Break: return false; \
+			} \
+		} else if constexpr (is_same<Ret, bool>) { \
 			if (!visitor(&x)) \
 				return false; \
+		} else { \
+			static_error_t(Ret, "visitor returns invalid type"); \
 		} \
 		if (!visit(x, visitor)) \
 			return false; \
@@ -134,10 +147,6 @@ bool visit_children(AstPrint *node, auto &&visitor) {
 	VISIT(node->expression);
 	return true;
 }
-bool visit_children(AstOperatorDefinition *node, auto &&visitor) {
-	VISIT(node->definition);
-	return true;
-}
 bool visit_children(AstParse *node, auto &&visitor) {
 	VISIT(node->expression);
 	return true;
@@ -190,17 +199,29 @@ bool visit_children(AstForMarker *node, auto &&visitor) {
 		VISIT(node->expression);
 	return true;
 }
+bool visit_children(AstOut *node, auto &&visitor) {
+	VISIT(node->definition);
+	return true;
+}
 
 bool visit(AstNode *node, auto &&visitor) {
 	switch (node->kind) {
 #define e(name) \
 	case Ast_##name: { \
 		auto x = (Ast##name *)node; \
-		if constexpr (is_same<decltype(visitor(x)), void>) { \
+		using Ret = decltype(visitor(x)); \
+		if constexpr (is_same<Ret, void>) { \
 			visitor(x); \
-		} else { \
+		} else if constexpr (is_same<Ret, Visit>) { \
+			switch (visitor(x)) { \
+				case Visit::Skip: return true; \
+				case Visit::Break: return false; \
+			} \
+		} else if constexpr (is_same<Ret, bool>) { \
 			if (!visitor(x)) \
 				return false; \
+		} else { \
+			static_error_t(Ret, "visitor returns invalid type"); \
 		} \
 		if (!visit_children(x, visitor)) \
 			return false; \

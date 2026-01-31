@@ -37,7 +37,7 @@
 				},
 				{
 					"name": "keyword.other",
-					"match": "\\b(operator|as|struct|enum|using|null|true|false)\\b"
+					"match": "\\b(operator|as|struct|enum|using|null|true|false|import|in|out|assert)\\b"
 				}
 			]
 		},
@@ -81,14 +81,18 @@
 				},
 				{
 					"name": "entity.name.type.tl",
-					"match": "\\b([A-Z][^_][A-Za-z0-9]+)\\b"
+					"match": "\\b[A-Z]\\b"
+				},
+				{
+					"name": "entity.name.type.tl",
+					"match": "\\b([A-Z][A-Za-z0-9]*[^_])\\b"
 				},
 				{
 					"name": "constant.tl",
 					"match": "\\b([A-Z][_A-Za-z0-9]+)\\b"
 				},
 				{
-					"name": "entity.name.class",
+					"name": "entity.name.type",
 					"match": "\\$[_A-Za-z0-9]+\\b"
 				}
 			]

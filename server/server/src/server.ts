@@ -14,14 +14,21 @@ import {
 	CompletionItemKind,
 	TextDocumentPositionParams,
 	TextDocumentSyncKind,
-	InitializeResult
+	InitializeResult,
+	HoverParams,
+	integer,
+	Hover,
+	RequestHandler
 } from 'vscode-languageserver/node';
 
 import {
+	Position,
+	Range,
 	TextDocument
 } from 'vscode-languageserver-textdocument';
 import { match } from 'assert';
 import { readFileSync } from 'fs';
+import { Console } from 'console';
 
 // Create a connection for the server, using Node's IPC as a transport.
 // Also include all preview / proposed LSP features.
@@ -35,6 +42,9 @@ let hasWorkspaceFolderCapability = false;
 let hasDiagnosticRelatedInformationCapability = false;
 
 connection.onInitialize((params: InitializeParams) => {
+	console.log("onInitialize");
+	console.log(params);
+
 	const capabilities = params.capabilities;
 
 	// Does the client support the `workspace/configuration` request?
@@ -57,7 +67,8 @@ connection.onInitialize((params: InitializeParams) => {
 			// Tell the client that this server supports code completion.
 			completionProvider: {
 				resolveProvider: true
-			}
+			},
+			hoverProvider: true
 		}
 	};
 	if (hasWorkspaceFolderCapability) {
@@ -138,6 +149,8 @@ documents.onDidChangeContent(change => {
 
 const { spawnSync } = require('node:child_process');
 
+const hovers: any = {};
+
 async function validateTextDocument(textDocument: TextDocument): Promise<void> {
 	// In this simple example we get the settings for every validate run.
 	const settings = await getDocumentSettings(textDocument.uri);
@@ -147,7 +160,12 @@ async function validateTextDocument(textDocument: TextDocument): Promise<void> {
 	let tlang = spawnSync('tlang.exe', ['--stdin', '--target', 'none', '--diagnostics=json'], { input: text });
 	// console.log(`${tlang.stdout}`)
 
-	const reports = JSON.parse(tlang.stdout.toString()).reports
+	const json = JSON.parse(tlang.stdout.toString());
+	console.log("Parsed json:");
+	console.log(json);
+
+	const reports = json.reports
+	hovers[textDocument.uri] = json.hovers
 
 	console.log(reports)
 
@@ -271,6 +289,65 @@ connection.onCompletionResolve(
 			item.documentation = 'JavaScript documentation';
 		}
 		return item;
+	}
+);
+
+function contains(range: Range, position: Position) {
+	if (range.start.line == range.end.line) {
+		if (position.line != range.start.line)
+			return false;
+		return range.start.character <= position.character && position.character <= range.end.character;
+	}
+
+	if (position.line == range.start.line)
+		return position.character >= range.start.character;
+
+	if (position.line == range.end.line)
+		return position.character <= range.end.character;
+
+	if (position.line < range.start.line)
+		return false;
+
+	if (position.line > range.end.line)
+		return false;
+
+	return true;
+}
+
+function sizeof(range: Range) {
+	if (range.start.line == range.end.line) {
+		return range.end.character - range.start.character;
+	}
+
+	return (range.end.line - range.start.line) * 1000;
+}
+
+connection.onHover(
+	(params: HoverParams) => {
+		console.log(params.position.line + " " + params.position.character);
+
+		const contained = []
+		for (const hover of hovers[params.textDocument.uri]) {
+			if (contains(hover.range, params.position)) {
+				contained.push(hover);
+			}
+		}
+
+		console.log(contained);
+
+		if (contained.length) {
+			contained.sort((a, b) => sizeof(b.range) - sizeof(a.range));
+
+			const hover = contained[0];
+
+			return {
+				contents: {
+					kind: 'markdown',
+					value: hover.message
+				}
+			};
+		}
+		return null;
 	}
 );
 

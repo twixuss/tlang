@@ -10,4 +10,5 @@ main :: () {
 	assert y == Radians(2)
 	#assert !#compiles { y == Degrees(2) }
 	#assert !#compiles { y = Degrees(2) }
+	#assert #typeof(x + y) == Radians
 }

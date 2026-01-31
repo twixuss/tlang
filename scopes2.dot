@@ -1,0 +1,117 @@
+digraph {
+    x000001d407623868 -> x000001d407624898
+    x000001d407623868 -> x000001d4076255b0
+    x000001d407623868 -> x000001d407626c50
+    x000001d407623868 -> x000001d407626dc8
+    x000001d407623868 -> x000001d4076271a0
+    x000001d4076271a0 -> x000001d407628768
+    x000001d407623868 -> x000001d4076291f0
+    x000001d4076291f0 -> x000001d407629388
+    x000001d407629388 -> x000001d407629528
+    x000001d407629528 -> x000001d407629808
+    x000001d407629528 -> x000001d407629960
+    x000001d407629528 -> x000001d40762a308
+    x000001d40762a308 -> x000001d40762a588
+    x000001d40762a308 -> x000001d40762aa30
+    x000001d407629528 -> x000001d40762b5e8
+    x000001d407623868 -> x000001d40762b750
+    x000001d407623868 -> x000001d40762f208
+    x000001d407623868 -> x000001d40762f508
+    x000001d407623868 -> x000001d40762f810
+    x000001d407623868 -> x000001d40762fb10
+    x000001d407623868 -> x000001d40762fd98
+    x000001d407623868 -> x000001d407630098
+    x000001d407623868 -> x000001d407630320
+    x000001d407623868 -> x000001d407630620
+    x000001d407623868 -> x000001d4076308a8
+    x000001d407623868 -> x000001d407630ba8
+    x000001d407623868 -> x000001d407630f30
+    x000001d407623868 -> x000001d407631230
+    x000001d407623868 -> x000001d4076326b8
+    x000001d407623868 -> x000001d407635648
+    x000001d407623868 -> x000001d407635aa0
+    x000001d407623868 -> x000001d407636978
+    x000001d407623868 [label="root"]
+    x000001d407624898 [label="defer"]
+    x000001d4076255b0 [label="if (frame_count % 4) == 0 && key_state[' '] {
+		ball: Ball
+		ball.position = camera_position + camera_forward * 2
+		ball.position += rng.next_V3f() * 0.001
+		ball.prev_position = ball.position
+
+		ball.angles = rng.next_V3f() * tau
+
+		// initial velocity
+		ball.position += camera_forward * 50 * delta_time
+
+		balls.add(ball)
+	}"]
+    x000001d407626c50 [label="if (frame_count % 4) == 0 && key_state[' '] {
+		ball: Ball
+		ball.position = camera_position + camera_forward * 2
+		ball.position += rng.next_V3f() * 0.001
+		ball.prev_position = ball.position
+
+		ball.angles = rng.next_V3f() * tau
+
+		// initial velocity
+		ball.position += camera_forward * 50 * delta_time
+
+		balls.add(ball)
+	}"]
+    x000001d407626dc8 [label="for"]
+    x000001d4076271a0 [label="for"]
+    x000001d407628768 [label="for"]
+    x000001d4076291f0 [label="for"]
+    x000001d407629388 [label="for"]
+    x000001d407629528 [label="for"]
+    x000001d407629808 [label="if a == b
+					continue"]
+    x000001d407629960 [label="if a == b
+					continue"]
+    x000001d40762a308 [label="if l < radius*2 {
+					if l < 0.0001
+						d = V3f(0, 0, 1)
+					else
+						d /= l
+					o := radius - l * 0.5
+					a.position += d * o
+					b.position -= d * o
+				}"]
+    x000001d40762a588 [label="if l < 0.0001
+						d = V3f(0, 0, 1)
+					else
+						d /= l"]
+    x000001d40762aa30 [label="if l < 0.0001
+						d = V3f(0, 0, 1)
+					else
+						d /= l"]
+    x000001d40762b5e8 [label="if l < radius*2 {
+					if l < 0.0001
+						d = V3f(0, 0, 1)
+					else
+						d /= l
+					o := radius - l * 0.5
+					a.position += d * o
+					b.position -= d * o
+				}"]
+    x000001d40762b750 [label="for"]
+    x000001d40762f208 [label="if key_state['A'] then move_delta.x -= delta_time"]
+    x000001d40762f508 [label="if key_state['A'] then move_delta.x -= delta_time"]
+    x000001d40762f810 [label="if key_state['D'] then move_delta.x += delta_time"]
+    x000001d40762fb10 [label="if key_state['D'] then move_delta.x += delta_time"]
+    x000001d40762fd98 [label="if key_state['Q'] then move_delta.y -= delta_time"]
+    x000001d407630098 [label="if key_state['Q'] then move_delta.y -= delta_time"]
+    x000001d407630320 [label="if key_state['E'] then move_delta.y += delta_time"]
+    x000001d407630620 [label="if key_state['E'] then move_delta.y += delta_time"]
+    x000001d4076308a8 [label="if key_state['W'] then move_delta.z -= delta_time"]
+    x000001d407630ba8 [label="if key_state['W'] then move_delta.z -= delta_time"]
+    x000001d407630f30 [label="if key_state['S'] then move_delta.z += delta_time"]
+    x000001d407631230 [label="if key_state['S'] then move_delta.z += delta_time"]
+    x000001d4076326b8 [label="for"]
+    x000001d407635648 [label="if hovers
+	 then V4f(1, 0, 0, 1) else V4f(.9, .8, .3, 1)"]
+    x000001d407635aa0 [label="if hovers
+	 then V4f(1, 0, 0, 1) else V4f(.9, .8, .3, 1)"]
+    x000001d407636978 [label="for"]
+}

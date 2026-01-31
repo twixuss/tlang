@@ -31,6 +31,7 @@ e(ArrayInitializer) \
 e(Array) \
 e(Distinct) \
 e(Test) \
+e(Out) \
 
 #define ENUMERATE_STATEMENT_KIND \
 e(Definition) \
@@ -42,7 +43,6 @@ e(LoopControl) \
 e(Assert) \
 e(Defer) \
 e(Print) \
-e(OperatorDefinition) \
 e(Parse) \
 e(EmptyStatement) \
 e(Using) \
@@ -187,7 +187,8 @@ T *NEW(TL_LPC) {
 
 struct AstNode {
 	AstKind kind = Ast_Unknown;
-	String location = {};
+	String location = {}; // Includes locations of children nodes
+	String this_location = {}; // Includes only this node's location. Can't intersect with `this_location`s of other nodes. Empty if this node is hidden (not in the source code). Can't be bigger than one token
 
 	s32 uid = 0;
 
@@ -313,7 +314,7 @@ struct AstLiteral : AstExpression, ExpressionPool<AstLiteral> {
 		else if constexpr (request == LiteralKind::type     ) { return literal_kind == LiteralKind::type      ? type_value : Optional<decltype(type_value)>{}; }
 		else if constexpr (request == LiteralKind::pointer  ) { return literal_kind == LiteralKind::pointer   ? pointer    : Optional<decltype(pointer   )>{}; }
 		else {
-			static_assert(false);
+			static_error_v(request);
 		}
 	}
 };
@@ -455,6 +456,7 @@ struct AstLambda : AstExpression, ExpressionPool<AstLambda> {
 	bool is_member                    : 1 = false;
 	bool has_pack                     : 1 = false;
 	bool print_bytecode               : 1 = false;
+	bool print_lowered                : 1 = false;
 	bool is_evaluated_at_compile_time : 1 = false;
 	bool was_instantiated             : 1 = false;
 	bool is_macro                     : 1 = false;
@@ -548,7 +550,7 @@ struct AstStruct : AstExpression, ExpressionPool<AstStruct> {
 	struct Instantiation {
 		AstStruct *Struct;
 		AstIdentifier *ident;
-		SmallList<AstExpression *> arguments;
+		SmallList<AstLiteral *> arguments;
 	};
 
 	List<Instantiation> instantiations;
@@ -930,16 +932,6 @@ struct AstDefer : AstStatement, StatementPool<AstDefer> {
 	Scope *scope;
 };
 
-struct AstOperatorDefinition : AstStatement, StatementPool<AstOperatorDefinition> {
-	AstOperatorDefinition() { kind = Ast_OperatorDefinition; }
-
-	Statement<AstDefinition> definition = {};
-	Expression<AstLambda> lambda = {};
-
-	TokenKind operation = {};
-	bool is_implicit : 1 = false;
-};
-
 struct AstEnum : AstExpression, ExpressionPool<AstEnum> {
 	AstEnum() {
 		kind = Ast_Enum;
@@ -1011,6 +1003,15 @@ struct AstDistinct : AstExpression, ExpressionPool<AstDistinct> {
 	Expression<AstIdentifier> identifier = {}; // e.g. 'Radians' in 'Radians :: #distinct Float'
 };
 
+struct AstOut : AstExpression, ExpressionPool<AstOut> {
+	AstOut() {
+		kind = Ast_Out;
+		directed = this;
+	}
+
+	Statement<AstDefinition> definition = {};
+};
+
 struct BuiltinStruct {
 	AstDefinition *definition;
 
@@ -1073,35 +1074,45 @@ myint2 :: myint;
 
 direct(identifier myint2) returns struct s64
 */
-inline AstExpression *direct(AstExpression *type) {
-	assert(type);
+inline AstExpression *direct(AstExpression *expression) {
+	assert(expression);
 	while (1) {
-		switch (type->kind) {
+		switch (expression->kind) {
 			case Ast_Identifier: {
-				auto identifier = (AstIdentifier *)type;
+				auto identifier = (AstIdentifier *)expression;
 				if (!identifier->definition())
 					return 0;
-				type = identifier->definition()->expression;
-				if (!type)
+				if (!identifier->definition()->is_constant)
+					return 0;
+				expression = identifier->definition()->expression;
+				if (!expression)
 					return 0;
 				break;
 			}
 			case Ast_BinaryOperator: {
-				auto binop = (AstBinaryOperator *)type;
-				type = binop->right;
+				auto binop = (AstBinaryOperator *)expression;
+				expression = binop->right;
 				break;
 			}
 			case Ast_UnaryOperator: {
-				auto unop = (AstUnaryOperator *)type;
+				auto unop = (AstUnaryOperator *)expression;
 				if (unop->operation == UnaryOperation::typeof) {
-					type = unop->expression->type;
+					expression = unop->expression->type;
 				} else {
-					return type;
+					return expression;
 				}
 				break;
 			}
+			case Ast_Literal: {
+				auto Literal = (AstLiteral *)expression;
+				if (Literal->literal_kind != LiteralKind::type)
+					return 0;
+
+				expression = Literal->type_value;
+				break;
+			}
 			default:
-				return type;
+				return expression;
 		}
 	}
 }
@@ -1165,7 +1176,7 @@ bool is_pointer_to(AstExpression *pointer_type, AstExpression *pointee_type);
 
 AstUnaryOperator *as_pointer(AstExpression *type);
 
-bool is_constant(AstExpression *expression);
+bool is_constant(AstExpression *expression, AstExpression **first_not_constant = 0);
 AstLambda *get_lambda(AstExpression *expression);
 AstLambdaType *get_lambda_type(AstExpression *expression);
 
@@ -1373,14 +1384,14 @@ struct Compiler {
 		return info ? get_line_number(info->lines, from) : 0;
 	}
 
-	u32 get_column_number(utf8 *from) {
+	u32 get_column_number(utf8 *from, u32 tab_size = 4) {
 		u32 result = 0;
 		while (1) {
 			if (*from == '\n' || *from == '\0')
 				break;
 
 			if (*from == '\t')
-				result += 4;
+				result += tab_size;
 			else
 				result += 1;
 
@@ -1409,6 +1420,7 @@ struct Compiler {
 		switch (kind) {
 			using enum ReportKind;
 			using enum ConsoleColor;
+			case help: return green;
 			case info: return cyan;
 			case warning: return yellow;
 			case error: return red;
@@ -1585,25 +1597,13 @@ struct Compiler {
 		return where(get_source_info(location), location);
 	}
 
+	List<Report> all_reports;
+
 	void print_report(Report r) {
-		auto info = r.location.data ? get_source_info(r.location.data) : 0;
 		if (diagnostics_are_json) {
-			print(",{");
-			if (info && r.location.data) {
-				print("\"path\":\"{}\",\"line\":{},\"column\":{},", escape_string(info->path), get_line_number(info->lines, r.location.data), get_column_number(r.location.data));
-			}
-			if (r.location.count) {
-				print("\"offset\":{},\"length\":{},", get_offset(r.location.data), r.location.count);
-			}
-			print("\"kind\":");
-			switch (r.kind) {
-				case ReportKind::info:    print("\"info\""); break;
-				case ReportKind::warning: print("\"warning\""); break;
-				case ReportKind::error:	  print("\"error\""); break;
-				default: invalid_code_path();
-			}
-			print(",\"message\":\"{}\"}", escape_string(r.message));
+			all_reports.add(r);
 		} else {
+			auto info = r.location.data ? get_source_info(r.location.data) : 0;
 			if (info) {
 				if (r.location.data) {
 					print("{}: ", where(info, r.location.data));
@@ -1612,6 +1612,7 @@ struct Compiler {
 				}
 				withs(get_console_color(r.kind)) {
 					switch (r.kind) {
+						case ReportKind::help:    print(strings.help   ); break;
 						case ReportKind::info:    print(strings.info   ); break;
 						case ReportKind::warning: print(strings.warning); break;
 						case ReportKind::error:	  print(strings.error  ); break;
@@ -1624,6 +1625,7 @@ struct Compiler {
 				print(" ================ ");
 				withs(get_console_color(r.kind)) {
 					switch (r.kind) {
+						case ReportKind::help:    print(strings.help   ); break;
 						case ReportKind::info:    print(strings.info   ); break;
 						case ReportKind::warning: print(strings.warning); break;
 						case ReportKind::error:	  print(strings.error  ); break;
@@ -1633,6 +1635,15 @@ struct Compiler {
 				print(": {}\n", r.message);
 			}
 		}
+	}
+
+	template <class ...Args, class Char>
+	void immediate_help(String location, Char const *format_string, Args const &...args) {
+		print_report(make_report(ReportKind::help, location, format_string, args...));
+	}
+	template <class ...Args, class Char>
+	void immediate_help(Char const *format_string, Args const &...args) {
+		immediate_help(String{}, format_string, args...);
 	}
 
 	template <class ...Args, class Char>
@@ -1681,6 +1692,15 @@ inline u32 get_column_number(utf8 *from) {
 }
 inline List<utf8> where(utf8 *location) { return compiler->where(location); }
 
+
+template <class ...Args, class Char>
+void immediate_help(String location, Char const *format_string, Args const &...args) {
+	compiler->immediate_help(location, format_string, args...);
+}
+template <class ...Args, class Char>
+void immediate_help(Char const *format_string, Args const &...args) {
+	compiler->immediate_help(String{}, format_string, args...);
+}
 
 template <class ...Args, class Char>
 void immediate_info(String location, Char const *format_string, Args const &...args) {
@@ -1881,12 +1901,24 @@ inline AstExpression *get_span_subtype(AstExpression *span) {
 		if (!::is_span(Struct))
 			return 0;
 
-		auto def = (AstDefinition *)Struct->member_scope->statement_list[0];
-		assert(def->kind == Ast_Definition);
+		auto def = as<AstDefinition>(Struct->member_scope->statement_list[0]);
+		assert(def);
 
 		auto pointer = as_pointer(def->type);
 
 		return pointer->expression;
+	}
+	return 0;
+}
+
+inline AstExpression *get_range_subtype(AstExpression *range) {
+	if (auto Struct = direct_as<AstStruct>(range)) {
+		if (!::is_range(Struct))
+			return 0;
+
+		auto def = as<AstDefinition>(Struct->member_scope->statement_list[0]);
+		assert(def);
+		return def->type;
 	}
 	return 0;
 }
@@ -2069,7 +2101,12 @@ inline HeapString type_name(AstExpression *type, bool silent_error = false) {
 	return (HeapString)to_string<HeapString::Allocator>(builder);
 }
 
-inline s64 get_size(AstExpression *_type, bool check_struct) {
+struct SizeAndAlignemnt {
+	u32 size;
+	u32 alignment;
+};
+
+inline SizeAndAlignemnt get_size_and_alignment(AstExpression *_type, bool check_struct) {
 	auto type = _type->directed ? (AstExpression *)_type->directed : direct(_type);
 
 	assert(type);
@@ -2077,92 +2114,85 @@ inline s64 get_size(AstExpression *_type, bool check_struct) {
 	switch (type->kind) {
 		case Ast_Struct: {
 			auto Struct = (AstStruct *)type;
-			if (check_struct)
+			if (check_struct) {
 				assert(Struct->size != -1, Struct->location, "Size for {} is not computed yet. If this happens when typechecking, use an overload that accepts TypecheckState. When generating bytecode this assert should not fire.", type_to_string(Struct));
-			return Struct->size;
+				assert(Struct->alignment != -1, "Alignment for {} is not computed yet. If this happens when typechecking, use an overload that accepts TypecheckState. When generating bytecode this assert should not fire.");
+			}
+			return {
+				.size = (u32)Struct->size,
+				.alignment = (u32)Struct->alignment,
+			};
 		}
 		case Ast_Identifier: {
 			auto identifier = (AstIdentifier *)type;
-			return get_size(identifier->definition()->expression);
+			return get_size_and_alignment(identifier->definition()->expression, check_struct);
 		}
 		case Ast_UnaryOperator: {
 			using enum UnaryOperation;
 			auto unop = (AstUnaryOperator *)type;
 			switch (unop->operation) {
-				case pointer:  return compiler->stack_word_size;
-				case typeof:   return get_size(unop->expression->type);
-				case option:   return get_size(unop->expression) + get_align(unop->expression);
-				case pack:     return compiler->stack_word_size*2; // pointer+count;
-				case poly:     invalid_code_path(unop->location, "INTERNAL ERROR: Attempt to get size of a template");
-				default: invalid_code_path();
+				case pointer: {
+					return {
+						.size = (u32)compiler->stack_word_size,
+						.alignment = (u32)compiler->stack_word_size,
+					};
+				}
+				case typeof: {
+					return get_size_and_alignment(unop->expression, check_struct);
+				}
+				case option: {
+					auto subtype = get_size_and_alignment(unop->expression, check_struct);
+					return {
+						.size = subtype.size + subtype.alignment,
+						.alignment = subtype.alignment,
+					};
+				}
+				default:
+					invalid_code_path();
 			}
 		}
 		case Ast_Array: {
 			auto array = (AstArray *)type;
-			return get_size(array->element_type) * (s64)array->count;
-		}
-		case Ast_Span: {
-			return compiler->stack_word_size*2; // pointer+count;
+			auto subtype = get_size_and_alignment(array->element_type, check_struct);
+			return {
+				.size = subtype.size * (u32)array->count,
+				.alignment = subtype.alignment,
+			};
 		}
 		case Ast_LambdaType: {
-			return compiler->stack_word_size;
+			return {
+				.size = (u32)compiler->stack_word_size,
+				.alignment = (u32)compiler->stack_word_size,
+			};
 		}
 		case Ast_Enum: {
 			assert(!((AstEnum *)type)->underlying_type, "not implemented");
-			return compiler->stack_word_size;
+			return {
+				.size = (u32)compiler->stack_word_size,
+				.alignment = (u32)compiler->stack_word_size,
+			};
 		}
-		case Ast_Distinct: return get_size(((AstDistinct *)type)->expression, check_struct);
+		case Ast_Distinct: {
+			return get_size_and_alignment(((AstDistinct *)type)->expression, check_struct);
+		}
+		case Ast_Literal: {
+			auto Literal = (AstLiteral *)type;
+			assert(Literal->literal_kind == LiteralKind::type);
+			return get_size_and_alignment(Literal->type_value, check_struct);
+		}
 		default: {
 			invalid_code_path();
-			return -1;
+			return {};
 		}
 	}
 }
 
+inline s64 get_size(AstExpression *type, bool check_struct) {
+	return get_size_and_alignment(type, check_struct).size;
+}
+
 inline s64 get_align(AstExpression *type, bool check_struct) {
-	assert(type);
-	switch (type->kind) {
-		case Ast_Struct: {
-			auto Struct = (AstStruct *)type;
-			if (check_struct)
-				assert(Struct->alignment != -1, "Alignment for {} is not computed yet. If this happens when typechecking, use an overload that accepts TypecheckState. When generating bytecode this assert should not fire.");
-			return Struct->alignment;
-		}
-		case Ast_Identifier: {
-			auto identifier = (AstIdentifier *)type;
-			return get_align(identifier->definition()->expression, check_struct);
-		}
-		case Ast_UnaryOperator: {
-			auto unop = (AstUnaryOperator *)type;
-			switch (unop->operation) {
-				using enum UnaryOperation;
-				case pointer:
-					return compiler->stack_word_size;
-				case option:
-					return get_align(unop->expression, check_struct);
-				default: invalid_code_path();
-			}
-		}
-		case Ast_Array: {
-			auto array = (AstArray *)type;
-			return get_align(array->element_type, check_struct);
-		}
-		case Ast_LambdaType: {
-			return compiler->stack_word_size;
-		}
-		case Ast_Enum: {
-			assert(!((AstEnum *)type)->underlying_type);
-			return compiler->stack_word_size;
-		}
-		case Ast_Span: {
-			return compiler->stack_word_size;
-		}
-		case Ast_Distinct: return get_align(((AstDistinct *)type)->expression, check_struct);
-		default: {
-			invalid_code_path();
-			return 0;
-		}
-	}
+	return get_size_and_alignment(type, check_struct).alignment;
 }
 
 #define ENUMERATE_DEFINITION_ORIGIN \
@@ -2242,3 +2272,5 @@ inline AstExpression *get_container_node(Scope *scope) {
 inline AstExpression *get_container_node(AstStatement *statement) { return get_container_node(statement->parent_scope); }
 
 inline String dumb_get_location(AstNode *node) { return node->location; }
+
+inline bool diagnostics_are_json() { return compiler->diagnostics_are_json; }

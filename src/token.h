@@ -14,6 +14,7 @@ E(simd,     'simd') \
 E(enum,     'enum') \
 E(for,      'for') \
 E(do,       'do') \
+E(out,      'out') \
 E(return,   0x1000000) \
 E(false,    0x1000001) \
 E(while,    0x1000002) \

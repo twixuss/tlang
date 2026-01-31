@@ -1,5 +1,3 @@
-import "tlang/std.tl"
-
 Foo :: struct {
     x, y: U8
     r, g: U8 #at x

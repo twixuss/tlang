@@ -47,17 +47,26 @@
 				}
 			}
 		},
-		"languages": [{
-			"id": "tlang",
-			"aliases": ["tlang", "tl"],
-			"extensions": ["tl"],
-			"configuration": "./language-configuration.json"
-		}],
-		"grammars": [{
-			"language": "tlang",
-			"scopeName": "source.tl",
-			"path": "./syntaxes/tl.tmLanguage.json"
-		}]
+		"languages": [
+			{
+				"id": "tlang",
+				"aliases": [
+					"tlang",
+					"tl"
+				],
+				"extensions": [
+					"tl"
+				],
+				"configuration": "./language-configuration.json"
+			}
+		],
+		"grammars": [
+			{
+				"language": "tlang",
+				"scopeName": "source.tl",
+				"path": "./syntaxes/tl.tmLanguage.json"
+			}
+		]
 	},
 	"scripts": {
 		"vscode:prepublish": "npm run compile",
@@ -75,5 +84,8 @@
 		"eslint": "^8.26.0",
 		"mocha": "^9.2.1",
 		"typescript": "^4.9.4"
+	},
+	"dependencies": {
+		"@vscode/vsce": "^2.17.0"
 	}
 }

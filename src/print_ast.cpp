@@ -162,9 +162,6 @@ void print_lowered(AstYield *Yield) {
 void print_lowered(AstDefer *Defer) {
 	print("defer ");
 	print_lowered(Defer->scope);
-}
-void print_lowered(AstOperatorDefinition *Operator) {
-	print_lowered(raw(Operator->definition));
 	print("\n");
 }
 void print_lowered(AstLoopControl *LoopControl) {
@@ -458,6 +455,10 @@ void print_lowered(AstMatch * match) {
 void print_lowered(AstDistinct * Distinct) {
 	print("#distinct ");
 	print_lowered(Distinct->expression);
+}
+void print_lowered(AstOut * Out) {
+	print("out ");
+	print_lowered(Out->definition);
 }
 
 void print_lowered() {

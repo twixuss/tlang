@@ -1,5 +1,3 @@
-import "tlang/windows.tl"
-
 bitas :: (value: $T, type: %Type) {
     #assert #sizeof T == #sizeof type
     return *(&value as *type)
@@ -329,30 +327,40 @@ is_infinity :: (v: F32) => v bitas U32 == 0x7f800000
 is_infinity :: (v: F64) => v bitas U64 == 0x7ff0000000000000
 
 absolute :: (v: F32) => (v bitas U32 & 0x7fff_ffff) bitas F32
+absolute :: (v: F64) => (v bitas U64 & 0x7fff_ffff) bitas F64
 
 get_sign :: (v: F32) F32 => if (v bitas U32)[31] then -1 else +1
-set_sign :: (v: F32, s: F32) => ((v bitas U32 & 0x7fff_ffff) | (s bitas U32 & 0x8000_0000)) bitas F32
+with_sign :: (v: F32, s: F32) => ((v bitas U32 & 0x7fff_ffff) | (s bitas U32 & 0x8000_0000)) bitas F32
+
+get_sign :: (v: F64) F64 => if (v bitas U64)[63] then -1 else +1
+with_sign :: (v: F64, s: F64) => ((v bitas U64 & 0x7fff_ffff_ffff_ffff) | (s bitas U64 & 0x8000_0000_0000_0000)) bitas F64
 
 get_length :: (v: F32) => absolute(v)
-set_length :: (v: F32, new_length: F32) => v.sign * new_length
+with_length :: (v: F32, new_length: F32) => v.sign * new_length
 
-modulo :: (a, b: F32) => set_sign(a - (a / b) as S32 as F32 * b, a)
-frac :: (a: F32) => a - floor(a)
-frac :: (a: F64) => a - floor(a)
-frac :: (a, b: F32) => frac(a / b) * b
-frac :: (a, b: F64) => frac(a / b) * b
+modulo :: (a, b: F32) => with_sign(a - (a / b) as S32 as F32 * b, a)
+frac :: (x: F32) => x - floor(x)
+frac :: (x: F64) => x - floor(x)
+frac :: (x, step: F32) => frac(x / step) * step
+frac :: (x, step: F64) => frac(x / step) * step
+frac :: (x, min, max: F32) => frac(x = x - min, step = max - min) + min
+frac :: (x, min, max: F64) => frac(x = x - min, step = max - min) + min
 
-pi :: 3.1415926535897932384626433832795
+Radians :: #distinct F32
+Degrees :: #distinct F32
+
+pi :: Radians(3.1415926535897932384626433832795)
 tau :: pi*2
 
-sin :: (_v: F32) {
-	v := frac(_v, tau)
-	mask := v >= pi
-	v = if mask then v - pi else v
-	return (16 * v * (pi - v)) / (5 * pi * pi - 4 * v * (pi - v)) * if mask then -1 as F32 else 1 as F32
+// bhaskara approximation
+cos :: (x: Radians) F32 {
+    g := frac(x, -pi/2, +pi/2)
+    t := (g * g) / (pi * pi)
+    r := (1 - 4 * t) / (1 + t)
+    return r.with_sign(-(absolute(frac(x,-pi,+pi)) - pi/2))
 }
-cos :: (v: F32) => sin(v + pi*0.5)
-tan :: (v: F32) => sin(v) / cos(v)
+sin :: (x: Radians) => cos(x + pi/2)
+tan :: (v: Radians) => sin(v) / cos(v)
 
 stringize :: (_val: F64, state: *Void, callback: StringizeCallback) bytes_written: Int {
     val := _val
@@ -628,7 +636,7 @@ StringBuilder :: struct {
     count: Int
 }
 
-// TODO: static extensions for structs
+// TODO: make this StringBuilder.create
 create_string_builder :: () using result: StringBuilder {
 	allocator = current_allocator
 	first.capacity = STRING_BUILDER_INITIAL_BUFFER_CAPACITY
@@ -990,4 +998,13 @@ add :: (using list: *List($T), value: T) {
 
 clear :: (using list: *List) {
     data.count = 0
+}
+
+get_count :: (l: List($T)) => l.data.count
+
+operator for :: (range: List($T)) #macro {
+	for * __i in range.data {
+		#for_it #if #for_by_pointer then __i else *__i
+		#for_body
+	}
 }

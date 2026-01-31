@@ -9,13 +9,16 @@
 
 
 bool type_is_built_in(AstExpression *type) {
+	type = direct(type);
 	switch (type->kind) {
-		case Ast_Struct: return struct_is_built_in((AstStruct *)type);
-		case Ast_UnaryOperator: return true;
-		case Ast_Array: return true;
+		case Ast_Struct:
+			return struct_is_built_in((AstStruct *)type);
+		case Ast_Distinct:
+			return false;
+		case Ast_Enum:
+			return false;
 	}
-	invalid_code_path();
-	return {};
+	return true;
 }
 
 void lock(Scope *scope) {
@@ -68,6 +71,7 @@ String as_string(BinaryOperation op) {
 }
 
 bool is_integer(AstExpression *type) {
+	type = direct_through_distinct(type);
 	return
 		types_match(type, compiler->builtin_unsized_integer) ||
 		types_match(type, compiler->builtin_u8) ||
@@ -123,6 +127,7 @@ bool is_signed(AstStruct *type) {
 }
 
 bool is_float(AstExpression *type) {
+	type = direct_through_distinct(type);
 	return
 		types_match(type, compiler->builtin_unsized_float) ||
 		types_match(type, compiler->builtin_f32) ||
@@ -178,7 +183,10 @@ AstLiteral *get_literal(AstExpression *expression) {
     return 0;
 }
 
-bool is_constant(AstExpression *expression) {
+bool is_constant(AstExpression *expression, AstExpression **first_not_constant) {
+    if (is_type(expression))
+        return true;
+
 	switch (expression->kind) {
 		case Ast_Literal:
 		case Ast_Lambda:
@@ -186,56 +194,41 @@ bool is_constant(AstExpression *expression) {
 			return true;
 		case Ast_BinaryOperator: {
 			auto binop = (AstBinaryOperator *)expression;
-			return is_constant(binop->left);
+			return is_constant(binop->left, first_not_constant);
 		}
 		case Ast_UnaryOperator: {
 			auto unop = (AstUnaryOperator *)expression;
-			return is_constant(unop->expression);
+			return is_constant(unop->expression, first_not_constant);
 		}
 		case Ast_Identifier: {
 			auto identifier = (AstIdentifier *)expression;
 
-			if (identifier->possible_definitions.count) {
-				// HACK: TODO: FIXME: this is to make passing overloaded functions working.
-				for (auto definition : identifier->possible_definitions) {
-					if (!definition->is_constant)
-						return false;
-				}
+			if (all(identifier->possible_definitions, [](auto d) { return d->is_constant; }))
 				return true;
-			}
 
-			assert(identifier->definition());
-			if (identifier->definition())
-				return identifier->definition()->is_constant;
-			return false;
+			break;
 		}
 		case Ast_Call: {
 			auto call = (AstCall *)expression;
 			if (auto Struct = direct_as<AstStruct>(call->callable)) {
-				for (auto arg : call->unsorted_arguments) {
-					if (!is_constant(arg.expression))
-						return false;
-				}
-				return true;
+				return all(call->unsorted_arguments, [&](auto arg) { return is_constant(arg.expression, first_not_constant); });
+			} else if (auto lambda = direct_as<AstLambda>(call->callable)) {
+				if (lambda->is_intrinsic)
+					return true;
+				if (lambda->body)
+					return is_constant(lambda->body, first_not_constant);
 			}
 			break;
 		}
 		case Ast_ArrayInitializer: {
 			auto ArrayInitializer = (AstArrayInitializer *)expression;
-			for (auto &element : ArrayInitializer->elements) {
-				if (!is_constant(element))
-					return false;
-			}
-			return true;
+			return all(ArrayInitializer->elements, [&](auto arg) { return is_constant(arg, first_not_constant); });
 		}
 	}
 
-
-
-    if (is_type(expression))
-        return true;
-
-
+non_const:
+	if (first_not_constant)
+		*first_not_constant = expression;
     return false;
 }
 
@@ -368,8 +361,8 @@ Option                             Description
 	.no_source_path_received = u8"No source path received.",
 	.error = u8"Error",
 	.warning = u8"Warning",
-
 	.info = u8"Info",
+	.help = u8"Help",
 };
 const Strings strings_ru = {
 	.usage =u8R"(Использование:
@@ -391,6 +384,7 @@ const Strings strings_ru = {
 	.error = u8"Ошибка",
 	.warning = u8"Предупреждение",
 	.info = u8"Информация",
+	.help = u8"Помощь",
 };
 
 void init_strings() {

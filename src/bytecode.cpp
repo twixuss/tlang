@@ -5,6 +5,7 @@
 // #include "x86_64.h"
 
 #include <algorithm>
+#include <bit>
 
 // I don't know how optimizations will work with loading lambda parameters' addresses...
 // TODO: Figure this out.
@@ -1627,7 +1628,6 @@ void FrameBuilder::append(AstStatement *statement) {
 		case Ast_Parse:
 		case Ast_Test:
 		case Ast_Using:
-		case Ast_OperatorDefinition:
 			return;
 		default: invalid_code_path(statement->location);
 	}
@@ -4762,7 +4762,7 @@ frame.add_instruction(MI(_kind, __VA_ARGS__))
 				return identifier->definition() != lambda->return_parameter;
 			},
 			[&](AstReturn *ret) {
-				return ret->expression;
+				return !!ret->expression;
 			}
 		});
 

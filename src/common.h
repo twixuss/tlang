@@ -279,6 +279,7 @@ struct Strings {
 	utf8 const *error = 0;
 	utf8 const *warning = 0;
 	utf8 const *info = 0;
+	utf8 const *help = 0;
 
 	utf8 const *_end_marker = (utf8 *)-1;
 };
@@ -294,6 +295,7 @@ enum class Comparison : u8 {
 
 
 enum class ReportKind {
+	help,
 	info,
 	warning,
 	error,
@@ -447,27 +449,41 @@ inline void tlang_assertion_failed(char const *cause, char const *file, int line
 inline thread_local struct AstNode *(*get_current_node)();
 
 String dumb_get_location(struct AstNode *);
+bool diagnostics_are_json();
 
 template <class ...Args, class Char>
 inline void tlang_assertion_failed(char const *cause, char const *file, int line, char const *expression, char const *function, String location, Char const *format_string, Args ...args) {
-	withs(ConsoleColor::red) {
-		::tl::println("================================");
-		::tl::print("Assertion failed: ");
-	};
-	::tl::print("{}\n{}:{}: {} at {}\n", expression, file, line, cause, function);
-	withs(ConsoleColor::red) {
-		::tl::println("================================");
-	};
+	if (diagnostics_are_json()) {
+		AstNode *current_node = 0;
 
-	immediate_error(location, format_string, args...);
+		if (get_current_node)
+			current_node = get_current_node();
 
-	AstNode *current_node = 0;
+		::immediate_error(current_node ? dumb_get_location(current_node) : String{}, "Assertion failed: {}\n{}:{}: {} at {}\n", expression, file, line, cause, function);
 
-	if (get_current_node)
-		current_node = get_current_node();
+		immediate_error(location, format_string, args...);
 
-	if (current_node)
-		immediate_info(dumb_get_location(current_node), "Current node:");
+		::tl::print("]}");
+	} else {
+		withs(ConsoleColor::red) {
+			::tl::println("================================");
+			::tl::print("Assertion failed: ");
+		};
+		::tl::print("{}\n{}:{}: {} at {}\n", expression, file, line, cause, function);
+		withs(ConsoleColor::red) {
+			::tl::println("================================");
+		};
+
+		immediate_error(location, format_string, args...);
+
+		AstNode *current_node = 0;
+
+		if (get_current_node)
+			current_node = get_current_node();
+
+		if (current_node)
+			immediate_info(dumb_get_location(current_node), "Current node:");
+	}
 
 	if (debugger_attached())
 		debug_break();
